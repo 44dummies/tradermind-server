@@ -16,11 +16,23 @@ const userRoutes = require('./routes/users');
 const chatroomRoutes = require('./routes/chatrooms');
 const communityRoutes = require('./routes/community');
 
+// Friends Center routes
+const friendsRoutes = require('./routes/friends');
+const chatsRoutes = require('./routes/chats');
+const portfolioRoutes = require('./routes/portfolio');
+const sharedRoutes = require('./routes/shared');
+const notificationsRoutes = require('./routes/notifications');
+const leaderboardRoutes = require('./routes/leaderboard');
+const mentorRoutes = require('./routes/mentor');
+const achievementsRoutes = require('./routes/achievements');
+
 // Import socket handlers
 const { setupSocketHandlers } = require('./socket');
+const { setupFriendsSocketHandlers } = require('./socket/friends');
 
 // Import services
 const { initializeDefaultChatrooms } = require('./services/assignment');
+const { startCronJobs } = require('./cron');
 
 const app = express();
 const server = http.createServer(app);
@@ -58,6 +70,16 @@ app.use('/api/users', userRoutes);
 app.use('/api/chatrooms', chatroomRoutes);
 app.use('/api/community', communityRoutes);
 
+// Friends Center API Routes
+app.use('/api/friends', friendsRoutes);
+app.use('/api/chats', chatsRoutes);
+app.use('/api/portfolio', portfolioRoutes);
+app.use('/api/shared', sharedRoutes);
+app.use('/api/notifications', notificationsRoutes);
+app.use('/api/leaderboard', leaderboardRoutes);
+app.use('/api/mentor', mentorRoutes);
+app.use('/api/achievements', achievementsRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -81,6 +103,7 @@ app.set('io', io);
 
 // Setup Socket.IO handlers
 setupSocketHandlers(io);
+setupFriendsSocketHandlers(io);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -110,9 +133,13 @@ async function startServer() {
     // Initialize default chatrooms
     await initializeDefaultChatrooms();
     
+    // Start cron jobs
+    startCronJobs();
+    
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
       console.log(`📡 WebSocket ready for connections`);
+      console.log(`👥 Friends Center System active`);
       console.log(`🔗 CORS origins: ${corsOrigins.join(', ')}`);
     });
   } catch (err) {
