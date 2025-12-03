@@ -37,27 +37,45 @@ const { startCronJobs } = require('./cron');
 const app = express();
 const server = http.createServer(app);
 
-// CORS origins - support multiple origins for production
+// CORS origins - always include production domains
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://www.tradermind.site',
+  'https://tradermind.site',
+  'https://deriv-ws.vercel.app'
+];
+
 const corsOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'https://www.tradermind.site', 'https://tradermind.site'];
+  ? [...new Set([...process.env.CORS_ORIGIN.split(',').map(o => o.trim()), ...defaultOrigins])]
+  : defaultOrigins;
+
+console.log('CORS origins configured:', corsOrigins);
 
 // Socket.IO setup with CORS
 const io = new Server(server, {
   cors: {
     origin: corsOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
   },
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  transports: ['websocket', 'polling']
 });
 
 // Middleware
 app.use(cors({
   origin: corsOrigins,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
