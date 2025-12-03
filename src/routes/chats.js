@@ -7,9 +7,9 @@ const express = require('express');
 const router = express.Router();
 const ChatService = require('../services/chat');
 const FriendsService = require('../services/friends');
-const { authenticateToken } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 // =============================================
 // CHAT ROUTES

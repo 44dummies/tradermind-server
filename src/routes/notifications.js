@@ -6,9 +6,9 @@ const express = require('express');
 const router = express.Router();
 const NotificationsService = require('../services/notifications');
 const FriendsService = require('../services/friends');
-const { authenticateToken } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 /**
  * GET /api/notifications

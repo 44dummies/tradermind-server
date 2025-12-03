@@ -6,9 +6,9 @@ const express = require('express');
 const router = express.Router();
 const LeaderboardService = require('../services/leaderboard');
 const FriendsService = require('../services/friends');
-const { authenticateToken } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 /**
  * GET /api/leaderboard

@@ -6,9 +6,9 @@ const express = require('express');
 const router = express.Router();
 const MentorService = require('../services/mentor');
 const FriendsService = require('../services/friends');
-const { authenticateToken } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 /**
  * POST /api/mentor/set/:mentorId

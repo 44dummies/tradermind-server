@@ -3,9 +3,9 @@
  * Auto-delete messages, streak management, anniversary checks
  */
 
-const { supabase } = require('./db/supabase');
-const NotificationsService = require('./services/notifications');
-const AchievementsService = require('./services/achievements');
+const { supabase } = require('../db/supabase');
+const NotificationsService = require('../services/notifications');
+const AchievementsService = require('../services/achievements');
 
 // Simple in-memory scheduler (for production, use node-cron or Bull)
 class CronScheduler {
