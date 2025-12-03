@@ -152,12 +152,16 @@ router.post('/login', async (req, res) => {
  */
 router.post('/deriv', async (req, res) => {
   try {
+    console.log('Deriv auth request body:', req.body);
     const { derivUserId, loginid, email, currency, country, fullname } = req.body;
     
     // Use derivUserId or loginid as the derivId
     const derivId = derivUserId || loginid;
     
+    console.log('Extracted values:', { derivUserId, loginid, derivId, email });
+    
     if (!derivId) {
+      console.error('Missing derivId. Request body:', req.body);
       return res.status(400).json({ error: 'Deriv user ID or login ID is required' });
     }
     
@@ -177,19 +181,24 @@ router.post('/deriv', async (req, res) => {
       console.log('Creating new user...');
       // Create new user from Deriv login
       try {
+        // Generate a username from derivId or email
+        const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
+        
         user = await prisma.user.create({
           data: {
             id: uuidv4(),
             derivId,
+            username,
             email: email || null,
             fullName: fullname || null,
             country: country || null,
-            traderLevel: 'BEGINNER'
+            traderLevel: 'beginner'
           }
         });
         console.log('User created:', user.id);
       } catch (createErr) {
         console.error('User creation error:', createErr.message);
+        console.error('Create error details:', createErr);
         throw createErr;
       }
       

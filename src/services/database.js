@@ -13,38 +13,108 @@ const db = {
   // User operations
   user: {
     async findUnique({ where, include }) {
-      let query = supabase.from('User').select('*');
+      let query = supabase.from('user_profiles').select('*');
       if (where.id) query = query.eq('id', where.id);
-      if (where.derivId) query = query.eq('derivId', where.derivId);
+      if (where.derivId) query = query.eq('deriv_id', where.derivId);
       if (where.email) query = query.eq('email', where.email);
       const { data, error } = await query.single();
       if (error) return null;
+      // Map snake_case to camelCase for consistency
+      if (data) {
+        data.derivId = data.deriv_id;
+        data.isOnline = data.is_online;
+        data.lastSeen = data.last_seen;
+        data.createdAt = data.created_at;
+        data.updatedAt = data.updated_at;
+        data.traderLevel = data.performance_tier;
+        data.fullName = data.fullname;
+        data.avatarUrl = data.profile_photo;
+      }
       return data;
     },
     async findMany({ where = {}, orderBy, take, skip, select } = {}) {
-      let query = supabase.from('User').select('*');
-      if (where.isOnline !== undefined) query = query.eq('isOnline', where.isOnline);
-      if (where.traderLevel) query = query.eq('traderLevel', where.traderLevel);
+      let query = supabase.from('user_profiles').select('*');
+      if (where.isOnline !== undefined) query = query.eq('is_online', where.isOnline);
+      if (where.traderLevel) query = query.eq('performance_tier', where.traderLevel);
       if (orderBy) {
         const key = Object.keys(orderBy)[0];
-        query = query.order(key, { ascending: orderBy[key] === 'asc' });
+        const dbKey = key === 'isOnline' ? 'is_online' : 
+                      key === 'lastSeen' ? 'last_seen' :
+                      key === 'createdAt' ? 'created_at' : key;
+        query = query.order(dbKey, { ascending: orderBy[key] === 'asc' });
       }
       if (take) query = query.limit(take);
       if (skip) query = query.range(skip, skip + (take || 10) - 1);
       const { data, error } = await query;
-      return data || [];
+      // Map snake_case to camelCase
+      return (data || []).map(item => ({
+        ...item,
+        derivId: item.deriv_id,
+        isOnline: item.is_online,
+        lastSeen: item.last_seen,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+        traderLevel: item.performance_tier,
+        fullName: item.fullname,
+        avatarUrl: item.profile_photo
+      }));
     },
     async create({ data }) {
-      const { data: result, error } = await supabase.from('User').insert(data).select().single();
+      // Map camelCase to snake_case
+      const dbData = {
+        id: data.id,
+        deriv_id: data.derivId,
+        username: data.username || data.derivId || `user_${data.derivId}`,
+        fullname: data.fullName || data.fullname,
+        email: data.email,
+        country: data.country,
+        profile_photo: data.avatarUrl,
+        performance_tier: data.traderLevel || 'beginner',
+        is_online: data.isOnline !== undefined ? data.isOnline : false,
+        last_seen: data.lastSeen || new Date()
+      };
+      const { data: result, error } = await supabase.from('user_profiles').insert(dbData).select().single();
       if (error) throw error;
+      // Map back to camelCase
+      if (result) {
+        result.derivId = result.deriv_id;
+        result.isOnline = result.is_online;
+        result.lastSeen = result.last_seen;
+        result.createdAt = result.created_at;
+        result.updatedAt = result.updated_at;
+        result.traderLevel = result.performance_tier;
+        result.fullName = result.fullname;
+        result.avatarUrl = result.profile_photo;
+      }
       return result;
     },
     async update({ where, data }) {
-      let query = supabase.from('User').update(data);
+      // Map camelCase to snake_case
+      const dbData = {};
+      if (data.isOnline !== undefined) dbData.is_online = data.isOnline;
+      if (data.lastSeen) dbData.last_seen = data.lastSeen;
+      if (data.country) dbData.country = data.country;
+      if (data.fullName || data.fullname) dbData.fullname = data.fullName || data.fullname;
+      if (data.email) dbData.email = data.email;
+      if (data.avatarUrl) dbData.profile_photo = data.avatarUrl;
+      if (data.traderLevel) dbData.performance_tier = data.traderLevel;
+      
+      let query = supabase.from('user_profiles').update(dbData);
       if (where.id) query = query.eq('id', where.id);
-      if (where.derivId) query = query.eq('derivId', where.derivId);
+      if (where.derivId) query = query.eq('deriv_id', where.derivId);
       const { data: result, error } = await query.select().single();
       if (error) throw error;
+      // Map back to camelCase
+      if (result) {
+        result.derivId = result.deriv_id;
+        result.isOnline = result.is_online;
+        result.lastSeen = result.last_seen;
+        result.createdAt = result.created_at;
+        result.updatedAt = result.updated_at;
+        result.traderLevel = result.performance_tier;
+        result.fullName = result.fullname;
+        result.avatarUrl = result.profile_photo;
+      }
       return result;
     },
     async upsert({ where, create, update }) {
@@ -55,8 +125,8 @@ const db = {
       return this.create({ data: create });
     },
     async count({ where = {} } = {}) {
-      let query = supabase.from('User').select('id', { count: 'exact', head: true });
-      if (where.isOnline !== undefined) query = query.eq('isOnline', where.isOnline);
+      let query = supabase.from('user_profiles').select('id', { count: 'exact', head: true });
+      if (where.isOnline !== undefined) query = query.eq('is_online', where.isOnline);
       const { count } = await query;
       return count || 0;
     }
