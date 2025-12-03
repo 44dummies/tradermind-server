@@ -103,6 +103,22 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Database health check
+app.get('/health/db', async (req, res) => {
+  try {
+    const { supabase } = require('./db/supabase');
+    const { data, error } = await supabase.from('Chatroom').select('id').limit(1);
+    if (error) {
+      console.error('DB health check error:', error);
+      return res.status(500).json({ status: 'error', error: error.message });
+    }
+    res.json({ status: 'ok', connected: true, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('DB health check exception:', err);
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({ 
