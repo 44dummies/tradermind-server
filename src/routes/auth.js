@@ -232,7 +232,7 @@ router.post('/deriv', async (req, res) => {
     console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: 'Login failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: error.message
     });
   }
 });
