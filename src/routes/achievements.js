@@ -32,10 +32,22 @@ router.get('/', async (req, res) => {
 /**
  * GET /api/achievements/user/:userId
  * Get another user's achievements
+ * Accepts either UUID or Deriv ID (like CR6550175)
  */
 router.get('/user/:userId', async (req, res) => {
   try {
-    const achievements = await AchievementsService.getUserAchievements(req.params.userId);
+    let userId = req.params.userId;
+    
+    // If it's a Deriv ID (starts with CR, VRTC, etc.), look up the UUID
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      const user = await FriendsService.getProfileByDerivId(userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      userId = user.id;
+    }
+    
+    const achievements = await AchievementsService.getUserAchievements(userId);
     res.json(achievements);
   } catch (error) {
     console.error('Get user achievements error:', error);
