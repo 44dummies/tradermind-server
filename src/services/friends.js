@@ -155,10 +155,11 @@ const FriendsService = {
   // =============================================
 
   /**
-   * Search users by username (fuzzy match)
+   * Search users by username, display_name, fullname, or deriv_id (fuzzy match)
+   * Shows username/display_name to friends, but hides deriv_id unless you're the user
    */
   async searchUsers(searchTerm, currentUserId, limit = 20) {
-    // Use the stored function for fuzzy search
+    // Try stored function first
     const { data, error } = await supabase
       .rpc('search_users_by_username', {
         search_term: searchTerm,
@@ -167,12 +168,16 @@ const FriendsService = {
       });
     
     if (error) {
-      // Fallback to direct query if function doesn't exist
+      // Fallback to direct query with multiple search fields
+      const searchPattern = `%${searchTerm}%`;
+      
       const { data: fallbackData, error: fallbackError } = await supabase
         .from('user_profiles')
         .select(`
           id,
+          deriv_id,
           username,
+          display_name,
           fullname,
           country,
           profile_photo,
@@ -181,17 +186,22 @@ const FriendsService = {
           is_online
         `)
         .neq('id', currentUserId)
-        .neq('privacy_mode', 'private')
-        .eq('allow_friend_requests', true)
-        .ilike('username', `%${searchTerm}%`)
+        .or(`username.ilike.${searchPattern},display_name.ilike.${searchPattern},fullname.ilike.${searchPattern},deriv_id.ilike.${searchPattern}`)
         .limit(limit);
       
       if (fallbackError) throw fallbackError;
       
-      // Add friendship status
-      const results = await Promise.all(fallbackData.map(async (user) => {
+      // Add friendship status and mask deriv_id for privacy
+      const results = await Promise.all((fallbackData || []).map(async (user) => {
         const friendship = await this.getFriendshipStatus(currentUserId, user.id);
-        return { ...user, friendship_status: friendship?.status || 'none' };
+        return { 
+          ...user, 
+          friendship_status: friendship?.status || 'none',
+          // Only show deriv_id to the user themselves - others see display name
+          deriv_id: undefined,
+          // Use display_name or username as the visible name
+          display_name: user.display_name || user.username || user.fullname
+        };
       }));
       
       return results;

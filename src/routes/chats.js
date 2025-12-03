@@ -11,6 +11,22 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
+/**
+ * Helper to get or create user profile
+ */
+async function getOrCreateUser(derivId) {
+  let user = await FriendsService.getProfileByDerivId(derivId);
+  if (!user) {
+    user = await FriendsService.upsertUserProfile(derivId, {
+      username: `trader_${derivId.toLowerCase()}`,
+      fullname: null,
+      email: null,
+      country: null
+    });
+  }
+  return user;
+}
+
 // =============================================
 // CHAT ROUTES
 // =============================================
@@ -21,9 +37,9 @@ router.use(authMiddleware);
  */
 router.get('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const chats = await ChatService.getUserChats(currentUser.id);
@@ -47,9 +63,9 @@ router.get('/', async (req, res) => {
  */
 router.get('/:chatId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const chat = await ChatService.getChatById(req.params.chatId);
@@ -75,9 +91,9 @@ router.get('/:chatId', async (req, res) => {
  */
 router.get('/with/:userId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     // Verify friendship
@@ -102,9 +118,9 @@ router.get('/with/:userId', async (req, res) => {
  */
 router.put('/:chatId/archive', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const { archived } = req.body;
@@ -126,9 +142,9 @@ router.put('/:chatId/archive', async (req, res) => {
  */
 router.get('/:chatId/messages', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     // Verify user is participant
@@ -157,9 +173,9 @@ router.get('/:chatId/messages', async (req, res) => {
  */
 router.post('/:chatId/messages', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     // Verify user is participant
@@ -197,9 +213,9 @@ router.post('/:chatId/messages', async (req, res) => {
  */
 router.put('/:chatId/read', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const result = await ChatService.markAsRead(req.params.chatId, currentUser.id);
@@ -226,9 +242,9 @@ router.put('/:chatId/read', async (req, res) => {
  */
 router.delete('/:chatId/messages/:messageId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const result = await ChatService.deleteMessage(req.params.messageId, currentUser.id);
@@ -259,9 +275,9 @@ router.delete('/:chatId/messages/:messageId', async (req, res) => {
  */
 router.post('/:chatId/messages/:messageId/react', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const { reaction } = req.body;
@@ -296,9 +312,9 @@ router.post('/:chatId/messages/:messageId/react', async (req, res) => {
  */
 router.post('/:chatId/typing', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const { isTyping } = req.body;
@@ -332,9 +348,9 @@ router.post('/:chatId/typing', async (req, res) => {
  */
 router.post('/:chatId/ping', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const message = await ChatService.sendPing(req.params.chatId, currentUser.id);
@@ -369,9 +385,9 @@ router.post('/:chatId/ping', async (req, res) => {
  */
 router.put('/:chatId/streak/name', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const { name } = req.body;
@@ -389,9 +405,9 @@ router.put('/:chatId/streak/name', async (req, res) => {
  */
 router.get('/unread/count', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
     const count = await ChatService.getTotalUnreadCount(currentUser.id);

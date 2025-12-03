@@ -292,9 +292,17 @@ const { supabase } = require('../db/supabase');
 router.get('/settings', authMiddleware, async (req, res) => {
   try {
     // Get user profile by derivId (which is stored in req.user.derivId)
-    const user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    let user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    
+    // If user doesn't exist, create a new profile
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      console.log('User not found, creating profile for:', req.user.derivId);
+      user = await FriendsService.upsertUserProfile(req.user.derivId, {
+        username: `trader_${req.user.derivId.toLowerCase()}`,
+        fullname: null,
+        email: null,
+        country: null
+      });
     }
 
     // Get settings from user_settings table or use defaults
@@ -361,18 +369,24 @@ router.put('/settings', authMiddleware, async (req, res) => {
   try {
     const { profile, privacy, notifications, chat } = req.body;
     
-    // Get user profile
-    const user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    // Get user profile or create if doesn't exist
+    let user = await FriendsService.getProfileByDerivId(req.user.derivId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      console.log('User not found during settings update, creating profile for:', req.user.derivId);
+      user = await FriendsService.upsertUserProfile(req.user.derivId, {
+        username: `trader_${req.user.derivId.toLowerCase()}`,
+        fullname: null,
+        email: null,
+        country: null
+      });
     }
 
     // Validate username uniqueness if changed
-    if (profile?.username && profile.username !== user.username) {
+    if (profile?.username && profile.username.toLowerCase() !== user.username?.toLowerCase()) {
       const { data: existingUser } = await supabase
         .from('user_profiles')
         .select('id')
-        .eq('username', profile.username)
+        .ilike('username', profile.username)
         .neq('id', user.id)
         .single();
       
@@ -383,9 +397,12 @@ router.put('/settings', authMiddleware, async (req, res) => {
 
     // Update profile
     if (profile) {
-      const profileUpdate = {};
+      const profileUpdate = {
+        updated_at: new Date().toISOString()
+      };
       if (profile.username) profileUpdate.username = profile.username.toLowerCase();
       if (profile.display_name !== undefined) profileUpdate.display_name = profile.display_name;
+      if (profile.fullname !== undefined) profileUpdate.fullname = profile.fullname;
       if (profile.bio !== undefined) profileUpdate.bio = profile.bio;
       if (profile.status_message !== undefined) profileUpdate.status_message = profile.status_message;
       if (profile.profile_photo !== undefined) profileUpdate.profile_photo = profile.profile_photo;
@@ -393,11 +410,16 @@ router.put('/settings', authMiddleware, async (req, res) => {
         profileUpdate.profile_photo_metadata = profile.profile_photo_metadata;
       }
 
-      if (Object.keys(profileUpdate).length > 0) {
-        await supabase
-          .from('user_profiles')
-          .update(profileUpdate)
-          .eq('id', user.id);
+      console.log('Updating profile for user:', user.id, 'with:', profileUpdate);
+      
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update(profileUpdate)
+        .eq('id', user.id);
+      
+      if (updateError) {
+        console.error('Profile update error:', updateError);
+        throw updateError;
       }
     }
 
@@ -410,14 +432,21 @@ router.put('/settings', authMiddleware, async (req, res) => {
       updated_at: new Date().toISOString(),
     };
 
-    await supabase
+    console.log('Upserting settings for user:', user.id);
+    
+    const { error: settingsError } = await supabase
       .from('user_settings')
       .upsert(settingsData, { onConflict: 'user_id' });
+    
+    if (settingsError) {
+      console.error('Settings upsert error:', settingsError);
+      throw settingsError;
+    }
 
     res.json({ success: true, message: 'Settings updated successfully' });
   } catch (error) {
     console.error('Update settings error:', error);
-    res.status(500).json({ error: 'Failed to update settings' });
+    res.status(500).json({ error: 'Failed to update settings: ' + error.message });
   }
 });
 

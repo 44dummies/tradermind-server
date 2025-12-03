@@ -11,6 +11,22 @@ const { authMiddleware } = require('../middleware/auth');
 // Apply auth middleware to all routes
 router.use(authMiddleware);
 
+/**
+ * Helper to get or create user profile
+ */
+async function getOrCreateUser(derivId) {
+  let user = await FriendsService.getProfileByDerivId(derivId);
+  if (!user) {
+    user = await FriendsService.upsertUserProfile(derivId, {
+      username: `trader_${derivId.toLowerCase()}`,
+      fullname: null,
+      email: null,
+      country: null
+    });
+  }
+  return user;
+}
+
 // =============================================
 // USER PROFILE ROUTES
 // =============================================
@@ -21,9 +37,9 @@ router.use(authMiddleware);
  */
 router.get('/profile', async (req, res) => {
   try {
-    const profile = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const profile = await getOrCreateUser(req.user.derivId);
     if (!profile) {
-      return res.status(404).json({ error: 'Profile not found' });
+      return res.status(500).json({ error: 'Failed to get/create profile' });
     }
     res.json(profile);
   } catch (error) {
@@ -44,7 +60,7 @@ router.get('/profile/:username', async (req, res) => {
     }
     
     // Get friendship status
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (currentUser) {
       const friendship = await FriendsService.getFriendshipStatus(currentUser.id, profile.id);
       profile.friendship_status = friendship?.status || 'none';
@@ -71,7 +87,7 @@ router.get('/profile/:username', async (req, res) => {
  */
 router.put('/profile', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'Profile not found' });
     }
@@ -121,7 +137,7 @@ router.get('/search', async (req, res) => {
       return res.status(400).json({ error: 'Search query must be at least 2 characters' });
     }
     
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -144,7 +160,7 @@ router.get('/search', async (req, res) => {
  */
 router.post('/request/:userId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -173,7 +189,7 @@ router.post('/request/:userId', async (req, res) => {
  */
 router.post('/accept/:friendshipId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -203,7 +219,7 @@ router.post('/accept/:friendshipId', async (req, res) => {
  */
 router.post('/decline/:friendshipId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -222,7 +238,7 @@ router.post('/decline/:friendshipId', async (req, res) => {
  */
 router.delete('/:friendId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -241,7 +257,7 @@ router.delete('/:friendId', async (req, res) => {
  */
 router.post('/block/:userId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -264,7 +280,7 @@ router.post('/block/:userId', async (req, res) => {
  */
 router.get('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -283,7 +299,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/requests/pending', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -302,7 +318,7 @@ router.get('/requests/pending', async (req, res) => {
  */
 router.get('/requests/sent', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -325,7 +341,7 @@ router.get('/requests/sent', async (req, res) => {
  */
 router.get('/recommendations', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -349,7 +365,7 @@ router.get('/recommendations', async (req, res) => {
  */
 router.put('/status/online', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

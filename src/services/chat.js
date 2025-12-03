@@ -124,14 +124,10 @@ const ChatService = {
       media_size,
       media_duration,
       reply_to_id,
-      expires_in_days = 7 // Default 7 day expiry
+      persistent = true // Messages are persistent by default now
     } = messageData;
     
-    // Calculate expiry date
-    const expires_at = new Date();
-    expires_at.setDate(expires_at.getDate() + expires_in_days);
-    
-    // Insert message
+    // Insert message (no expiry - messages persist until deleted by user/admin)
     const { data: message, error } = await supabase
       .from('friend_messages')
       .insert({
@@ -144,7 +140,7 @@ const ChatService = {
         media_size,
         media_duration,
         reply_to_id,
-        expires_at: expires_at.toISOString(),
+        expires_at: null, // No expiry - messages are persistent
         stored_locally: message_type !== 'text'
       })
       .select(`
