@@ -306,7 +306,7 @@ router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
 router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { text, type, fileName, fileType, fileSize, fileHash, replyToId } = req.body;
+    const { text, type, fileName, fileType, fileSize, fileHash, fileUrl, replyToId } = req.body;
     
     if (!text && type === 'text') {
       return res.status(400).json({ success: false, error: 'Message text is required' });
@@ -319,6 +319,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       fileType,
       fileSize,
       fileHash,
+      fileUrl, // Persistent URL from Supabase Storage
       replyToId
     });
     
