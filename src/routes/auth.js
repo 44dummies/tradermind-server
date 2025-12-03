@@ -161,21 +161,37 @@ router.post('/deriv', async (req, res) => {
       return res.status(400).json({ error: 'Deriv user ID or login ID is required' });
     }
     
+    console.log('Looking for user with derivId:', derivId);
+    
     // Find or create user - use derivId (column name in database)
-    let user = await prisma.user.findUnique({ where: { derivId } });
+    let user;
+    try {
+      user = await prisma.user.findUnique({ where: { derivId } });
+      console.log('User lookup result:', user ? 'found' : 'not found');
+    } catch (dbErr) {
+      console.error('Database lookup error:', dbErr.message);
+      throw dbErr;
+    }
     
     if (!user) {
+      console.log('Creating new user...');
       // Create new user from Deriv login
-      user = await prisma.user.create({
-        data: {
-          id: uuidv4(),
-          derivId,
-          email: email || null,
-          fullName: fullname || null,
-          country: country || null,
-          traderLevel: 'BEGINNER'
-        }
-      });
+      try {
+        user = await prisma.user.create({
+          data: {
+            id: uuidv4(),
+            derivId,
+            email: email || null,
+            fullName: fullname || null,
+            country: country || null,
+            traderLevel: 'BEGINNER'
+          }
+        });
+        console.log('User created:', user.id);
+      } catch (createErr) {
+        console.error('User creation error:', createErr.message);
+        throw createErr;
+      }
       
       // Auto-assign to chatrooms
       await autoAssignUserToChatrooms(user.id);
