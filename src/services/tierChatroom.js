@@ -195,6 +195,7 @@ async function sendMessage(chatroomId, senderId, messageData) {
     fileType = null, 
     fileSize = null,
     fileHash = null,
+    fileUrl = null, // Persistent URL from Supabase Storage
     replyToId = null 
   } = messageData;
   
@@ -209,6 +210,7 @@ async function sendMessage(chatroomId, senderId, messageData) {
       file_type: fileType,
       file_size: fileSize,
       file_hash: fileHash,
+      file_url: fileUrl, // Store the Supabase Storage URL
       reply_to_id: replyToId
     })
     .select(`

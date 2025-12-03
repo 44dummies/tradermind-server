@@ -26,6 +26,9 @@ const leaderboardRoutes = require('./routes/leaderboard');
 const mentorRoutes = require('./routes/mentor');
 const achievementsRoutes = require('./routes/achievements');
 
+// File upload routes
+const filesRoutes = require('./routes/files');
+
 // Import socket handlers
 const { setupSocketHandlers } = require('./socket');
 const { setupFriendsSocketHandlers } = require('./socket/friends');
@@ -98,6 +101,9 @@ app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/mentor', mentorRoutes);
 app.use('/api/achievements', achievementsRoutes);
 
+// File upload API Routes
+app.use('/api/files', filesRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -159,6 +165,9 @@ process.on('SIGTERM', () => {
   });
 });
 
+// Import file storage initialization
+const { initializeStorageBuckets } = require('./services/fileStorage');
+
 const PORT = process.env.PORT || 3001;
 
 // Initialize server
@@ -167,6 +176,9 @@ async function startServer() {
     // Initialize default chatrooms
     await initializeDefaultChatrooms();
     
+    // Initialize file storage buckets
+    await initializeStorageBuckets();
+    
     // Start cron jobs
     startCronJobs();
     
@@ -174,6 +186,7 @@ async function startServer() {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
       console.log(`📡 WebSocket ready for connections`);
       console.log(`👥 Friends Center System active`);
+      console.log(`📁 File storage initialized`);
       console.log(`🔗 CORS origins: ${corsOrigins.join(', ')}`);
     });
   } catch (err) {

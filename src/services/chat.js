@@ -123,6 +123,7 @@ const ChatService = {
       media_type,
       media_size,
       media_duration,
+      file_url, // Persistent URL from Supabase Storage
       reply_to_id,
       persistent = true // Messages are persistent by default now
     } = messageData;
@@ -139,9 +140,10 @@ const ChatService = {
         media_type,
         media_size,
         media_duration,
+        file_url, // Store the Supabase Storage URL
         reply_to_id,
         expires_at: null, // No expiry - messages are persistent
-        stored_locally: message_type !== 'text'
+        stored_locally: false // Files are now stored in Supabase Storage
       })
       .select(`
         *,
