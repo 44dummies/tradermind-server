@@ -6,10 +6,10 @@
 const express = require('express');
 const router = express.Router();
 const FriendsService = require('../services/friends');
-const { authenticateToken } = require('../middleware/auth');
+const { authMiddleware } = require('../middleware/auth');
 
 // Apply auth middleware to all routes
-router.use(authenticateToken);
+router.use(authMiddleware);
 
 // =============================================
 // USER PROFILE ROUTES

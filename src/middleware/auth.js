@@ -21,8 +21,14 @@ function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
   
+  // Set both formats for compatibility
   req.userId = decoded.userId;
   req.username = decoded.username;
+  req.user = {
+    id: decoded.userId,
+    derivId: decoded.derivId || decoded.userId,
+    username: decoded.username
+  };
   next();
 }
 
