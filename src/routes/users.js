@@ -280,4 +280,174 @@ router.post('/unblock', authMiddleware, async (req, res) => {
   }
 });
 
+// ============ Settings Routes ============
+
+const FriendsService = require('../services/friends');
+const { supabase } = require('../db/supabase');
+
+/**
+ * Get user settings
+ * GET /api/users/settings
+ */
+router.get('/settings', authMiddleware, async (req, res) => {
+  try {
+    // Get user profile by derivId (which is stored in req.user.derivId)
+    const user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get settings from user_settings table or use defaults
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    res.json({
+      profile: {
+        username: user.username,
+        display_name: user.display_name || user.fullname,
+        fullname: user.fullname,
+        bio: user.bio || '',
+        status_message: user.status_message || '',
+        profile_photo: user.profile_photo,
+        profile_photo_metadata: user.profile_photo_metadata,
+        email: user.email,
+        country: user.country,
+        deriv_id: user.deriv_id,
+        performance_tier: user.performance_tier,
+      },
+      privacy: settings?.privacy || {
+        showUsername: true,
+        showRealName: false,
+        showEmail: false,
+        showCountry: true,
+        showPerformance: true,
+        showOnlineStatus: true,
+        profileVisibility: 'public',
+        allowFriendRequests: true,
+        allowMessages: 'friends',
+      },
+      notifications: settings?.notifications || {
+        friendRequests: true,
+        messages: true,
+        chatMentions: true,
+        achievements: true,
+        streakReminders: true,
+        communityUpdates: true,
+        soundEnabled: true,
+        pushEnabled: false,
+      },
+      chat: settings?.chat || {
+        enterToSend: true,
+        showTypingIndicator: true,
+        showReadReceipts: true,
+        autoDeleteMessages: false,
+        messageRetention: 30,
+      },
+    });
+  } catch (error) {
+    console.error('Get settings error:', error);
+    res.status(500).json({ error: 'Failed to get settings' });
+  }
+});
+
+/**
+ * Update user settings
+ * PUT /api/users/settings
+ */
+router.put('/settings', authMiddleware, async (req, res) => {
+  try {
+    const { profile, privacy, notifications, chat } = req.body;
+    
+    // Get user profile
+    const user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Validate username uniqueness if changed
+    if (profile?.username && profile.username !== user.username) {
+      const { data: existingUser } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('username', profile.username)
+        .neq('id', user.id)
+        .single();
+      
+      if (existingUser) {
+        return res.status(400).json({ error: 'Username already taken' });
+      }
+    }
+
+    // Update profile
+    if (profile) {
+      const profileUpdate = {};
+      if (profile.username) profileUpdate.username = profile.username.toLowerCase();
+      if (profile.display_name !== undefined) profileUpdate.display_name = profile.display_name;
+      if (profile.bio !== undefined) profileUpdate.bio = profile.bio;
+      if (profile.status_message !== undefined) profileUpdate.status_message = profile.status_message;
+      if (profile.profile_photo !== undefined) profileUpdate.profile_photo = profile.profile_photo;
+      if (profile.profile_photo_metadata !== undefined) {
+        profileUpdate.profile_photo_metadata = profile.profile_photo_metadata;
+      }
+
+      if (Object.keys(profileUpdate).length > 0) {
+        await supabase
+          .from('user_profiles')
+          .update(profileUpdate)
+          .eq('id', user.id);
+      }
+    }
+
+    // Upsert settings
+    const settingsData = {
+      user_id: user.id,
+      privacy: privacy || {},
+      notifications: notifications || {},
+      chat: chat || {},
+      updated_at: new Date().toISOString(),
+    };
+
+    await supabase
+      .from('user_settings')
+      .upsert(settingsData, { onConflict: 'user_id' });
+
+    res.json({ success: true, message: 'Settings updated successfully' });
+  } catch (error) {
+    console.error('Update settings error:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+/**
+ * Check username availability
+ * GET /api/users/check-username/:username
+ */
+router.get('/check-username/:username', authMiddleware, async (req, res) => {
+  try {
+    const username = req.params.username.toLowerCase();
+    
+    // Validate format
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      return res.json({ available: false, reason: 'Invalid format' });
+    }
+
+    const { data: existingUser } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .eq('username', username)
+      .single();
+
+    res.json({ 
+      available: !existingUser,
+      reason: existingUser ? 'Username taken' : null
+    });
+  } catch (error) {
+    console.error('Check username error:', error);
+    res.status(500).json({ error: 'Failed to check username' });
+  }
+});
+
 module.exports = router;
