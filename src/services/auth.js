@@ -5,7 +5,9 @@
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-in-production';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'fallback-refresh-secret-change-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+const JWT_REFRESH_EXPIRES_IN = '7d';
 
 /**
  * Generate JWT token
@@ -15,11 +17,41 @@ function generateToken(payload) {
 }
 
 /**
+ * Generate both access and refresh tokens
+ */
+function generateTokens(userId, username) {
+  const accessToken = jwt.sign(
+    { userId, username },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+  
+  const refreshToken = jwt.sign(
+    { userId, username, type: 'refresh' },
+    JWT_REFRESH_SECRET,
+    { expiresIn: JWT_REFRESH_EXPIRES_IN }
+  );
+  
+  return { accessToken, refreshToken };
+}
+
+/**
  * Verify JWT token
  */
 function verifyToken(token) {
   try {
     return jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Verify refresh token
+ */
+function verifyRefreshToken(token) {
+  try {
+    return jwt.verify(token, JWT_REFRESH_SECRET);
   } catch (error) {
     return null;
   }
@@ -68,7 +100,9 @@ function socketAuthMiddleware(socket, next) {
 
 module.exports = {
   generateToken,
+  generateTokens,
   verifyToken,
+  verifyRefreshToken,
   authMiddleware,
   socketAuthMiddleware
 };
