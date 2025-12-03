@@ -15,6 +15,7 @@ const {
   getTrendingTags,
   searchPosts
 } = require('../services/community');
+const tierChatroomService = require('../services/tierChatroom');
 const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
@@ -198,6 +199,186 @@ router.get('/search', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Search posts error:', error);
     res.status(500).json({ error: 'Failed to search posts' });
+  }
+});
+
+// =============================================
+// TIER-BASED CHATROOM ROUTES
+// =============================================
+
+/**
+ * GET /api/community/tier-chatrooms
+ * Get all tier chatrooms
+ */
+router.get('/tier-chatrooms', async (req, res) => {
+  try {
+    const chatrooms = await tierChatroomService.getTierChatrooms();
+    res.json({ success: true, chatrooms });
+  } catch (error) {
+    console.error('Error fetching chatrooms:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch chatrooms' });
+  }
+});
+
+/**
+ * GET /api/community/my-tier-chatroom
+ * Get current user's assigned chatroom
+ */
+router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
+  try {
+    const assignment = await tierChatroomService.getUserTierChatroom(req.userId);
+    res.json({ success: true, assignment });
+  } catch (error) {
+    console.error('Error fetching user chatroom:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch chatroom' });
+  }
+});
+
+/**
+ * POST /api/community/assign-tier
+ * Assign user to tier chatroom based on their analytics
+ */
+router.post('/assign-tier', authMiddleware, async (req, res) => {
+  try {
+    const { winRate = 0, totalTrades = 0 } = req.body;
+    
+    const result = await tierChatroomService.assignUserToTierChatroom(
+      req.userId,
+      req.user?.derivId || req.userId,
+      winRate,
+      totalTrades
+    );
+    
+    if (!result) {
+      return res.status(500).json({ success: false, error: 'Failed to assign chatroom' });
+    }
+    
+    res.json({ 
+      success: true, 
+      chatroom: result.chatroom,
+      tier: result.tier,
+      message: `You've been assigned to ${result.chatroom.name}` 
+    });
+  } catch (error) {
+    console.error('Error assigning user:', error);
+    res.status(500).json({ success: false, error: 'Failed to assign chatroom' });
+  }
+});
+
+/**
+ * GET /api/community/tier-chatroom/:id/members
+ * Get members of a chatroom
+ */
+router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 50 } = req.query;
+    
+    const members = await tierChatroomService.getChatroomMembers(id, parseInt(limit));
+    res.json({ success: true, members });
+  } catch (error) {
+    console.error('Error fetching members:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch members' });
+  }
+});
+
+/**
+ * GET /api/community/tier-chatroom/:id/messages
+ * Get messages from a chatroom
+ */
+router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 50, before } = req.query;
+    
+    const messages = await tierChatroomService.getChatroomMessages(id, parseInt(limit), before);
+    res.json({ success: true, messages });
+  } catch (error) {
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch messages' });
+  }
+});
+
+/**
+ * POST /api/community/tier-chatroom/:id/message
+ * Send a message to a chatroom
+ */
+router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { text, type, fileName, fileType, fileSize, fileHash, replyToId } = req.body;
+    
+    if (!text && type === 'text') {
+      return res.status(400).json({ success: false, error: 'Message text is required' });
+    }
+    
+    const result = await tierChatroomService.sendMessage(id, req.userId, {
+      text,
+      type,
+      fileName,
+      fileType,
+      fileSize,
+      fileHash,
+      replyToId
+    });
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({ success: false, error: 'Failed to send message' });
+  }
+});
+
+/**
+ * POST /api/community/tier-message/:id/reaction
+ * Add/remove reaction to a message
+ */
+router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { emoji } = req.body;
+    
+    if (!emoji) {
+      return res.status(400).json({ success: false, error: 'Emoji is required' });
+    }
+    
+    const result = await tierChatroomService.addReaction(id, req.userId, emoji);
+    res.json(result);
+  } catch (error) {
+    console.error('Error adding reaction:', error);
+    res.status(500).json({ success: false, error: 'Failed to add reaction' });
+  }
+});
+
+/**
+ * DELETE /api/community/tier-message/:id
+ * Delete a message
+ */
+router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await tierChatroomService.deleteMessage(id, req.userId, req.user?.isAdmin);
+    res.json(result);
+  } catch (error) {
+    console.error('Error deleting message:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete message' });
+  }
+});
+
+/**
+ * POST /api/community/tier-chatroom/:id/typing
+ * Set typing indicator
+ */
+router.post('/tier-chatroom/:id/typing', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isTyping } = req.body;
+    
+    await tierChatroomService.setTyping(id, req.userId, isTyping);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error setting typing:', error);
+    res.status(500).json({ success: false, error: 'Failed to set typing' });
   }
 });
 
