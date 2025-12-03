@@ -155,8 +155,8 @@ const FriendsService = {
   // =============================================
 
   /**
-   * Search users by username, display_name, fullname, or deriv_id (fuzzy match)
-   * Shows username/display_name to friends, but hides deriv_id unless you're the user
+   * Search users by username or display_name (fuzzy match)
+   * TraderMind username only - deriv_id is private
    */
   async searchUsers(searchTerm, currentUserId, limit = 20) {
     // Try stored function first
@@ -168,7 +168,7 @@ const FriendsService = {
       });
     
     if (error) {
-      // Fallback to direct query with multiple search fields
+      // Fallback to direct query - search by username and display_name only
       const searchPattern = `%${searchTerm}%`;
       
       const { data: fallbackData, error: fallbackError } = await supabase
@@ -186,7 +186,7 @@ const FriendsService = {
           is_online
         `)
         .neq('id', currentUserId)
-        .or(`username.ilike.${searchPattern},display_name.ilike.${searchPattern},fullname.ilike.${searchPattern},deriv_id.ilike.${searchPattern}`)
+        .or(`username.ilike.${searchPattern},display_name.ilike.${searchPattern}`)
         .limit(limit);
       
       if (fallbackError) throw fallbackError;
@@ -197,7 +197,7 @@ const FriendsService = {
         return { 
           ...user, 
           friendship_status: friendship?.status || 'none',
-          // Only show deriv_id to the user themselves - others see display name
+          // Hide deriv_id for privacy - not used for search
           deriv_id: undefined,
           // Use display_name or username as the visible name
           display_name: user.display_name || user.username || user.fullname

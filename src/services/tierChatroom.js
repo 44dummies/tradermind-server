@@ -44,6 +44,24 @@ async function getUserTierChatroom(userId) {
 }
 
 /**
+ * Check if user is already assigned to any tier chatroom
+ */
+async function isUserAlreadyAssigned(userId) {
+  const { data, error } = await supabase
+    .from('chatroom_members')
+    .select('id, chatroom_id')
+    .eq('user_id', userId)
+    .limit(1);
+  
+  if (error) {
+    console.error('Error checking user assignment:', error);
+    return false;
+  }
+  
+  return data && data.length > 0;
+}
+
+/**
  * Calculate user tier based on their trading analytics
  */
 function calculateTier(winRate, totalTrades) {
@@ -56,8 +74,28 @@ function calculateTier(winRate, totalTrades) {
 
 /**
  * Assign user to appropriate tier chatroom based on their analytics
+ * Only assigns on first login - does not reassign existing users
+ * @param {boolean} forceReassign - If true, will reassign even if already assigned (for tier changes)
  */
-async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrades = 0) {
+async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrades = 0, forceReassign = false) {
+  // Check if user is already assigned (skip reassignment unless forced)
+  if (!forceReassign) {
+    const alreadyAssigned = await isUserAlreadyAssigned(userId);
+    if (alreadyAssigned) {
+      console.log(`User ${userId} already assigned to a chatroom, skipping assignment`);
+      // Return their current assignment
+      const currentAssignment = await getUserTierChatroom(userId);
+      if (currentAssignment?.tier_chatrooms) {
+        return { 
+          chatroom: currentAssignment.tier_chatrooms, 
+          member: currentAssignment, 
+          tier: currentAssignment.tier_chatrooms.tier,
+          alreadyAssigned: true 
+        };
+      }
+    }
+  }
+  
   const tier = calculateTier(winRate, totalTrades);
   
   // Get the chatroom for this tier
@@ -72,11 +110,13 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
     return null;
   }
   
-  // Remove from any other tier chatrooms
-  await supabase
-    .from('chatroom_members')
-    .delete()
-    .eq('user_id', userId);
+  // Only remove from other chatrooms if forcing reassignment
+  if (forceReassign) {
+    await supabase
+      .from('chatroom_members')
+      .delete()
+      .eq('user_id', userId);
+  }
   
   // Add to correct tier chatroom
   const { data: member, error: memberError } = await supabase
@@ -108,7 +148,7 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
     .update({ member_count: count })
     .eq('id', chatroom.id);
   
-  return { chatroom, member, tier };
+  return { chatroom, member, tier, alreadyAssigned: false };
 }
 
 /**
@@ -421,6 +461,7 @@ async function getChatroomOnlineCount(chatroomId) {
 module.exports = {
   getTierChatrooms,
   getUserTierChatroom,
+  isUserAlreadyAssigned,
   calculateTier,
   assignUserToTierChatroom,
   getChatroomMembers,

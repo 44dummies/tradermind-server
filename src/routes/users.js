@@ -291,8 +291,12 @@ const { supabase } = require('../db/supabase');
  */
 router.get('/settings', authMiddleware, async (req, res) => {
   try {
+    console.log('GET /settings - User:', req.user);
+    
     // Get user profile by derivId (which is stored in req.user.derivId)
     let user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    
+    console.log('Profile found:', user ? user.id : 'null');
     
     // If user doesn't exist, create a new profile
     if (!user) {
@@ -303,14 +307,19 @@ router.get('/settings', authMiddleware, async (req, res) => {
         email: null,
         country: null
       });
+      console.log('Created user:', user.id);
     }
 
     // Get settings from user_settings table or use defaults
-    const { data: settings } = await supabase
+    const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
       .select('*')
       .eq('user_id', user.id)
       .single();
+    
+    if (settingsError && settingsError.code !== 'PGRST116') {
+      console.error('Settings query error:', settingsError);
+    }
 
     res.json({
       profile: {
@@ -325,6 +334,7 @@ router.get('/settings', authMiddleware, async (req, res) => {
         country: user.country,
         deriv_id: user.deriv_id,
         performance_tier: user.performance_tier,
+        is_profile_complete: user.is_profile_complete || false,
       },
       privacy: settings?.privacy || {
         showUsername: true,
