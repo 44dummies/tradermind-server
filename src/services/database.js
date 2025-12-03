@@ -13,10 +13,12 @@ const db = {
   // User operations
   user: {
     async findUnique({ where, include }) {
-      const query = supabase.from('User').select('*');
-      if (where.id) query.eq('id', where.id);
-      if (where.derivId) query.eq('derivId', where.derivId);
-      if (where.email) query.eq('email', where.email);
+      let query = supabase.from('User').select('*');
+      if (where.id) query = query.eq('id', where.id);
+      if (where.derivId) query = query.eq('derivId', where.derivId);
+      if (where.derivUserId) query = query.eq('derivUserId', where.derivUserId);
+      if (where.username) query = query.eq('username', where.username);
+      if (where.email) query = query.eq('email', where.email);
       const { data, error } = await query.single();
       if (error) return null;
       return data;
@@ -43,6 +45,7 @@ const db = {
       let query = supabase.from('User').update(data);
       if (where.id) query = query.eq('id', where.id);
       if (where.derivId) query = query.eq('derivId', where.derivId);
+      if (where.derivUserId) query = query.eq('derivUserId', where.derivUserId);
       const { data: result, error } = await query.select().single();
       if (error) throw error;
       return result;
