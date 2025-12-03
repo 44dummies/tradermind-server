@@ -119,168 +119,7 @@ router.get('/search', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get user public profile by username
- * GET /api/users/:username
- */
-router.get('/:username', authMiddleware, async (req, res) => {
-  try {
-    const profile = await getPublicProfile(req.params.username);
-    if (!profile) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(profile);
-  } catch (error) {
-    console.error('Get public profile error:', error);
-    res.status(500).json({ error: 'Failed to get profile' });
-  }
-});
-
-// ============ Friends Routes ============
-
-/**
- * Get friend list
- * GET /api/users/friends/list
- */
-router.get('/friends/list', authMiddleware, async (req, res) => {
-  try {
-    const friends = await getFriendList(req.userId);
-    res.json(friends);
-  } catch (error) {
-    console.error('Get friends error:', error);
-    res.status(500).json({ error: 'Failed to get friends' });
-  }
-});
-
-/**
- * Get pending friend requests
- * GET /api/users/friends/pending
- */
-router.get('/friends/pending', authMiddleware, async (req, res) => {
-  try {
-    const requests = await getPendingRequests(req.userId);
-    res.json(requests);
-  } catch (error) {
-    console.error('Get pending requests error:', error);
-    res.status(500).json({ error: 'Failed to get pending requests' });
-  }
-});
-
-/**
- * Send friend request
- * POST /api/users/friends/request
- */
-router.post('/friends/request', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await sendFriendRequest(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Send friend request error:', error);
-    res.status(500).json({ error: 'Failed to send friend request' });
-  }
-});
-
-/**
- * Accept friend request
- * POST /api/users/friends/accept/:requestId
- */
-router.post('/friends/accept/:requestId', authMiddleware, async (req, res) => {
-  try {
-    const result = await acceptFriendRequest(req.userId, req.params.requestId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Accept friend request error:', error);
-    res.status(500).json({ error: 'Failed to accept friend request' });
-  }
-});
-
-/**
- * Decline friend request
- * POST /api/users/friends/decline/:requestId
- */
-router.post('/friends/decline/:requestId', authMiddleware, async (req, res) => {
-  try {
-    const result = await declineFriendRequest(req.userId, req.params.requestId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Decline friend request error:', error);
-    res.status(500).json({ error: 'Failed to decline friend request' });
-  }
-});
-
-/**
- * Remove friend
- * DELETE /api/users/friends/:friendshipId
- */
-router.delete('/friends/:friendshipId', authMiddleware, async (req, res) => {
-  try {
-    const result = await removeFriend(req.userId, req.params.friendshipId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Remove friend error:', error);
-    res.status(500).json({ error: 'Failed to remove friend' });
-  }
-});
-
-/**
- * Block user
- * POST /api/users/block
- */
-router.post('/block', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await blockUser(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Block user error:', error);
-    res.status(500).json({ error: 'Failed to block user' });
-  }
-});
-
-/**
- * Unblock user
- * POST /api/users/unblock
- */
-router.post('/unblock', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await unblockUser(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Unblock user error:', error);
-    res.status(500).json({ error: 'Failed to unblock user' });
-  }
-});
-
-// ============ Settings Routes ============
+// ============ Settings Routes (MUST be before /:username) ============
 
 const FriendsService = require('../services/friends');
 const { supabase } = require('../db/supabase');
@@ -293,7 +132,7 @@ router.get('/settings', authMiddleware, async (req, res) => {
   try {
     console.log('GET /settings - User:', req.user);
     
-    // Get user profile by derivId (which is stored in req.user.derivId)
+    // Get user profile by derivId
     let user = await FriendsService.getProfileByDerivId(req.user.derivId);
     
     console.log('Profile found:', user ? user.id : 'null');
@@ -486,6 +325,169 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Check username error:', error);
     res.status(500).json({ error: 'Failed to check username' });
+  }
+});
+
+// ============ Dynamic Username Route (MUST be LAST) ============
+
+/**
+ * Get user public profile by username
+ * GET /api/users/:username
+ */
+router.get('/:username', authMiddleware, async (req, res) => {
+  try {
+    const profile = await getPublicProfile(req.params.username);
+    if (!profile) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(profile);
+  } catch (error) {
+    console.error('Get public profile error:', error);
+    res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+// ============ Friends Routes ============
+
+/**
+ * Get friend list
+ * GET /api/users/friends/list
+ */
+router.get('/friends/list', authMiddleware, async (req, res) => {
+  try {
+    const friends = await getFriendList(req.userId);
+    res.json(friends);
+  } catch (error) {
+    console.error('Get friends error:', error);
+    res.status(500).json({ error: 'Failed to get friends' });
+  }
+});
+
+/**
+ * Get pending friend requests
+ * GET /api/users/friends/pending
+ */
+router.get('/friends/pending', authMiddleware, async (req, res) => {
+  try {
+    const requests = await getPendingRequests(req.userId);
+    res.json(requests);
+  } catch (error) {
+    console.error('Get pending requests error:', error);
+    res.status(500).json({ error: 'Failed to get pending requests' });
+  }
+});
+
+/**
+ * Send friend request
+ * POST /api/users/friends/request
+ */
+router.post('/friends/request', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    const result = await sendFriendRequest(req.userId, username);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Send friend request error:', error);
+    res.status(500).json({ error: 'Failed to send friend request' });
+  }
+});
+
+/**
+ * Accept friend request
+ * POST /api/users/friends/accept/:requestId
+ */
+router.post('/friends/accept/:requestId', authMiddleware, async (req, res) => {
+  try {
+    const result = await acceptFriendRequest(req.userId, req.params.requestId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Accept friend request error:', error);
+    res.status(500).json({ error: 'Failed to accept friend request' });
+  }
+});
+
+/**
+ * Decline friend request
+ * POST /api/users/friends/decline/:requestId
+ */
+router.post('/friends/decline/:requestId', authMiddleware, async (req, res) => {
+  try {
+    const result = await declineFriendRequest(req.userId, req.params.requestId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Decline friend request error:', error);
+    res.status(500).json({ error: 'Failed to decline friend request' });
+  }
+});
+
+/**
+ * Remove friend
+ * DELETE /api/users/friends/:friendshipId
+ */
+router.delete('/friends/:friendshipId', authMiddleware, async (req, res) => {
+  try {
+    const result = await removeFriend(req.userId, req.params.friendshipId);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Remove friend error:', error);
+    res.status(500).json({ error: 'Failed to remove friend' });
+  }
+});
+
+/**
+ * Block user
+ * POST /api/users/block
+ */
+router.post('/block', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    const result = await blockUser(req.userId, username);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Block user error:', error);
+    res.status(500).json({ error: 'Failed to block user' });
+  }
+});
+
+/**
+ * Unblock user
+ * POST /api/users/unblock
+ */
+router.post('/unblock', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    const result = await unblockUser(req.userId, username);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (error) {
+    console.error('Unblock user error:', error);
+    res.status(500).json({ error: 'Failed to unblock user' });
   }
 });
 
