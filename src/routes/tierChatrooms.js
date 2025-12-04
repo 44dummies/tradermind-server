@@ -308,7 +308,7 @@ router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(parseInt(limit));
 
-    if (before) {
+    if (before && before !== "null") {
       query = query.lt('created_at', before);
     }
 
