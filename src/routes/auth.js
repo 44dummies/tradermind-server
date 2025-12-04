@@ -1,6 +1,4 @@
-/**
- * Authentication Routes
- */
+
 
 const express = require('express');
 const { prisma } = require('../services/database');
@@ -11,42 +9,38 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
-/**
- * Register new user
- * POST /api/auth/register
- */
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password, derivUserId, currency, country } = req.body;
     
-    // Validate required fields
+    
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
     }
     
-    // Validate username format
+    
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
       return res.status(400).json({ 
         error: 'Username must be 3-20 characters and contain only letters, numbers, and underscores' 
       });
     }
     
-    // Check if username exists
+    
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername) {
       return res.status(400).json({ error: 'Username already taken' });
     }
     
-    // Check if email exists
+    
     const existingEmail = await prisma.user.findUnique({ where: { email } });
     if (existingEmail) {
       return res.status(400).json({ error: 'Email already registered' });
     }
     
-    // Hash password
+    
     const passwordHash = await bcrypt.hash(password, 12);
     
-    // Create user
+    
     const user = await prisma.user.create({
       data: {
         id: uuidv4(),
@@ -60,13 +54,13 @@ router.post('/register', async (req, res) => {
       }
     });
     
-    // Auto-assign to chatrooms
+    
     await autoAssignUserToChatrooms(user.id);
     
-    // Generate tokens
+    
     const { accessToken, refreshToken } = generateTokens(user.id, user.username);
     
-    // Store refresh token
+    
     await prisma.user.update({
       where: { id: user.id },
       data: { refreshToken }
@@ -87,10 +81,6 @@ router.post('/register', async (req, res) => {
   }
 });
 
-/**
- * Login
- * POST /api/auth/login
- */
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -99,27 +89,27 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     
-    // Find user
+    
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Check if banned
+    
     if (user.isBanned) {
       return res.status(403).json({ error: 'Account suspended' });
     }
     
-    // Verify password
+    
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Generate tokens
+    
     const { accessToken, refreshToken } = generateTokens(user.id, user.username);
     
-    // Update user
+    
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -146,16 +136,12 @@ router.post('/login', async (req, res) => {
   }
 });
 
-/**
- * Login with Deriv OAuth
- * POST /api/auth/deriv
- */
 router.post('/deriv', async (req, res) => {
   try {
     console.log('Deriv auth request body:', req.body);
     const { derivUserId, loginid, email, currency, country, fullname } = req.body;
     
-    // Use derivUserId or loginid as the derivId
+    
     const derivId = derivUserId || loginid;
     
     console.log('Extracted values:', { derivUserId, loginid, derivId, email });
@@ -167,7 +153,7 @@ router.post('/deriv', async (req, res) => {
     
     console.log('Looking for user with derivId:', derivId);
     
-    // Find or create user - use derivId (column name in database)
+    
     let user;
     try {
       user = await prisma.user.findUnique({ where: { derivId } });
@@ -179,9 +165,9 @@ router.post('/deriv', async (req, res) => {
     
     if (!user) {
       console.log('Creating new user...');
-      // Create new user from Deriv login
+      
       try {
-        // Generate a username from derivId or email
+        
         const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
         
         user = await prisma.user.create({
@@ -202,19 +188,19 @@ router.post('/deriv', async (req, res) => {
         throw createErr;
       }
       
-      // Auto-assign to chatrooms
+      
       await autoAssignUserToChatrooms(user.id);
     }
     
-    // Check if banned
+    
     if (user.isBanned) {
       return res.status(403).json({ error: 'Account suspended' });
     }
     
-    // Generate tokens - use derivId as username since we don't have username column
+    
     const { accessToken, refreshToken } = generateTokens(user.id, user.derivId);
     
-    // Update user online status
+    
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -246,10 +232,6 @@ router.post('/deriv', async (req, res) => {
   }
 });
 
-/**
- * Refresh token
- * POST /api/auth/refresh
- */
 router.post('/refresh', async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -258,13 +240,13 @@ router.post('/refresh', async (req, res) => {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
     
-    // Verify refresh token
+    
     const decoded = verifyRefreshToken(refreshToken);
     if (!decoded) {
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
     
-    // Find user and verify stored token
+    
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId }
     });
@@ -273,10 +255,10 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
     
-    // Generate new tokens
+    
     const tokens = generateTokens(user.id, user.username);
     
-    // Update stored refresh token
+    
     await prisma.user.update({
       where: { id: user.id },
       data: { refreshToken: tokens.refreshToken }
@@ -289,10 +271,6 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-/**
- * Logout
- * POST /api/auth/logout
- */
 router.post('/logout', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
@@ -320,10 +298,6 @@ router.post('/logout', async (req, res) => {
   }
 });
 
-/**
- * Get current user
- * GET /api/auth/me
- */
 router.get('/me', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;

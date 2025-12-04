@@ -1,16 +1,9 @@
-/**
- * Database Service - Supabase Client
- * Provides ORM-like interface for database operations
- */
+
 
 const { supabase } = require('../db/supabase');
 
-/**
- * Database wrapper for Supabase
- * Provides consistent interface for all database operations
- */
 const db = {
-  // User operations
+  
   user: {
     async findUnique({ where, include }) {
       let query = supabase.from('user_profiles').select('*');
@@ -19,7 +12,7 @@ const db = {
       if (where.email) query = query.eq('email', where.email);
       const { data, error } = await query.single();
       if (error) return null;
-      // Map snake_case to camelCase for consistency
+      
       if (data) {
         data.derivId = data.deriv_id;
         data.isOnline = data.is_online;
@@ -46,7 +39,7 @@ const db = {
       if (take) query = query.limit(take);
       if (skip) query = query.range(skip, skip + (take || 10) - 1);
       const { data, error } = await query;
-      // Map snake_case to camelCase
+      
       return (data || []).map(item => ({
         ...item,
         derivId: item.deriv_id,
@@ -60,7 +53,7 @@ const db = {
       }));
     },
     async create({ data }) {
-      // Map camelCase to snake_case
+      
       const dbData = {
         id: data.id,
         deriv_id: data.derivId,
@@ -75,7 +68,7 @@ const db = {
       };
       const { data: result, error } = await supabase.from('user_profiles').insert(dbData).select().single();
       if (error) throw error;
-      // Map back to camelCase
+      
       if (result) {
         result.derivId = result.deriv_id;
         result.isOnline = result.is_online;
@@ -89,7 +82,7 @@ const db = {
       return result;
     },
     async update({ where, data }) {
-      // Map camelCase to snake_case
+      
       const dbData = {};
       if (data.isOnline !== undefined) dbData.is_online = data.isOnline;
       if (data.lastSeen) dbData.last_seen = data.lastSeen;
@@ -104,7 +97,7 @@ const db = {
       if (where.derivId) query = query.eq('deriv_id', where.derivId);
       const { data: result, error } = await query.select().single();
       if (error) throw error;
-      // Map back to camelCase
+      
       if (result) {
         result.derivId = result.deriv_id;
         result.isOnline = result.is_online;
@@ -132,7 +125,7 @@ const db = {
     }
   },
 
-  // Chatroom operations
+  
   chatroom: {
     async findUnique({ where }) {
       const { data } = await supabase.from('Chatroom').select('*').eq('id', where.id).single();
@@ -158,7 +151,7 @@ const db = {
     async upsert({ where, create, update }) {
       const existing = await this.findUnique({ where });
       if (existing) {
-        // Update existing chatroom
+        
         const { data: result, error } = await supabase
           .from('Chatroom')
           .update(update)
@@ -168,7 +161,7 @@ const db = {
         if (error) throw error;
         return result;
       }
-      // Create new chatroom
+      
       return this.create({ data: create });
     },
     async count({ where = {} } = {}) {
@@ -179,7 +172,7 @@ const db = {
     }
   },
 
-  // Message operations
+  
   message: {
     async findMany({ where = {}, orderBy, take, include } = {}) {
       let query = supabase.from('Message').select('*');
@@ -209,7 +202,7 @@ const db = {
     }
   },
 
-  // UserChatroom operations
+  
   userChatroom: {
     async findUnique({ where }) {
       if (where.userId_chatroomId) {
@@ -255,7 +248,7 @@ const db = {
     }
   },
 
-  // Friend operations
+  
   friend: {
     async findFirst({ where }) {
       let query = supabase.from('Friend').select('*');
@@ -296,7 +289,7 @@ const db = {
     }
   },
 
-  // CommunityPost operations
+  
   communityPost: {
     async findUnique({ where }) {
       const { data } = await supabase.from('CommunityPost').select('*').eq('id', where.id).single();
@@ -337,7 +330,7 @@ const db = {
     }
   },
 
-  // PostComment operations
+  
   postComment: {
     async findMany({ where = {}, orderBy } = {}) {
       let query = supabase.from('PostComment').select('*');
@@ -357,7 +350,7 @@ const db = {
     }
   },
 
-  // PostLike operations
+  
   postLike: {
     async findUnique({ where }) {
       if (where.postId_userId) {
@@ -387,7 +380,7 @@ const db = {
     }
   },
 
-  // RefreshToken operations
+  
   refreshToken: {
     async findUnique({ where }) {
       const { data } = await supabase.from('RefreshToken').select('*').eq('token', where.token).single();
@@ -410,7 +403,7 @@ const db = {
     }
   },
 
-  // ModerationLog operations
+  
   moderationLog: {
     async create({ data }) {
       const { data: result, error } = await supabase.from('ModerationLog').insert(data).select().single();
@@ -430,7 +423,7 @@ const db = {
     }
   },
 
-  // Notification placeholder (not in schema yet)
+  
   notification: {
     async create({ data }) {
       console.log('Notification:', data);
@@ -439,6 +432,5 @@ const db = {
   }
 };
 
-// Export as both 'db' and 'prisma' for backward compatibility
 module.exports = { db, prisma: db, supabase };
 

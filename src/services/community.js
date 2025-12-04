@@ -1,20 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { supabase } = require('../db/supabase');
 
-/**
- * Community Service - Supabase-backed with persistence
- * 
- * All posts, comments, and votes are stored in Supabase for persistence
- * across server restarts and browser sessions.
- */
-
-// =============================================
-// HELPER FUNCTIONS
-// =============================================
-
-/**
- * Get user profile from user_profiles table
- */
 async function getUserProfile(userId) {
   if (!userId) return null;
   
@@ -29,7 +15,7 @@ async function getUserProfile(userId) {
       id: userId,
       username: `Trader_${String(userId).slice(-4)}`,
       displayName: `Trader ${String(userId).slice(-4)}`,
-      avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${String(userId).slice(-4)}`,
+      avatarUrl: `https:
       reputation: 0
     };
   }
@@ -38,25 +24,22 @@ async function getUserProfile(userId) {
     id: data.id,
     username: data.username || `Trader_${String(userId).slice(-4)}`,
     displayName: data.display_name || data.fullname || data.username,
-    avatarUrl: data.profile_photo || `https://api.dicebear.com/7.x/initials/svg?seed=${data.username || userId}`,
+    avatarUrl: data.profile_photo || `https:
     reputation: data.performance_tier === 'elite' ? 500 : data.performance_tier === 'pro' ? 300 : 100
   };
 }
 
-/**
- * Transform DB post to API format
- */
 async function transformPost(post, currentUserId = null) {
   const author = await getUserProfile(post.user_id);
   
-  // Get comment count
+  
   const { count: commentCount } = await supabase
     .from('post_comments')
     .select('*', { count: 'exact', head: true })
     .eq('post_id', post.id)
     .eq('is_deleted', false);
   
-  // Get user's vote if logged in
+  
   let userVote = 0;
   if (currentUserId) {
     const { data: vote } = await supabase
@@ -93,9 +76,6 @@ async function transformPost(post, currentUserId = null) {
   };
 }
 
-/**
- * Transform comment to API format
- */
 async function transformComment(comment) {
   const author = await getUserProfile(comment.user_id);
   return {
@@ -110,13 +90,6 @@ async function transformComment(comment) {
   };
 }
 
-// =============================================
-// MAIN FUNCTIONS
-// =============================================
-
-/**
- * Create a new post
- */
 async function createPost(userId, data = {}, userInfo = {}) {
   const { title, content, category, tags = [], attachments = [] } = data;
   
@@ -154,9 +127,6 @@ async function createPost(userId, data = {}, userInfo = {}) {
   return { success: true, post: transformedPost };
 }
 
-/**
- * Get feed with pagination
- */
 async function getFeed(options = {}) {
   try {
     const { 
@@ -168,7 +138,7 @@ async function getFeed(options = {}) {
       userId = null 
     } = options;
     
-    // Calculate time filter
+    
     let timeFilter = null;
     if (timeRange && timeRange !== 'all') {
       const now = new Date();
@@ -185,7 +155,7 @@ async function getFeed(options = {}) {
       }
     }
     
-    // Build query
+    
     let query = supabase
       .from('community_posts')
       .select('*', { count: 'exact' })
@@ -199,7 +169,7 @@ async function getFeed(options = {}) {
       query = query.gte('created_at', timeFilter);
     }
     
-    // Apply sorting
+    
     switch (sortBy) {
       case 'newest':
         query = query.order('created_at', { ascending: false });
@@ -213,7 +183,7 @@ async function getFeed(options = {}) {
         break;
     }
     
-    // Apply pagination
+    
     const offset = (page - 1) * limit;
     query = query.range(offset, offset + limit - 1);
     
@@ -224,12 +194,12 @@ async function getFeed(options = {}) {
       return { posts: [], pagination: { page, limit, total: 0, totalPages: 0, hasMore: false } };
     }
     
-    // Transform posts
+    
     const transformedPosts = await Promise.all(
       (posts || []).map(post => transformPost(post, userId))
     );
     
-    // Sort by trending score if needed
+    
     if (sortBy === 'trending') {
       transformedPosts.sort((a, b) => {
         const aScore = a.votes / Math.max(1, (Date.now() - new Date(a.createdAt)) / 3600000);
@@ -266,11 +236,8 @@ async function getFeed(options = {}) {
   }
 }
 
-/**
- * Get single post with comments
- */
 async function getPost(postId, userId = null) {
-  // Get post
+  
   const { data: post, error } = await supabase
     .from('community_posts')
     .select('*')
@@ -282,13 +249,13 @@ async function getPost(postId, userId = null) {
     return null;
   }
   
-  // Increment view count
+  
   await supabase
     .from('community_posts')
     .update({ view_count: (post.view_count || 0) + 1 })
     .eq('id', postId);
   
-  // Get comments
+  
   const { data: comments } = await supabase
     .from('post_comments')
     .select('*')
@@ -296,10 +263,10 @@ async function getPost(postId, userId = null) {
     .eq('is_deleted', false)
     .order('created_at', { ascending: true });
   
-  // Transform post
+  
   const transformedPost = await transformPost(post, userId);
   
-  // Transform comments
+  
   const transformedComments = await Promise.all(
     (comments || []).map(comment => transformComment(comment))
   );
@@ -310,15 +277,12 @@ async function getPost(postId, userId = null) {
   };
 }
 
-/**
- * Vote on a post
- */
 async function votePost(userId, postId, value) {
   if (![1, 0, -1].includes(value)) {
     return { success: false, error: 'Invalid vote value' };
   }
   
-  // Check if post exists
+  
   const { data: post, error: postError } = await supabase
     .from('community_posts')
     .select('id, upvotes, downvotes')
@@ -330,7 +294,7 @@ async function votePost(userId, postId, value) {
     return { success: false, error: 'Post not found' };
   }
   
-  // Get existing vote
+  
   const { data: existingVote } = await supabase
     .from('post_votes')
     .select('id, vote_value')
@@ -341,24 +305,24 @@ async function votePost(userId, postId, value) {
   const previousValue = existingVote?.vote_value || 0;
   
   if (value === 0) {
-    // Remove vote
+    
     if (existingVote) {
       await supabase.from('post_votes').delete().eq('id', existingVote.id);
     }
   } else if (existingVote) {
-    // Update existing vote
+    
     await supabase
       .from('post_votes')
       .update({ vote_value: value })
       .eq('id', existingVote.id);
   } else {
-    // Create new vote
+    
     await supabase
       .from('post_votes')
       .insert({ post_id: postId, user_id: userId, vote_value: value });
   }
   
-  // Calculate new vote counts
+  
   let upvotes = post.upvotes || 0;
   let downvotes = post.downvotes || 0;
   
@@ -367,7 +331,7 @@ async function votePost(userId, postId, value) {
   if (value === 1) upvotes++;
   if (value === -1) downvotes++;
   
-  // Update post vote counts
+  
   await supabase
     .from('community_posts')
     .update({ upvotes, downvotes })
@@ -381,15 +345,12 @@ async function votePost(userId, postId, value) {
   };
 }
 
-/**
- * Add comment to a post
- */
 async function addComment(userId, postId, content, userInfo = {}) {
   if (!content || content.trim().length < 1 || content.length > 2000) {
     return { success: false, error: 'Comment must be 1-2000 characters' };
   }
   
-  // Check if post exists
+  
   const { data: post } = await supabase
     .from('community_posts')
     .select('id')
@@ -401,7 +362,7 @@ async function addComment(userId, postId, content, userInfo = {}) {
     return { success: false, error: 'Post not found' };
   }
   
-  // Create comment
+  
   const { data: comment, error } = await supabase
     .from('post_comments')
     .insert({
@@ -422,9 +383,6 @@ async function addComment(userId, postId, content, userInfo = {}) {
   return { success: true, comment: transformedComment };
 }
 
-/**
- * Delete a post
- */
 async function deletePost(userId, postId) {
   const { data: post } = await supabase
     .from('community_posts')
@@ -449,9 +407,6 @@ async function deletePost(userId, postId) {
   return { success: true };
 }
 
-/**
- * Delete a comment
- */
 async function deleteComment(userId, commentId) {
   const { data: comment } = await supabase
     .from('post_comments')
@@ -476,11 +431,8 @@ async function deleteComment(userId, commentId) {
   return { success: true };
 }
 
-/**
- * Get posts by username
- */
 async function getUserPosts(username, page = 1, limit = 20) {
-  // Get user by username
+  
   const { data: user } = await supabase
     .from('user_profiles')
     .select('id')
@@ -508,7 +460,7 @@ async function getUserPosts(username, page = 1, limit = 20) {
       content: post.content,
       category: post.category,
       votes: (post.upvotes || 0) - (post.downvotes || 0),
-      commentCount: 0, // Could add count query here
+      commentCount: 0, 
       createdAt: post.created_at
     }))
   );
@@ -522,9 +474,6 @@ async function getUserPosts(username, page = 1, limit = 20) {
   };
 }
 
-/**
- * Get trending tags
- */
 async function getTrendingTags(limit = 10) {
   const { data: posts } = await supabase
     .from('community_posts')
@@ -544,9 +493,6 @@ async function getTrendingTags(limit = 10) {
     .map(([tag, count]) => ({ tag, count }));
 }
 
-/**
- * Search posts
- */
 async function searchPosts(query, options = {}) {
   const { page = 1, limit = 20, category } = options;
   

@@ -1,18 +1,13 @@
-/**
- * Chat Service - Friend-to-friend messaging
- * Handles private chats, messages, reactions, and typing indicators
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const ChatService = {
-  // =============================================
-  // CHAT OPERATIONS
-  // =============================================
+  
+  
+  
 
-  /**
-   * Get chat by ID
-   */
+  
   async getChatById(chatId) {
     const { data, error } = await supabase
       .from('friend_chats')
@@ -32,9 +27,7 @@ const ChatService = {
     return data;
   },
 
-  /**
-   * Get chat between two users
-   */
+  
   async getChatByUsers(user1Id, user2Id) {
     const [smallerId, largerId] = user1Id < user2Id 
       ? [user1Id, user2Id] 
@@ -58,20 +51,18 @@ const ChatService = {
     return data;
   },
 
-  /**
-   * Get or create a direct chat between two users
-   */
+  
   async getOrCreateDirectChat(user1Id, user2Id) {
-    // Ensure consistent ordering
+    
     const [smallerId, largerId] = user1Id < user2Id 
       ? [user1Id, user2Id] 
       : [user2Id, user1Id];
     
-    // Check if chat exists
+    
     let chat = await this.getChatByUsers(smallerId, largerId);
     
     if (!chat) {
-      // Create new chat
+      
       const { data, error } = await supabase
         .from('friend_chats')
         .insert({
@@ -93,7 +84,7 @@ const ChatService = {
       chat = data;
     }
     
-    // Format the response
+    
     const otherUser = chat.user1_id === user1Id ? chat.user2 : chat.user1;
     return {
       ...chat,
@@ -101,9 +92,7 @@ const ChatService = {
     };
   },
 
-  /**
-   * Get all chats for a user
-   */
+  
   async getUserChats(userId) {
     const { data, error } = await supabase
       .from('friend_chats')
@@ -121,7 +110,7 @@ const ChatService = {
     
     if (error) throw error;
     
-    // Format chats to show the other user
+    
     return (data || []).map(chat => {
       const otherUser = chat.user1_id === userId ? chat.user2 : chat.user1;
       const isArchived = chat.user1_id === userId ? chat.is_archived_user1 : chat.is_archived_user2;
@@ -133,9 +122,7 @@ const ChatService = {
     });
   },
 
-  /**
-   * Archive/unarchive chat
-   */
+  
   async toggleArchiveChat(chatId, userId, archived) {
     const chat = await this.getChatById(chatId);
     if (!chat) throw new Error('Chat not found');
@@ -151,13 +138,11 @@ const ChatService = {
     return { success: true };
   },
 
-  // =============================================
-  // MESSAGE OPERATIONS
-  // =============================================
+  
+  
+  
 
-  /**
-   * Send a message
-   */
+  
   async sendMessage(chatId, senderId, messageData) {
     const {
       message_text,
@@ -166,12 +151,12 @@ const ChatService = {
       media_type,
       media_size,
       media_duration,
-      file_url, // Persistent URL from Supabase Storage
+      file_url, 
       reply_to_id,
-      persistent = true // Messages are persistent by default now
+      persistent = true 
     } = messageData;
     
-    // Insert message (no expiry - messages persist until deleted by user/admin)
+    
     const { data: message, error } = await supabase
       .from('friend_messages')
       .insert({
@@ -183,10 +168,10 @@ const ChatService = {
         media_type,
         media_size,
         media_duration,
-        file_url, // Store the Supabase Storage URL
+        file_url, 
         reply_to_id,
-        expires_at: null, // No expiry - messages are persistent
-        stored_locally: false // Files are now stored in Supabase Storage
+        expires_at: null, 
+        stored_locally: false 
       })
       .select(`
         *,
@@ -202,7 +187,7 @@ const ChatService = {
     
     if (error) throw error;
     
-    // Update chat with last message
+    
     await supabase
       .from('friend_chats')
       .update({
@@ -212,15 +197,13 @@ const ChatService = {
       })
       .eq('id', chatId);
     
-    // Update streak
+    
     await this.updateStreak(chatId);
     
     return message;
   },
 
-  /**
-   * Get messages for a chat
-   */
+  
   async getMessages(chatId, options = {}) {
     const { limit = 50, before, after } = options;
     
@@ -251,13 +234,11 @@ const ChatService = {
     const { data, error } = await query;
     if (error) throw error;
     
-    // Return in chronological order
+    
     return (data || []).reverse();
   },
 
-  /**
-   * Mark messages as read
-   */
+  
   async markAsRead(chatId, userId) {
     const { error } = await supabase
       .from('friend_messages')
@@ -273,9 +254,7 @@ const ChatService = {
     return { success: true };
   },
 
-  /**
-   * Get unread count
-   */
+  
   async getUnreadCount(chatId, userId) {
     const { count, error } = await supabase
       .from('friend_messages')
@@ -288,11 +267,9 @@ const ChatService = {
     return count || 0;
   },
 
-  /**
-   * Get total unread for a user
-   */
+  
   async getTotalUnreadCount(userId) {
-    // Get all chats for user
+    
     const chats = await this.getUserChats(userId);
     let total = 0;
     
@@ -304,9 +281,7 @@ const ChatService = {
     return total;
   },
 
-  /**
-   * Delete message (soft delete)
-   */
+  
   async deleteMessage(messageId, userId) {
     const { data: message } = await supabase
       .from('friend_messages')
@@ -327,13 +302,11 @@ const ChatService = {
     return { success: true };
   },
 
-  // =============================================
-  // REACTIONS
-  // =============================================
+  
+  
+  
 
-  /**
-   * Add reaction to message
-   */
+  
   async addReaction(messageId, userId, reaction) {
     const { data: message } = await supabase
       .from('friend_messages')
@@ -348,7 +321,7 @@ const ChatService = {
       reactions[reaction] = [];
     }
     
-    // Toggle reaction
+    
     const userIndex = reactions[reaction].indexOf(userId);
     if (userIndex > -1) {
       reactions[reaction].splice(userIndex, 1);
@@ -366,7 +339,7 @@ const ChatService = {
     
     if (error) throw error;
     
-    // Update sender's helpfulness score
+    
     const { data: msgData } = await supabase
       .from('friend_messages')
       .select('sender_id')
@@ -374,20 +347,18 @@ const ChatService = {
       .single();
     
     if (msgData && userIndex === -1) {
-      // Reaction added, increment helpfulness
+      
       await supabase.rpc('increment_helpfulness', { user_id: msgData.sender_id });
     }
     
     return { success: true, reactions };
   },
 
-  // =============================================
-  // TYPING INDICATORS
-  // =============================================
+  
+  
+  
 
-  /**
-   * Set typing status
-   */
+  
   async setTyping(chatId, userId, isTyping) {
     if (isTyping) {
       await supabase
@@ -406,11 +377,9 @@ const ChatService = {
     }
   },
 
-  /**
-   * Get typing users for a chat
-   */
+  
   async getTypingUsers(chatId) {
-    // Clear old typing indicators (older than 10 seconds)
+    
     const cutoff = new Date(Date.now() - 10000).toISOString();
     await supabase
       .from('typing_indicators')
@@ -428,13 +397,11 @@ const ChatService = {
     return data || [];
   },
 
-  // =============================================
-  // STREAK SYSTEM
-  // =============================================
+  
+  
+  
 
-  /**
-   * Update streak for a chat
-   */
+  
   async updateStreak(chatId) {
     const { data: chat } = await supabase
       .from('friend_chats')
@@ -457,18 +424,18 @@ const ChatService = {
       const yesterdayStr = yesterday.toISOString().split('T')[0];
       
       if (lastDate === today) {
-        // Already counted today
+        
         return;
       } else if (lastDate === yesterdayStr) {
-        // Consecutive day
+        
         newStreak += 1;
       } else {
-        // Streak broken
+        
         newStreak = 1;
       }
     }
     
-    // Determine badge
+    
     let badge = null;
     if (newStreak >= 180) badge = 'aurora';
     else if (newStreak >= 90) badge = 'diamond';
@@ -489,7 +456,7 @@ const ChatService = {
       })
       .eq('id', chatId);
     
-    // Notify about new badge
+    
     if (newBadgeEarned) {
       const chatData = await this.getChatById(chatId);
       const badgeNames = {
@@ -501,7 +468,7 @@ const ChatService = {
         aurora: '🌌 Aurora Streak (180 days)'
       };
       
-      // Notify both users
+      
       for (const userId of [chatData.user1_id, chatData.user2_id]) {
         await supabase
           .from('notifications')
@@ -529,9 +496,7 @@ const ChatService = {
     return null;
   },
 
-  /**
-   * Name a streak
-   */
+  
   async nameStreak(chatId, userId, name) {
     const chat = await this.getChatById(chatId);
     if (!chat) throw new Error('Chat not found');
@@ -549,13 +514,11 @@ const ChatService = {
     return { success: true };
   },
 
-  // =============================================
-  // PING FEATURE
-  // =============================================
+  
+  
+  
 
-  /**
-   * Send a ping to a friend
-   */
+  
   async sendPing(chatId, senderId) {
     return this.sendMessage(chatId, senderId, {
       message_text: '👋 Ping!',

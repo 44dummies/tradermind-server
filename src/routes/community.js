@@ -1,6 +1,4 @@
-/**
- * Community Routes
- */
+
 
 const express = require('express');
 const {
@@ -20,10 +18,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-/**
- * Get community feed
- * GET /api/community/feed
- */
 router.get('/feed', authMiddleware, async (req, res) => {
   try {
     const { page, limit, category, sortBy, timeRange } = req.query;
@@ -42,10 +36,6 @@ router.get('/feed', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Create new post
- * POST /api/community/posts
- */
 router.post('/posts', authMiddleware, async (req, res) => {
   try {
     const result = await createPost(req.userId, req.body);
@@ -59,10 +49,6 @@ router.post('/posts', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get single post
- * GET /api/community/posts/:id
- */
 router.get('/posts/:id', authMiddleware, async (req, res) => {
   try {
     const post = await getPost(req.params.id, req.userId);
@@ -76,10 +62,6 @@ router.get('/posts/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Delete post
- * DELETE /api/community/posts/:id
- */
 router.delete('/posts/:id', authMiddleware, async (req, res) => {
   try {
     const result = await deletePost(req.userId, req.params.id);
@@ -93,13 +75,9 @@ router.delete('/posts/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Vote on a post
- * POST /api/community/posts/:id/vote
- */
 router.post('/posts/:id/vote', authMiddleware, async (req, res) => {
   try {
-    const { value } = req.body; // 1 for upvote, -1 for downvote, 0 to remove
+    const { value } = req.body; 
     const result = await votePost(req.userId, req.params.id, value);
     if (!result.success) {
       return res.status(400).json({ error: result.error });
@@ -111,10 +89,6 @@ router.post('/posts/:id/vote', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Add comment to post
- * POST /api/community/posts/:id/comments
- */
 router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
   try {
     const { content } = req.body;
@@ -129,10 +103,6 @@ router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Delete comment
- * DELETE /api/community/comments/:id
- */
 router.delete('/comments/:id', authMiddleware, async (req, res) => {
   try {
     const result = await deleteComment(req.userId, req.params.id);
@@ -146,10 +116,6 @@ router.delete('/comments/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get user's posts
- * GET /api/community/users/:username/posts
- */
 router.get('/users/:username/posts', authMiddleware, async (req, res) => {
   try {
     const { page, limit } = req.query;
@@ -165,10 +131,6 @@ router.get('/users/:username/posts', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get trending tags
- * GET /api/community/tags/trending
- */
 router.get('/tags/trending', authMiddleware, async (req, res) => {
   try {
     const { limit } = req.query;
@@ -180,10 +142,6 @@ router.get('/tags/trending', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Search posts
- * GET /api/community/search
- */
 router.get('/search', authMiddleware, async (req, res) => {
   try {
     const { q, page, limit, category } = req.query;
@@ -202,14 +160,6 @@ router.get('/search', authMiddleware, async (req, res) => {
   }
 });
 
-// =============================================
-// TIER-BASED CHATROOM ROUTES
-// =============================================
-
-/**
- * GET /api/community/tier-chatrooms
- * Get all tier chatrooms
- */
 router.get('/tier-chatrooms', async (req, res) => {
   try {
     const chatrooms = await tierChatroomService.getTierChatrooms();
@@ -220,10 +170,6 @@ router.get('/tier-chatrooms', async (req, res) => {
   }
 });
 
-/**
- * GET /api/community/my-tier-chatroom
- * Get current user's assigned chatroom
- */
 router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
   try {
     const assignment = await tierChatroomService.getUserTierChatroom(req.userId);
@@ -234,10 +180,6 @@ router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * POST /api/community/assign-tier
- * Assign user to tier chatroom based on their analytics
- */
 router.post('/assign-tier', authMiddleware, async (req, res) => {
   try {
     const { winRate = 0, totalTrades = 0 } = req.body;
@@ -265,10 +207,6 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * GET /api/community/tier-chatroom/:id/members
- * Get members of a chatroom
- */
 router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -282,10 +220,6 @@ router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * GET /api/community/tier-chatroom/:id/messages
- * Get messages from a chatroom
- */
 router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -299,10 +233,6 @@ router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * POST /api/community/tier-chatroom/:id/message
- * Send a message to a chatroom
- */
 router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -319,7 +249,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       fileType,
       fileSize,
       fileHash,
-      fileUrl, // Persistent URL from Supabase Storage
+      fileUrl, 
       replyToId
     });
     
@@ -330,10 +260,6 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * POST /api/community/tier-message/:id/reaction
- * Add/remove reaction to a message
- */
 router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -351,10 +277,6 @@ router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/community/tier-message/:id
- * Delete a message
- */
 router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -366,10 +288,6 @@ router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * POST /api/community/tier-chatroom/:id/typing
- * Set typing indicator
- */
 router.post('/tier-chatroom/:id/typing', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;

@@ -1,10 +1,9 @@
-// Supabase Database Client
-// This client is used for all database operations
+
+
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-// Use service role key for server-side operations (bypasses RLS)
-// Falls back to anon key if service role not available
+
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
 
 console.log('Supabase URL configured:', supabaseUrl ? `${supabaseUrl.substring(0, 30)}...` : 'MISSING');

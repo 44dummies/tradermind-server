@@ -1,7 +1,4 @@
-/**
- * Community Routes v2
- * Real-time community with WebSocket event emission
- */
+
 
 const express = require('express');
 const multer = require('multer');
@@ -21,16 +18,14 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Store io reference for WebSocket emissions
 let io = null;
 router.setIo = (socketIo) => {
   io = socketIo;
 };
 
-// Configure multer for image uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  limits: { fileSize: 2 * 1024 * 1024 }, 
   fileFilter: (req, file, cb) => {
     if (file.mimetype.match(/^image\/(jpeg|png|webp)$/)) {
       cb(null, true);
@@ -40,10 +35,6 @@ const upload = multer({
   }
 });
 
-/**
- * Get community feed
- * GET /api/community/feed
- */
 router.get('/feed', authMiddleware, async (req, res) => {
   try {
     const { page, limit, category, sortBy } = req.query;
@@ -61,10 +52,6 @@ router.get('/feed', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Create new post
- * POST /api/community/posts
- */
 router.post('/posts', authMiddleware, async (req, res) => {
   try {
     const result = await createPost(req.userId, req.body);
@@ -72,7 +59,7 @@ router.post('/posts', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Emit WebSocket event
+    
     if (io) {
       io.emit('community:post:new', result.post);
     }
@@ -84,10 +71,6 @@ router.post('/posts', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get single post
- * GET /api/community/posts/:id
- */
 router.get('/posts/:id', authMiddleware, async (req, res) => {
   try {
     const post = await getPost(req.params.id, req.userId);
@@ -101,10 +84,6 @@ router.get('/posts/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Delete post
- * DELETE /api/community/posts/:id
- */
 router.delete('/posts/:id', authMiddleware, async (req, res) => {
   try {
     const result = await deletePost(req.userId, req.params.id);
@@ -112,7 +91,7 @@ router.delete('/posts/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Emit WebSocket event
+    
     if (io) {
       io.emit('community:post:delete', { postId: req.params.id });
     }
@@ -124,10 +103,6 @@ router.delete('/posts/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Like/unlike post
- * POST /api/community/posts/:id/like
- */
 router.post('/posts/:id/like', authMiddleware, async (req, res) => {
   try {
     const { liked } = req.body;
@@ -137,7 +112,7 @@ router.post('/posts/:id/like', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Emit WebSocket event
+    
     if (io) {
       io.emit('community:post:like', {
         postId: req.params.id,
@@ -154,10 +129,6 @@ router.post('/posts/:id/like', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get post comments
- * GET /api/community/posts/:id/comments
- */
 router.get('/posts/:id/comments', authMiddleware, async (req, res) => {
   try {
     const { page, limit } = req.query;
@@ -172,10 +143,6 @@ router.get('/posts/:id/comments', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Add comment to post
- * POST /api/community/posts/:id/comments
- */
 router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
   try {
     const { content } = req.body;
@@ -185,7 +152,7 @@ router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    // Emit WebSocket event
+    
     if (io) {
       io.emit('community:post:comment', {
         postId: req.params.id,
@@ -201,10 +168,6 @@ router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Delete comment
- * DELETE /api/community/comments/:id
- */
 router.delete('/comments/:id', authMiddleware, async (req, res) => {
   try {
     const result = await deleteComment(req.userId, req.params.id);
@@ -218,10 +181,6 @@ router.delete('/comments/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get online users
- * GET /api/community/online-users
- */
 router.get('/online-users', authMiddleware, async (req, res) => {
   try {
     const { limit } = req.query;
@@ -233,10 +192,6 @@ router.get('/online-users', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Upload post image
- * POST /api/community/upload-image
- */
 router.post('/upload-image', authMiddleware, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {

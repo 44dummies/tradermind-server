@@ -1,6 +1,4 @@
-/**
- * JWT Authentication Service
- */
+
 
 const jwt = require('jsonwebtoken');
 
@@ -9,16 +7,10 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'fallback-refresh-s
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 const JWT_REFRESH_EXPIRES_IN = '7d';
 
-/**
- * Generate JWT token
- */
 function generateToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-/**
- * Generate both access and refresh tokens
- */
 function generateTokens(userId, username) {
   const accessToken = jwt.sign(
     { userId, username },
@@ -35,9 +27,6 @@ function generateTokens(userId, username) {
   return { accessToken, refreshToken };
 }
 
-/**
- * Verify JWT token
- */
 function verifyToken(token) {
   try {
     return jwt.verify(token, JWT_SECRET);
@@ -46,9 +35,6 @@ function verifyToken(token) {
   }
 }
 
-/**
- * Verify refresh token
- */
 function verifyRefreshToken(token) {
   try {
     return jwt.verify(token, JWT_REFRESH_SECRET);
@@ -57,9 +43,6 @@ function verifyRefreshToken(token) {
   }
 }
 
-/**
- * Express middleware to authenticate requests
- */
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
   
@@ -78,9 +61,6 @@ function authMiddleware(req, res, next) {
   next();
 }
 
-/**
- * Socket.IO authentication middleware
- */
 function socketAuthMiddleware(socket, next) {
   const token = socket.handshake.auth.token || socket.handshake.query.token;
   

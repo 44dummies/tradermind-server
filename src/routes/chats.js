@@ -1,7 +1,4 @@
-/**
- * Chat API Routes
- * Handles private messaging between users
- */
+
 
 const express = require('express');
 const router = express.Router();
@@ -11,9 +8,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
-/**
- * Helper to get or create user profile
- */
 async function getOrCreateUser(derivId) {
   let user = await getProfileByDerivId(derivId);
   if (!user) {
@@ -27,14 +21,6 @@ async function getOrCreateUser(derivId) {
   return user;
 }
 
-// =============================================
-// CHAT ROUTES
-// =============================================
-
-/**
- * GET /api/chats
- * Get all chats for current user
- */
 router.get('/', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -44,7 +30,7 @@ router.get('/', async (req, res) => {
     
     const chats = await ChatService.getUserChats(currentUser.id);
     
-    // Add unread counts
+    
     const chatsWithUnread = await Promise.all(chats.map(async (chat) => {
       const unreadCount = await ChatService.getUnreadCount(chat.id, currentUser.id);
       return { ...chat, unreadCount };
@@ -57,10 +43,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * GET /api/chats/:chatId
- * Get chat by ID
- */
 router.get('/:chatId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -73,7 +55,7 @@ router.get('/:chatId', async (req, res) => {
       return res.status(404).json({ error: 'Chat not found' });
     }
     
-    // Verify user is participant
+    
     if (chat.user1_id !== currentUser.id && chat.user2_id !== currentUser.id) {
       return res.status(403).json({ error: 'Not authorized' });
     }
@@ -85,10 +67,6 @@ router.get('/:chatId', async (req, res) => {
   }
 });
 
-/**
- * GET /api/chats/with/:userId
- * Get or create chat with a user
- */
 router.get('/with/:userId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -96,7 +74,7 @@ router.get('/with/:userId', async (req, res) => {
       return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
-    // Get or create chat - friends check removed
+    
     const chat = await ChatService.getOrCreateDirectChat(currentUser.id, req.params.userId);
     
     res.json(chat);
@@ -106,10 +84,6 @@ router.get('/with/:userId', async (req, res) => {
   }
 });
 
-/**
- * PUT /api/chats/:chatId/archive
- * Archive/unarchive chat
- */
 router.put('/:chatId/archive', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -126,14 +100,6 @@ router.put('/:chatId/archive', async (req, res) => {
   }
 });
 
-// =============================================
-// MESSAGE ROUTES
-// =============================================
-
-/**
- * GET /api/chats/:chatId/messages
- * Get messages for a chat
- */
 router.get('/:chatId/messages', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -141,7 +107,7 @@ router.get('/:chatId/messages', async (req, res) => {
       return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
-    // Verify user is participant
+    
     const chat = await ChatService.getChatById(req.params.chatId);
     if (!chat || (chat.user1_id !== currentUser.id && chat.user2_id !== currentUser.id)) {
       return res.status(403).json({ error: 'Not authorized' });
@@ -161,10 +127,6 @@ router.get('/:chatId/messages', async (req, res) => {
   }
 });
 
-/**
- * POST /api/chats/:chatId/messages
- * Send a message
- */
 router.post('/:chatId/messages', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -172,7 +134,7 @@ router.post('/:chatId/messages', async (req, res) => {
       return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
-    // Verify user is participant
+    
     const chat = await ChatService.getChatById(req.params.chatId);
     if (!chat || (chat.user1_id !== currentUser.id && chat.user2_id !== currentUser.id)) {
       return res.status(403).json({ error: 'Not authorized' });
@@ -180,12 +142,12 @@ router.post('/:chatId/messages', async (req, res) => {
     
     const message = await ChatService.sendMessage(req.params.chatId, currentUser.id, req.body);
     
-    // Emit via socket
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`chat:${req.params.chatId}`).emit('chat:message', message);
       
-      // Notify other user
+      
       const otherUserId = chat.user1_id === currentUser.id ? chat.user2_id : chat.user1_id;
       io.to(`user:${otherUserId}`).emit('chat:newMessage', {
         chatId: req.params.chatId,
@@ -201,10 +163,6 @@ router.post('/:chatId/messages', async (req, res) => {
   }
 });
 
-/**
- * PUT /api/chats/:chatId/read
- * Mark messages as read
- */
 router.put('/:chatId/read', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -214,7 +172,7 @@ router.put('/:chatId/read', async (req, res) => {
     
     const result = await ChatService.markAsRead(req.params.chatId, currentUser.id);
     
-    // Emit read receipt
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`chat:${req.params.chatId}`).emit('chat:read', {
@@ -230,10 +188,6 @@ router.put('/:chatId/read', async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/chats/:chatId/messages/:messageId
- * Delete a message
- */
 router.delete('/:chatId/messages/:messageId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -243,7 +197,7 @@ router.delete('/:chatId/messages/:messageId', async (req, res) => {
     
     const result = await ChatService.deleteMessage(req.params.messageId, currentUser.id);
     
-    // Emit deletion
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`chat:${req.params.chatId}`).emit('chat:messageDeleted', {
@@ -259,14 +213,6 @@ router.delete('/:chatId/messages/:messageId', async (req, res) => {
   }
 });
 
-// =============================================
-// REACTIONS
-// =============================================
-
-/**
- * POST /api/chats/:chatId/messages/:messageId/react
- * Add/toggle reaction
- */
 router.post('/:chatId/messages/:messageId/react', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -277,7 +223,7 @@ router.post('/:chatId/messages/:messageId/react', async (req, res) => {
     const { reaction } = req.body;
     const result = await ChatService.addReaction(req.params.messageId, currentUser.id, reaction);
     
-    // Emit reaction
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`chat:${req.params.chatId}`).emit('chat:reaction', {
@@ -296,14 +242,6 @@ router.post('/:chatId/messages/:messageId/react', async (req, res) => {
   }
 });
 
-// =============================================
-// TYPING INDICATORS
-// =============================================
-
-/**
- * POST /api/chats/:chatId/typing
- * Set typing status
- */
 router.post('/:chatId/typing', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -314,7 +252,7 @@ router.post('/:chatId/typing', async (req, res) => {
     const { isTyping } = req.body;
     await ChatService.setTyping(req.params.chatId, currentUser.id, isTyping);
     
-    // Emit typing status
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`chat:${req.params.chatId}`).emit('chat:typing', {
@@ -332,14 +270,6 @@ router.post('/:chatId/typing', async (req, res) => {
   }
 });
 
-// =============================================
-// PING
-// =============================================
-
-/**
- * POST /api/chats/:chatId/ping
- * Send a ping
- */
 router.post('/:chatId/ping', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -349,7 +279,7 @@ router.post('/:chatId/ping', async (req, res) => {
     
     const message = await ChatService.sendPing(req.params.chatId, currentUser.id);
     
-    // Emit ping
+    
     const io = req.app.get('io');
     if (io) {
       const chat = await ChatService.getChatById(req.params.chatId);
@@ -369,14 +299,6 @@ router.post('/:chatId/ping', async (req, res) => {
   }
 });
 
-// =============================================
-// STREAKS
-// =============================================
-
-/**
- * PUT /api/chats/:chatId/streak/name
- * Name a streak
- */
 router.put('/:chatId/streak/name', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -393,10 +315,6 @@ router.put('/:chatId/streak/name', async (req, res) => {
   }
 });
 
-/**
- * GET /api/chats/unread/count
- * Get total unread count
- */
 router.get('/unread/count', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);

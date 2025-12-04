@@ -1,18 +1,4 @@
-/**
- * Settings Routes
- * Comprehensive settings API for TraderMind
- * 
- * Endpoints:
- * - GET /api/settings - Get all user settings
- * - PUT /api/settings - Update all settings
- * - PUT /api/settings/privacy - Update privacy settings
- * - PUT /api/settings/notifications - Update notification settings
- * - GET /api/settings/trading - Get trading preferences
- * - PUT /api/settings/trading - Update trading preferences
- * - GET /api/settings/sessions - Get active sessions
- * - DELETE /api/settings/sessions - Terminate all other sessions
- * - DELETE /api/settings/sessions/:sessionId - Terminate specific session
- */
+
 
 const express = require('express');
 const { authMiddleware } = require('../middleware/auth');
@@ -21,9 +7,6 @@ const { getProfileByDerivId, upsertUserProfile } = require('../services/profile'
 
 const router = express.Router();
 
-// ============================================================
-// HELPER: Get or create user profile
-// ============================================================
 async function ensureUserProfile(derivId) {
   let user = await getProfileByDerivId(derivId);
   
@@ -39,23 +22,20 @@ async function ensureUserProfile(derivId) {
   return user;
 }
 
-// ============================================================
-// GET /api/settings - Get all user settings
-// ============================================================
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
     
-    // Get user settings
+    
     const { data: settings } = await supabase
       .from('user_settings')
       .select('*')
       .eq('user_id', user.id)
       .single();
 
-    // Return settings or defaults
+    
     res.json({
-      // Privacy Settings
+      
       online_visibility: settings?.online_visibility ?? true,
       profile_visibility: settings?.profile_visibility || 'public',
       allow_messages_from: settings?.allow_messages_from || 'everyone',
@@ -64,7 +44,7 @@ router.get('/', authMiddleware, async (req, res) => {
       show_on_leaderboard: settings?.show_on_leaderboard ?? true,
       searchable: settings?.searchable ?? true,
       
-      // Notification Settings
+      
       notify_trade_alerts: settings?.notify_trade_alerts ?? true,
       notify_community_mentions: settings?.notify_community_mentions ?? true,
       notify_post_replies: settings?.notify_post_replies ?? true,
@@ -72,7 +52,7 @@ router.get('/', authMiddleware, async (req, res) => {
       notify_admin_announcements: settings?.notify_admin_announcements ?? true,
       push_notifications: settings?.push_notifications ?? true,
       
-      // Chat Settings (for compatibility)
+      
       chat: {
         enterToSend: settings?.chat?.enterToSend ?? true,
         showTypingIndicator: settings?.chat?.showTypingIndicator ?? true,
@@ -85,9 +65,6 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// PUT /api/settings - Update all settings
-// ============================================================
 router.put('/', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
@@ -111,9 +88,6 @@ router.put('/', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// PUT /api/settings/privacy - Update privacy settings
-// ============================================================
 router.put('/privacy', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
@@ -128,7 +102,7 @@ router.put('/privacy', authMiddleware, async (req, res) => {
       searchable
     } = req.body;
 
-    // Get existing settings or create new
+    
     const { data: existing } = await supabase
       .from('user_settings')
       .select('*')
@@ -160,9 +134,6 @@ router.put('/privacy', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// PUT /api/settings/notifications - Update notification settings
-// ============================================================
 router.put('/notifications', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
@@ -176,7 +147,7 @@ router.put('/notifications', authMiddleware, async (req, res) => {
       push_notifications
     } = req.body;
 
-    // Get existing settings
+    
     const { data: existing } = await supabase
       .from('user_settings')
       .select('*')
@@ -207,17 +178,14 @@ router.put('/notifications', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// GET /api/settings/trading - Get trading preferences
-// ============================================================
 router.get('/trading', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
     
-    // Try new table first, fall back to user_settings
+    
     let trading = null;
     
-    // Try trading_preferences table
+    
     const { data: tradingData } = await supabase
       .from('trading_preferences')
       .select('*')
@@ -227,7 +195,7 @@ router.get('/trading', authMiddleware, async (req, res) => {
     if (tradingData) {
       trading = tradingData;
     } else {
-      // Fallback: check if trading prefs are in user_settings
+      
       const { data: settings } = await supabase
         .from('user_settings')
         .select('trading')
@@ -239,7 +207,7 @@ router.get('/trading', authMiddleware, async (req, res) => {
       }
     }
 
-    // Return trading preferences or defaults
+    
     res.json({
       default_market: trading?.default_market || 'boom_crash',
       favorite_markets: trading?.favorite_markets || ['boom_crash'],
@@ -262,9 +230,6 @@ router.get('/trading', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// PUT /api/settings/trading - Update trading preferences
-// ============================================================
 router.put('/trading', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
@@ -286,7 +251,7 @@ router.put('/trading', authMiddleware, async (req, res) => {
       sound_volume
     } = req.body;
 
-    // Validate stake amounts
+    
     const stake = parseInt(default_stake_amount) || 10;
     const maxStake = parseInt(max_stake_amount) || 1000;
     
@@ -294,7 +259,7 @@ router.put('/trading', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Invalid stake amount' });
     }
 
-    // Try to insert into trading_preferences table first
+    
     const tradingData = {
       user_id: user.id,
       deriv_account_id: req.user.derivId,
@@ -315,12 +280,12 @@ router.put('/trading', authMiddleware, async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
-    // Try trading_preferences table
+    
     const { error: tradingError } = await supabase
       .from('trading_preferences')
       .upsert(tradingData, { onConflict: 'user_id' });
 
-    // If table doesn't exist, store in user_settings
+    
     if (tradingError) {
       console.log('trading_preferences table not found, using user_settings');
       
@@ -342,14 +307,11 @@ router.put('/trading', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// GET /api/settings/sessions - Get active sessions
-// ============================================================
 router.get('/sessions', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
     
-    // Try to get from active_sessions table
+    
     let sessions = [];
     
     const { data: sessionsData, error } = await supabase
@@ -382,15 +344,12 @@ router.get('/sessions', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// DELETE /api/settings/sessions - Terminate all other sessions
-// ============================================================
 router.delete('/sessions', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
     const currentSocketId = req.headers['x-socket-id'];
 
-    // Deactivate all sessions except current
+    
     const { error } = await supabase
       .from('active_sessions')
       .update({ 
@@ -403,7 +362,7 @@ router.delete('/sessions', authMiddleware, async (req, res) => {
 
     if (error) {
       console.error('Session termination error:', error);
-      // Don't throw - table might not exist
+      
     }
 
     res.json({ success: true, message: 'All other sessions terminated' });
@@ -413,15 +372,12 @@ router.delete('/sessions', authMiddleware, async (req, res) => {
   }
 });
 
-// ============================================================
-// DELETE /api/settings/sessions/:sessionId - Terminate specific session
-// ============================================================
 router.delete('/sessions/:sessionId', authMiddleware, async (req, res) => {
   try {
     const user = await ensureUserProfile(req.user.derivId);
     const { sessionId } = req.params;
 
-    // Find and deactivate the session
+    
     const { error } = await supabase
       .from('active_sessions')
       .update({ 

@@ -1,7 +1,4 @@
-/**
- * Portfolio API Routes
- * Handles user portfolio items
- */
+
 
 const express = require('express');
 const router = express.Router();
@@ -11,9 +8,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
-/**
- * Helper to get or create user profile
- */
 async function getOrCreateUser(derivId) {
   let user = await getProfileByDerivId(derivId);
   if (!user) {
@@ -27,10 +21,6 @@ async function getOrCreateUser(derivId) {
   return user;
 }
 
-/**
- * GET /api/portfolio
- * Get current user's portfolio
- */
 router.get('/', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -46,10 +36,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * GET /api/portfolio/user/:userId
- * Get another user's portfolio
- */
 router.get('/user/:userId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -65,10 +51,6 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-/**
- * POST /api/portfolio
- * Add portfolio item (metadata only)
- */
 router.post('/', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -85,10 +67,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-/**
- * PUT /api/portfolio/:itemId
- * Update portfolio item
- */
 router.put('/:itemId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -104,10 +82,6 @@ router.put('/:itemId', async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/portfolio/:itemId
- * Delete portfolio item
- */
 router.delete('/:itemId', async (req, res) => {
   try {
     const currentUser = await getOrCreateUser(req.user.derivId);
@@ -123,10 +97,6 @@ router.delete('/:itemId', async (req, res) => {
   }
 });
 
-/**
- * POST /api/portfolio/:itemId/like
- * Like a portfolio item
- */
 router.post('/:itemId/like', async (req, res) => {
   try {
     const result = await PortfolioService.toggleLike(req.params.itemId, req.user.id);
@@ -137,10 +107,6 @@ router.post('/:itemId/like', async (req, res) => {
   }
 });
 
-/**
- * POST /api/portfolio/:itemId/view
- * Increment view count
- */
 router.post('/:itemId/view', async (req, res) => {
   try {
     await PortfolioService.incrementViews(req.params.itemId);

@@ -1,17 +1,7 @@
-/**
- * Community Service v2
- * Real-time community with Supabase + WebSocket integration
- */
+
 
 const { supabase } = require('../db/supabase');
 
-// =============================================
-// HELPER FUNCTIONS
-// =============================================
-
-/**
- * Get user profile for posts/comments
- */
 async function getUserProfile(userId) {
   if (!userId) return null;
 
@@ -40,9 +30,6 @@ async function getUserProfile(userId) {
   };
 }
 
-/**
- * Check rate limit for user actions
- */
 async function checkRateLimit(userId, actionType, maxActions, windowMinutes) {
   const windowStart = new Date();
   windowStart.setMinutes(windowStart.getMinutes() - (windowStart.getMinutes() % windowMinutes), 0, 0);
@@ -56,34 +43,28 @@ async function checkRateLimit(userId, actionType, maxActions, windowMinutes) {
 
   if (error) {
     console.error('Rate limit check error:', error);
-    return true; // Allow on error
+    return true; 
   }
 
   return data;
 }
 
-/**
- * Sanitize user text input
- */
 function sanitizeText(text) {
   if (!text) return '';
   return text
     .trim()
-    .replace(/<[^>]*>/g, '') // Remove HTML tags
-    .replace(/javascript:/gi, '') // Remove javascript: protocol
-    .replace(/on\w+=/gi, ''); // Remove event handlers
+    .replace(/<[^>]*>/g, '') 
+    .replace(/javascript:/gi, '') 
+    .replace(/on\w+=/gi, ''); 
 }
 
-/**
- * Transform post for API response
- */
 async function transformPost(post, currentUserId = null) {
   const author = await getUserProfile(post.user_id);
 
-  // Check if user liked this post - try both table names for compatibility
+  
   let liked = false;
   if (currentUserId) {
-    // Try community_post_likes first, fall back to post_votes
+    
     let { data: likeData, error } = await supabase
       .from('community_post_likes')
       .select('id')
@@ -92,7 +73,7 @@ async function transformPost(post, currentUserId = null) {
       .single();
     
     if (error && error.code === '42P01') {
-      // Table doesn't exist, try post_votes
+      
       const { data: voteData } = await supabase
         .from('post_votes')
         .select('id, vote_value')
@@ -105,7 +86,7 @@ async function transformPost(post, currentUserId = null) {
     }
   }
 
-  // Handle both old and new column names
+  
   const likeCount = post.like_count ?? ((post.upvotes || 0) - (post.downvotes || 0));
   const commentCount = post.comment_count ?? 0;
 
@@ -131,9 +112,6 @@ async function transformPost(post, currentUserId = null) {
   };
 }
 
-/**
- * Transform comment for API response
- */
 async function transformComment(comment) {
   const author = await getUserProfile(comment.user_id);
 
@@ -150,22 +128,15 @@ async function transformComment(comment) {
   };
 }
 
-// =============================================
-// POSTS
-// =============================================
-
-/**
- * Create a new post
- */
 async function createPost(userId, data) {
-  // Skip rate limit if function doesn't exist
+  
   try {
     const canPost = await checkRateLimit(userId, 'create_post', 5, 10);
     if (!canPost) {
       return { success: false, error: 'Rate limit exceeded. Please wait before posting again.' };
     }
   } catch (e) {
-    // Rate limit function might not exist, continue
+    
   }
 
   const content = sanitizeText(data.content);
@@ -185,16 +156,16 @@ async function createPost(userId, data) {
     return { success: false, error: 'Invalid post type' };
   }
 
-  // Try with new columns first, fall back to old structure
+  
   let post, error;
   
-  // First try with all new columns
+  
   const result = await supabase
     .from('community_posts')
     .insert({
       user_id: userId,
       content,
-      category: postType,  // Use category for old schema compatibility
+      category: postType,  
       upvotes: 0,
       downvotes: 0
     })
@@ -213,9 +184,6 @@ async function createPost(userId, data) {
   return { success: true, post: transformedPost };
 }
 
-/**
- * Get feed with pagination
- */
 async function getFeed(options = {}) {
   try {
     const {
@@ -226,23 +194,23 @@ async function getFeed(options = {}) {
       userId = null
     } = options;
 
-    // Build query - select only columns that exist in both schemas
+    
     let query = supabase
       .from('community_posts')
       .select('id, user_id, content, title, category, upvotes, downvotes, created_at, updated_at', { count: 'exact' });
 
-    // Filter by category/type
+    
     if (category && category !== 'all') {
       query = query.eq('category', category);
     }
 
-    // Sorting - use created_at which always exists
+    
     switch (sortBy) {
       case 'top':
         query = query.order('upvotes', { ascending: false, nullsFirst: false });
         break;
       case 'trending':
-        // Trending: recent posts with high engagement
+        
         query = query
           .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
           .order('upvotes', { ascending: false, nullsFirst: false });
@@ -252,7 +220,7 @@ async function getFeed(options = {}) {
         query = query.order('created_at', { ascending: false });
     }
 
-    // Pagination
+    
     const offset = (page - 1) * limit;
     query = query.range(offset, offset + limit - 1);
 
@@ -263,7 +231,7 @@ async function getFeed(options = {}) {
       return { posts: [], pagination: { page, limit, total: 0, totalPages: 0, hasMore: false } };
     }
 
-    // Transform posts with author info
+    
     const transformedPosts = await Promise.all(
       (posts || []).map(post => transformPost(post, userId))
     );
@@ -290,9 +258,6 @@ async function getFeed(options = {}) {
   }
 }
 
-/**
- * Get single post with details
- */
 async function getPost(postId, userId = null) {
   const { data: post, error } = await supabase
     .from('community_posts')
@@ -305,7 +270,7 @@ async function getPost(postId, userId = null) {
     return null;
   }
 
-  // Increment view count
+  
   await supabase
     .from('community_posts')
     .update({ view_count: (post.view_count || 0) + 1 })
@@ -314,9 +279,6 @@ async function getPost(postId, userId = null) {
   return transformPost(post, userId);
 }
 
-/**
- * Delete a post
- */
 async function deletePost(userId, postId) {
   const { data: post, error: fetchError } = await supabase
     .from('community_posts')
@@ -344,26 +306,19 @@ async function deletePost(userId, postId) {
   return { success: true };
 }
 
-// =============================================
-// LIKES
-// =============================================
-
-/**
- * Like or unlike a post
- */
 async function likePost(userId, postId, liked) {
   try {
     if (liked) {
-      // Add like
+      
       const { error } = await supabase
         .from('community_post_likes')
         .insert({ post_id: postId, user_id: userId });
 
-      if (error && error.code !== '23505') { // Ignore duplicate key error
+      if (error && error.code !== '23505') { 
         throw error;
       }
     } else {
-      // Remove like
+      
       await supabase
         .from('community_post_likes')
         .delete()
@@ -371,7 +326,7 @@ async function likePost(userId, postId, liked) {
         .eq('user_id', userId);
     }
 
-    // Get updated like count
+    
     const { data: post } = await supabase
       .from('community_posts')
       .select('like_count')
@@ -389,13 +344,6 @@ async function likePost(userId, postId, liked) {
   }
 }
 
-// =============================================
-// COMMENTS
-// =============================================
-
-/**
- * Get comments for a post
- */
 async function getComments(postId, options = {}) {
   const { page = 1, limit = 50 } = options;
 
@@ -422,11 +370,8 @@ async function getComments(postId, options = {}) {
   };
 }
 
-/**
- * Add comment to post
- */
 async function addComment(userId, postId, content) {
-  // Rate limit: 20 comments per 5 minutes
+  
   const canComment = await checkRateLimit(userId, 'add_comment', 20, 5);
   if (!canComment) {
     return { success: false, error: 'Rate limit exceeded. Please wait before commenting again.' };
@@ -442,7 +387,7 @@ async function addComment(userId, postId, content) {
     return { success: false, error: 'Comment is too long (max 2000 characters)' };
   }
 
-  // Verify post exists
+  
   const { data: post, error: postError } = await supabase
     .from('community_posts')
     .select('id')
@@ -473,7 +418,7 @@ async function addComment(userId, postId, content) {
 
   const transformedComment = await transformComment(comment);
 
-  // Get updated comment count
+  
   const { data: updatedPost } = await supabase
     .from('community_posts')
     .select('comment_count')
@@ -487,9 +432,6 @@ async function addComment(userId, postId, content) {
   };
 }
 
-/**
- * Delete comment
- */
 async function deleteComment(userId, commentId) {
   const { data: comment, error: fetchError } = await supabase
     .from('community_comments')
@@ -517,13 +459,6 @@ async function deleteComment(userId, commentId) {
   return { success: true };
 }
 
-// =============================================
-// ONLINE USERS
-// =============================================
-
-/**
- * Update user online status
- */
 async function updateOnlineStatus(userId, status = 'online') {
   await supabase
     .from('community_online_users')
@@ -534,9 +469,6 @@ async function updateOnlineStatus(userId, status = 'online') {
     }, { onConflict: 'user_id' });
 }
 
-/**
- * Get online users
- */
 async function getOnlineUsers(limit = 50) {
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
@@ -574,16 +506,9 @@ async function getOnlineUsers(limit = 50) {
   }));
 }
 
-// =============================================
-// IMAGE UPLOAD
-// =============================================
-
-/**
- * Upload image to Supabase Storage
- */
 async function uploadPostImage(userId, file) {
   const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-  const maxSize = 2 * 1024 * 1024; // 2MB
+  const maxSize = 2 * 1024 * 1024; 
 
   if (!allowedTypes.includes(file.mimetype)) {
     return { success: false, error: 'Invalid file type. Only JPG, PNG, and WebP allowed.' };
@@ -614,10 +539,6 @@ async function uploadPostImage(userId, file) {
 
   return { success: true, url: urlData.publicUrl };
 }
-
-// =============================================
-// EXPORTS
-// =============================================
 
 module.exports = {
   createPost,

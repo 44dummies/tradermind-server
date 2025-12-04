@@ -1,13 +1,9 @@
-/**
- * Chatroom Auto-Assignment Engine
- * Matches users to chatrooms based on their trading data
- */
+
 
 const { prisma } = require('./database');
 
-// Default chatroom definitions
 const DEFAULT_CHATROOMS = [
-  // Performance-based rooms
+  
   { name: 'Pro Traders Room', type: 'personal', category: 'performance', level: 3, icon: '👑', 
     rules: { minWinRate: 55, minTrades: 50 } },
   { name: 'Improvement Squad', type: 'personal', category: 'performance', level: 1, icon: '📈',
@@ -17,7 +13,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'Winning Streak Club', type: 'personal', category: 'performance', level: 2, icon: '🔥',
     rules: { hasWinStreak: true } },
   
-  // Emotional profile rooms
+  
   { name: 'FOMO Rehab', type: 'personal', category: 'behavior', level: 1, icon: '😰',
     rules: { minFomoScore: 60 } },
   { name: 'Discipline Dojo', type: 'personal', category: 'behavior', level: 2, icon: '🎯',
@@ -27,7 +23,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'Emotional Control Hub', type: 'personal', category: 'behavior', level: 2, icon: '🧘',
     rules: { maxEmotionalScore: 40 } },
   
-  // Contract type rooms
+  
   { name: 'Multipliers Lab', type: 'personal', category: 'strategy', level: 2, icon: '📈',
     rules: { preferredContract: 'multipliers' } },
   { name: 'Binary Lounge', type: 'personal', category: 'strategy', level: 1, icon: '⬆️',
@@ -37,7 +33,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'Digit Masters', type: 'personal', category: 'strategy', level: 2, icon: '🔢',
     rules: { preferredContract: 'digits' } },
   
-  // Risk profile rooms
+  
   { name: 'High Risk Circle', type: 'personal', category: 'strategy', level: 3, icon: '🎲',
     rules: { riskLevel: 'high' } },
   { name: 'Smart Risk Traders', type: 'personal', category: 'strategy', level: 2, icon: '🧠',
@@ -45,7 +41,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'Conservative Traders', type: 'personal', category: 'strategy', level: 1, icon: '🛡️',
     rules: { riskLevel: 'low' } },
   
-  // Trading style rooms
+  
   { name: 'Scalpers Den', type: 'personal', category: 'strategy', level: 2, icon: '⚡',
     rules: { tradingStyle: 'scalper' } },
   { name: 'Swing Traders Hub', type: 'personal', category: 'strategy', level: 2, icon: '🌊',
@@ -53,7 +49,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'Day Traders Lounge', type: 'personal', category: 'strategy', level: 2, icon: '☀️',
     rules: { tradingStyle: 'day' } },
   
-  // Public rooms (everyone can join)
+  
   { name: 'Beginners Lounge', type: 'public', category: 'general', level: 1, icon: '🌱',
     description: 'Welcome new traders! Ask questions and learn together.' },
   { name: 'Strategy Builders', type: 'public', category: 'strategy', level: 2, icon: '�',
@@ -65,7 +61,7 @@ const DEFAULT_CHATROOMS = [
   { name: 'General Discussion', type: 'public', category: 'general', level: 1, icon: '💬',
     description: 'Chat about anything trading-related.' },
   
-  // AI-enhanced rooms
+  
   { name: 'AI Trading Insights', type: 'ai', category: 'strategy', level: 2, icon: '🤖',
     description: 'Get AI-powered market analysis and insights.' },
   { name: 'AI Emotional Coach', type: 'ai', category: 'behavior', level: 1, icon: '🧠',
@@ -74,18 +70,15 @@ const DEFAULT_CHATROOMS = [
     description: 'Daily AI-generated market summaries.' }
 ];
 
-/**
- * Initialize default chatrooms in the database
- */
 async function initializeDefaultChatrooms() {
-  // Check if chatrooms already exist
+  
   const existingCount = await prisma.chatroom.count({});
   if (existingCount > 0) {
     console.log(`✅ ${existingCount} chatrooms already exist in database`);
     return;
   }
 
-  // Create basic default chatrooms
+  
   const basicRooms = [
     { id: 'room-beginners', name: 'Beginners Lounge', description: 'Welcome! A friendly space for new traders', type: 'level_based', traderLevel: 'BEGINNER' },
     { id: 'room-intermediate', name: 'Intermediate Traders', description: 'Level up your trading game', type: 'level_based', traderLevel: 'INTERMEDIATE' },
@@ -108,10 +101,6 @@ async function initializeDefaultChatrooms() {
   console.log('✅ Default chatrooms initialized');
 }
 
-/**
- * Calculate fit score for a user and chatroom
- * @returns {number} Score from 0-100
- */
 function calculateFitScore(user, chatroom) {
   const rules = chatroom.autoAssignmentRules;
   if (!rules) return chatroom.type === 'public' ? 100 : 0;
@@ -119,7 +108,7 @@ function calculateFitScore(user, chatroom) {
   let score = 0;
   let totalWeight = 0;
   
-  // Win rate matching (weight: 25)
+  
   if (rules.minWinRate !== undefined) {
     totalWeight += 25;
     if (user.winRate >= rules.minWinRate) score += 25;
@@ -131,7 +120,7 @@ function calculateFitScore(user, chatroom) {
     else score += Math.max(0, 25 * (rules.maxWinRate / user.winRate));
   }
   
-  // Emotional scores matching (weight: 20 each)
+  
   if (rules.minFomoScore !== undefined) {
     totalWeight += 20;
     if (user.fomoScore >= rules.minFomoScore) score += 20;
@@ -153,14 +142,14 @@ function calculateFitScore(user, chatroom) {
     else score += Math.max(0, 20 * (rules.maxEmotionalScore / user.emotionalScore));
   }
   
-  // Contract type preference (weight: 30)
+  
   if (rules.preferredContract !== undefined) {
     totalWeight += 30;
     if (user.preferredContractType === rules.preferredContract) score += 30;
     else if (user.preferredContractType === 'mixed') score += 15;
   }
   
-  // Risk level (weight: 25)
+  
   if (rules.riskLevel !== undefined) {
     totalWeight += 25;
     if (user.riskLevel === rules.riskLevel) score += 25;
@@ -170,25 +159,22 @@ function calculateFitScore(user, chatroom) {
     ) score += 12;
   }
   
-  // Trading style (weight: 25)
+  
   if (rules.tradingStyle !== undefined) {
     totalWeight += 25;
     if (user.tradingStyle === rules.tradingStyle) score += 25;
     else if (user.tradingStyle === 'unknown') score += 10;
   }
   
-  // Minimum trades requirement
+  
   if (rules.minTrades !== undefined && user.totalTrades < rules.minTrades) {
-    score = score * 0.5; // Penalize if not enough trades
+    score = score * 0.5; 
   }
   
-  // Normalize score to 0-100
+  
   return totalWeight > 0 ? Math.round((score / totalWeight) * 100) : 0;
 }
 
-/**
- * Get recommended chatrooms for a user
- */
 async function getRecommendedChatrooms(userId) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return [];
@@ -208,19 +194,15 @@ async function getRecommendedChatrooms(userId) {
   return recommendations;
 }
 
-/**
- * Auto-assign user to matching chatrooms
- * Only assigns if fitScore > 70
- */
 async function autoAssignUserToChatrooms(userId) {
   const recommendations = await getRecommendedChatrooms(userId);
   const assigned = [];
   
   for (const room of recommendations) {
-    // Auto-assign if:
-    // 1. Public room (everyone gets access)
-    // 2. AI room (everyone gets access)
-    // 3. Personal room with fitScore > 70
+    
+    
+    
+    
     const shouldAssign = 
       room.type === 'public' || 
       room.type === 'ai' || 
@@ -249,11 +231,8 @@ async function autoAssignUserToChatrooms(userId) {
   return assigned;
 }
 
-/**
- * Update user's trading profile and re-assign chatrooms
- */
 async function updateUserProfileAndReassign(userId, profileData) {
-  // Update user profile
+  
   await prisma.user.update({
     where: { id: userId },
     data: {
@@ -271,13 +250,10 @@ async function updateUserProfileAndReassign(userId, profileData) {
     }
   });
   
-  // Re-assign to chatrooms
+  
   return autoAssignUserToChatrooms(userId);
 }
 
-/**
- * Get user's assigned chatrooms
- */
 async function getUserChatrooms(userId) {
   const userChatrooms = await prisma.userChatroom.findMany({
     where: { userId, isActive: true },

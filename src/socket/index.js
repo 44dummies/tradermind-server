@@ -1,37 +1,24 @@
-/**
- * Socket.IO Event Handlers
- * Real-time WebSocket communication for chat
- */
+
 
 const { supabase } = require('../db/supabase');
 const { verifyToken } = require('../services/auth');
 const { v4: uuidv4 } = require('uuid');
 
-// Active connections tracking
-const activeConnections = new Map(); // socketId -> { userId, username }
-const userSockets = new Map(); // userId -> Set of socketIds
-const roomPresence = new Map(); // roomId -> Map of userId -> userInfo
-const typingUsers = new Map(); // roomId -> Set of userIds
+const activeConnections = new Map(); 
+const userSockets = new Map(); 
+const roomPresence = new Map(); 
+const typingUsers = new Map(); 
 
-/**
- * Get online users in a room
- */
 function getRoomOnlineUsers(roomId) {
   const users = roomPresence.get(roomId);
   return users ? Array.from(users.values()) : [];
 }
 
-/**
- * Broadcast user presence to room
- */
 function broadcastRoomPresence(io, roomId) {
   const users = getRoomOnlineUsers(roomId);
   io.to(roomId).emit('roomPresence', { roomId, users, count: users.length });
 }
 
-/**
- * Simple content moderation
- */
 function moderateContent(content) {
   const bannedWords = ['spam', 'scam', 'guaranteed profits'];
   const lowerContent = content.toLowerCase();
@@ -49,11 +36,8 @@ function moderateContent(content) {
   return { approved: true };
 }
 
-/**
- * Setup Socket.IO handlers
- */
 function setupSocketHandlers(io) {
-  // Authentication middleware
+  
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) {
@@ -73,7 +57,7 @@ function setupSocketHandlers(io) {
   io.on('connection', async (socket) => {
     console.log(`User connected: ${socket.username} (${socket.id})`);
     
-    // Track connection
+    
     activeConnections.set(socket.id, { 
       userId: socket.userId, 
       username: socket.username 
@@ -85,7 +69,7 @@ function setupSocketHandlers(io) {
     }
     userSockets.get(socket.userId).add(socket.id);
     
-    // Update user online status in database and broadcast if new
+    
     try {
       const { data: userProfile } = await supabase
         .from('user_profiles')
@@ -94,7 +78,7 @@ function setupSocketHandlers(io) {
         .select('deriv_id, username, display_name, profile_photo, status_message')
         .single();
       
-      // If user just came online (first socket), broadcast to all
+      
       if (isNewUser && userProfile) {
         io.emit('userOnline', {
           derivId: userProfile.deriv_id,
@@ -109,19 +93,17 @@ function setupSocketHandlers(io) {
       console.error('Failed to update online status:', err);
     }
 
-    // ============ Room Events ============
+    
 
-    /**
-     * Join a chatroom
-     */
+    
     socket.on('joinRoom', async (data) => {
       const { roomId } = data;
       
       try {
-        // Join socket room
+        
         socket.join(roomId);
         
-        // Track presence
+        
         if (!roomPresence.has(roomId)) {
           roomPresence.set(roomId, new Map());
         }
@@ -131,7 +113,7 @@ function setupSocketHandlers(io) {
           joinedAt: new Date().toISOString()
         });
         
-        // Notify room
+        
         socket.to(roomId).emit('userJoined', {
           roomId,
           userId: socket.userId,
@@ -139,10 +121,10 @@ function setupSocketHandlers(io) {
           timestamp: new Date().toISOString()
         });
         
-        // Send presence update
+        
         broadcastRoomPresence(io, roomId);
         
-        // Send join confirmation with recent messages
+        
         const { data: messages } = await supabase
           .from('Message')
           .select('*')
@@ -162,15 +144,13 @@ function setupSocketHandlers(io) {
       }
     });
 
-    /**
-     * Leave a chatroom
-     */
+    
     socket.on('leaveRoom', (data) => {
       const { roomId } = data;
       
       socket.leave(roomId);
       
-      // Update presence
+      
       const presence = roomPresence.get(roomId);
       if (presence) {
         presence.delete(socket.userId);
@@ -179,13 +159,13 @@ function setupSocketHandlers(io) {
         }
       }
       
-      // Clear typing status
+      
       const typing = typingUsers.get(roomId);
       if (typing) {
         typing.delete(socket.userId);
       }
       
-      // Notify room
+      
       socket.to(roomId).emit('userLeft', {
         roomId,
         userId: socket.userId,
@@ -196,11 +176,9 @@ function setupSocketHandlers(io) {
       broadcastRoomPresence(io, roomId);
     });
 
-    // ============ Message Events ============
+    
 
-    /**
-     * Send a message
-     */
+    
     socket.on('sendMessage', async (data) => {
       const { roomId, content, replyTo } = data;
       
@@ -210,7 +188,7 @@ function setupSocketHandlers(io) {
       }
       
       try {
-        // Moderate message
+        
         const moderation = moderateContent(content);
         if (!moderation.approved) {
           socket.emit('messageModerated', {
@@ -219,7 +197,7 @@ function setupSocketHandlers(io) {
           return;
         }
         
-        // Create message in database
+        
         const messageId = uuidv4();
         const { data: message, error } = await supabase
           .from('Message')
@@ -236,7 +214,7 @@ function setupSocketHandlers(io) {
         
         if (error) throw error;
         
-        // Clear typing indicator
+        
         const typing = typingUsers.get(roomId);
         if (typing) {
           typing.delete(socket.userId);
@@ -246,7 +224,7 @@ function setupSocketHandlers(io) {
           });
         }
         
-        // Broadcast message to room
+        
         io.to(roomId).emit('newMessage', {
           id: message.id,
           roomId,
@@ -263,9 +241,7 @@ function setupSocketHandlers(io) {
       }
     });
 
-    /**
-     * Typing indicator
-     */
+    
     socket.on('typing', (data) => {
       const { roomId, isTyping } = data;
       
@@ -281,7 +257,7 @@ function setupSocketHandlers(io) {
         typing.delete(socket.userId);
       }
       
-      // Broadcast typing status
+      
       socket.to(roomId).emit('typingUpdate', {
         roomId,
         users: Array.from(typing).map(id => {
@@ -291,9 +267,7 @@ function setupSocketHandlers(io) {
       });
     });
 
-    /**
-     * Mark messages as read
-     */
+    
     socket.on('markRead', async (data) => {
       const { roomId, messageId } = data;
       
@@ -314,13 +288,11 @@ function setupSocketHandlers(io) {
       }
     });
 
-    /**
-     * Add reaction to message
-     */
+    
     socket.on('addReaction', async (data) => {
       const { messageId, reaction, roomId } = data;
       
-      // Broadcast reaction (store in memory for simplicity)
+      
       io.to(roomId).emit('reactionAdded', {
         messageId,
         reaction,
@@ -329,17 +301,15 @@ function setupSocketHandlers(io) {
       });
     });
 
-    // ============ Profile Sync Events ============
+    
 
-    /**
-     * Handle profile updates - broadcast to all connected users
-     */
+    
     socket.on('profileUpdate', async (data) => {
       const { derivId, username, displayName, avatarUrl, statusMessage } = data;
       
       console.log(`Profile update from ${socket.username}:`, data);
       
-      // Update all rooms this user is in
+      
       for (const [roomId, presence] of roomPresence) {
         if (presence.has(socket.userId)) {
           presence.set(socket.userId, {
@@ -352,12 +322,12 @@ function setupSocketHandlers(io) {
             joinedAt: presence.get(socket.userId)?.joinedAt || new Date().toISOString()
           });
           
-          // Broadcast updated presence
+          
           broadcastRoomPresence(io, roomId);
         }
       }
       
-      // Update socket username for future messages
+      
       if (username) {
         socket.username = username;
         const conn = activeConnections.get(socket.id);
@@ -366,7 +336,7 @@ function setupSocketHandlers(io) {
         }
       }
       
-      // Broadcast profile update to all connected clients
+      
       io.emit('userProfileUpdated', {
         derivId: derivId,
         userId: socket.userId,
@@ -378,15 +348,13 @@ function setupSocketHandlers(io) {
       });
     });
 
-    // ============ Settings Sync Events ============
+    
 
-    /**
-     * Profile update - broadcast to all user's sessions
-     */
+    
     socket.on('profile:update', (data) => {
       const { derivId, username, displayName, bio, avatarUrl } = data;
       
-      // Broadcast to all this user's sockets
+      
       const sockets = userSockets.get(socket.userId);
       if (sockets) {
         sockets.forEach(socketId => {
@@ -398,13 +366,11 @@ function setupSocketHandlers(io) {
         });
       }
       
-      // Also broadcast profile change to interested parties (community, chat)
+      
       io.emit('userProfileUpdated', { derivId, username, displayName, avatarUrl });
     });
 
-    /**
-     * Avatar update - broadcast globally
-     */
+    
     socket.on('profile:avatar:update', (data) => {
       const { derivId, avatarUrl } = data;
       
@@ -415,13 +381,11 @@ function setupSocketHandlers(io) {
       });
     });
 
-    /**
-     * Settings update - sync across user's sessions
-     */
+    
     socket.on('settings:update', (data) => {
       const { type, settings } = data;
       
-      // Broadcast to all this user's other sockets
+      
       const sockets = userSockets.get(socket.userId);
       if (sockets) {
         sockets.forEach(socketId => {
@@ -432,9 +396,7 @@ function setupSocketHandlers(io) {
       }
     });
 
-    /**
-     * Session termination - force logout specific session
-     */
+    
     socket.on('session:terminate', (data) => {
       const { sessionId, all, except } = data;
       
@@ -442,21 +404,19 @@ function setupSocketHandlers(io) {
       if (!sockets) return;
 
       if (all) {
-        // Terminate all sessions except the specified one
+        
         sockets.forEach(socketId => {
           if (socketId !== except) {
             io.to(socketId).emit('session:terminated', { all: true });
           }
         });
       } else if (sessionId) {
-        // Terminate specific session
+        
         io.to(sessionId).emit('session:terminated', { sessionId });
       }
     });
 
-    /**
-     * User going offline intentionally
-     */
+    
     socket.on('user:offline', async (data) => {
       const { derivId } = data;
       
@@ -472,9 +432,7 @@ function setupSocketHandlers(io) {
       }
     });
 
-    /**
-     * Request online users list
-     */
+    
     socket.on('getOnlineUsers', () => {
       const onlineUsers = [];
       for (const [socketId, info] of activeConnections) {
@@ -487,11 +445,9 @@ function setupSocketHandlers(io) {
       socket.emit('onlineUsers', onlineUsers);
     });
 
-    // ============ Direct Messages ============
+    
 
-    /**
-     * Send direct message
-     */
+    
     socket.on('directMessage', async (data) => {
       const { targetUserId, content } = data;
       
@@ -506,7 +462,7 @@ function setupSocketHandlers(io) {
         timestamp: new Date().toISOString()
       };
       
-      // Send to target user if online
+      
       const targetSockets = userSockets.get(targetUserId);
       if (targetSockets) {
         targetSockets.forEach(socketId => {
@@ -514,16 +470,16 @@ function setupSocketHandlers(io) {
         });
       }
       
-      // Confirm to sender
+      
       socket.emit('directMessageSent', message);
     });
 
-    // ============ Disconnect ============
+    
 
     socket.on('disconnect', async () => {
       console.log(`User disconnected: ${socket.username} (${socket.id})`);
       
-      // Remove from tracking
+      
       activeConnections.delete(socket.id);
       
       const sockets = userSockets.get(socket.userId);
@@ -532,14 +488,14 @@ function setupSocketHandlers(io) {
         if (sockets.size === 0) {
           userSockets.delete(socket.userId);
           
-          // User completely offline, broadcast to all clients
+          
           io.emit('userOffline', {
             derivId: socket.userId,
             username: socket.username,
             timestamp: new Date().toISOString()
           });
           
-          // Update all room presences
+          
           for (const [roomId, presence] of roomPresence) {
             if (presence.has(socket.userId)) {
               presence.delete(socket.userId);
@@ -554,7 +510,7 @@ function setupSocketHandlers(io) {
             }
           }
           
-          // Update database
+          
           try {
             await supabase
               .from('user_profiles')
@@ -567,7 +523,7 @@ function setupSocketHandlers(io) {
       }
     });
 
-    // ============ Error Handling ============
+    
 
     socket.on('error', (err) => {
       console.error(`Socket error for ${socket.username}:`, err);

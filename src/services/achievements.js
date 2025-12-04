@@ -1,14 +1,9 @@
-/**
- * Achievements Service - Badges and achievements
- * Tracks and awards user achievements
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const AchievementsService = {
-  /**
-   * Get all achievements for a user
-   */
+  
   async getUserAchievements(userId) {
     const { data, error } = await supabase
       .from('achievements')
@@ -20,9 +15,7 @@ const AchievementsService = {
     return data || [];
   },
 
-  /**
-   * Get all available achievement definitions
-   */
+  
   async getAchievementDefinitions() {
     const { data, error } = await supabase
       .from('achievement_definitions')
@@ -33,11 +26,9 @@ const AchievementsService = {
     return data || [];
   },
 
-  /**
-   * Award achievement to user
-   */
+  
   async awardAchievement(userId, achievementType) {
-    // Get definition
+    
     const { data: definition } = await supabase
       .from('achievement_definitions')
       .select('*')
@@ -48,7 +39,7 @@ const AchievementsService = {
       throw new Error(`Unknown achievement type: ${achievementType}`);
     }
     
-    // Check if already has it
+    
     const { data: existing } = await supabase
       .from('achievements')
       .select('id')
@@ -60,7 +51,7 @@ const AchievementsService = {
       return { alreadyHas: true };
     }
     
-    // Award it
+    
     const { data, error } = await supabase
       .from('achievements')
       .insert({
@@ -75,7 +66,7 @@ const AchievementsService = {
     
     if (error) throw error;
     
-    // Create notification
+    
     await supabase
       .from('notifications')
       .insert({
@@ -89,9 +80,7 @@ const AchievementsService = {
     return data;
   },
 
-  /**
-   * Check and award streak achievements
-   */
+  
   async checkStreakAchievements(userId, streakCount) {
     const streakAchievements = {
       3: 'streak_starter',
@@ -109,11 +98,9 @@ const AchievementsService = {
     }
   },
 
-  /**
-   * Check and award social achievements
-   */
+  
   async checkSocialAchievements(userId) {
-    // Count friends
+    
     const { count: friendCount } = await supabase
       .from('friendships')
       .select('*', { count: 'exact', head: true })
@@ -128,7 +115,7 @@ const AchievementsService = {
       await this.awardAchievement(userId, 'social_butterfly');
     }
     
-    // Check helpfulness
+    
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('helpfulness_score')
@@ -140,9 +127,7 @@ const AchievementsService = {
     }
   },
 
-  /**
-   * Check anniversary achievements
-   */
+  
   async checkAnniversaryAchievements(userId, friendId, daysSinceFriendship) {
     if (daysSinceFriendship >= 30) {
       await this.awardAchievement(userId, 'one_month_friends');
@@ -155,9 +140,7 @@ const AchievementsService = {
     }
   },
 
-  /**
-   * Get achievement progress for a user
-   */
+  
   async getProgress(userId) {
     const definitions = await this.getAchievementDefinitions();
     const userAchievements = await this.getUserAchievements(userId);

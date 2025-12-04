@@ -1,13 +1,9 @@
-/**
- * Cron Jobs - Scheduled tasks
- * Auto-delete messages, streak management, anniversary checks
- */
+
 
 const { supabase } = require('../db/supabase');
 const NotificationsService = require('../services/notifications');
 const AchievementsService = require('../services/achievements');
 
-// Simple in-memory scheduler (for production, use node-cron or Bull)
 class CronScheduler {
   constructor() {
     this.jobs = [];
@@ -31,7 +27,7 @@ class CronScheduler {
     console.log(`[Cron] Scheduled: ${name} (every ${intervalMs / 1000}s)`);
   }
 
-  // Run a job immediately
+  
   async runNow(name) {
     const job = this.jobs.find(j => j.name === name);
     if (job) {
@@ -47,10 +43,6 @@ class CronScheduler {
 
 const scheduler = new CronScheduler();
 
-// =============================================
-// JOB: Auto-delete expired messages
-// Runs every hour
-// =============================================
 async function cleanupExpiredMessages() {
   const { error, count } = await supabase
     .from('friend_messages')
@@ -68,16 +60,12 @@ async function cleanupExpiredMessages() {
   }
 }
 
-// =============================================
-// JOB: Update broken streaks
-// Runs at midnight (check every 6 hours)
-// =============================================
 async function checkBrokenStreaks() {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().split('T')[0];
   
-  // Find chats with streaks that weren't updated yesterday
+  
   const { data: brokenStreaks, error } = await supabase
     .from('friend_chats')
     .select('id, streak_count, user1_id, user2_id')
@@ -90,7 +78,7 @@ async function checkBrokenStreaks() {
   }
   
   for (const chat of (brokenStreaks || [])) {
-    // Reset streak
+    
     await supabase
       .from('friend_chats')
       .update({
@@ -100,7 +88,7 @@ async function checkBrokenStreaks() {
       })
       .eq('id', chat.id);
     
-    // Notify both users
+    
     for (const userId of [chat.user1_id, chat.user2_id]) {
       await NotificationsService.create(userId, {
         type: 'streak_broken',
@@ -115,20 +103,12 @@ async function checkBrokenStreaks() {
   }
 }
 
-// =============================================
-// JOB: Check friend anniversaries
-// Runs daily
-// =============================================
 async function checkAnniversaries() {
   await NotificationsService.checkAnniversaries();
 }
 
-// =============================================
-// JOB: Check and award achievements
-// Runs every 4 hours
-// =============================================
 async function checkAchievements() {
-  // Get all users
+  
   const { data: users } = await supabase
     .from('user_profiles')
     .select('id');
@@ -142,10 +122,6 @@ async function checkAchievements() {
   }
 }
 
-// =============================================
-// JOB: Cleanup old notifications
-// Runs daily
-// =============================================
 async function cleanupOldNotifications() {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - 30);
@@ -166,12 +142,8 @@ async function cleanupOldNotifications() {
   }
 }
 
-// =============================================
-// JOB: Cleanup typing indicators
-// Runs every minute
-// =============================================
 async function cleanupTypingIndicators() {
-  const cutoff = new Date(Date.now() - 30000).toISOString(); // 30 seconds
+  const cutoff = new Date(Date.now() - 30000).toISOString(); 
   
   await supabase
     .from('typing_indicators')
@@ -179,33 +151,30 @@ async function cleanupTypingIndicators() {
     .lt('started_at', cutoff);
 }
 
-// =============================================
-// Start all cron jobs
-// =============================================
 function startCronJobs() {
   console.log('[Cron] Starting scheduled jobs...');
   
-  // Typing cleanup - every minute
+  
   scheduler.schedule('cleanup-typing', 60 * 1000, cleanupTypingIndicators);
   
-  // Message cleanup - every hour
+  
   scheduler.schedule('cleanup-messages', 60 * 60 * 1000, cleanupExpiredMessages);
   
-  // Streak check - every 6 hours
+  
   scheduler.schedule('check-streaks', 6 * 60 * 60 * 1000, checkBrokenStreaks);
   
-  // Anniversary check - every 24 hours
+  
   scheduler.schedule('check-anniversaries', 24 * 60 * 60 * 1000, checkAnniversaries);
   
-  // Achievement check - every 4 hours
+  
   scheduler.schedule('check-achievements', 4 * 60 * 60 * 1000, checkAchievements);
   
-  // Notification cleanup - every 24 hours
+  
   scheduler.schedule('cleanup-notifications', 24 * 60 * 60 * 1000, cleanupOldNotifications);
   
   console.log('[Cron] All jobs scheduled');
   
-  // Run initial checks after 10 seconds
+  
   setTimeout(async () => {
     console.log('[Cron] Running initial checks...');
     await cleanupTypingIndicators();

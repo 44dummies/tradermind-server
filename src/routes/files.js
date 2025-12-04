@@ -1,7 +1,4 @@
-/**
- * File Upload Routes
- * Handles file uploads for chat, chatrooms, and voice notes
- */
+
 
 const express = require('express');
 const multer = require('multer');
@@ -10,23 +7,22 @@ const { authMiddleware } = require('../middleware/auth');
 const { uploadFile, deleteFile } = require('../services/fileStorage');
 const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 
-// Configure multer for memory storage
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max
-    files: 5 // Max 5 files at once
+    fileSize: 50 * 1024 * 1024, 
+    files: 5 
   },
   fileFilter: (req, file, cb) => {
-    // Allow common file types
+    
     const allowedTypes = [
-      // Images
+      
       'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-      // Videos
+      
       'video/mp4', 'video/webm', 'video/quicktime',
-      // Audio/Voice
+      
       'audio/webm', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/wav',
-      // Documents
+      
       'application/pdf', 'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ];
@@ -39,12 +35,8 @@ const upload = multer({
   }
 });
 
-// All routes require authentication
 router.use(authMiddleware);
 
-/**
- * Helper to get or create user profile
- */
 async function getOrCreateUser(derivId) {
   let user = await getProfileByDerivId(derivId);
   if (!user) {
@@ -58,12 +50,6 @@ async function getOrCreateUser(derivId) {
   return user;
 }
 
-/**
- * POST /api/files/upload
- * Upload a single file
- * Query params:
- *   - context: 'chat' | 'chatroom' | 'voice' (default: 'chat')
- */
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -99,10 +85,6 @@ router.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-/**
- * POST /api/files/upload-multiple
- * Upload multiple files at once
- */
 router.post('/upload-multiple', upload.array('files', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -142,18 +124,13 @@ router.post('/upload-multiple', upload.array('files', 5), async (req, res) => {
   }
 });
 
-/**
- * POST /api/files/voice
- * Upload a voice note (audio file)
- * Specifically for voice messages with optimized settings
- */
 router.post('/voice', upload.single('voice'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No voice file provided' });
     }
     
-    // Verify it's an audio file
+    
     if (!req.file.mimetype.startsWith('audio/')) {
       return res.status(400).json({ error: 'File must be an audio file' });
     }
@@ -176,7 +153,7 @@ router.post('/voice', upload.single('voice'), async (req, res) => {
         fileName: result.fileName,
         fileType: result.fileType,
         fileSize: result.fileSize,
-        duration: req.body.duration || null // Client can send duration
+        duration: req.body.duration || null 
       }
     });
   } catch (error) {
@@ -185,10 +162,6 @@ router.post('/voice', upload.single('voice'), async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/files/:storagePath
- * Delete a file (only owner can delete)
- */
 router.delete('/:storagePath(*)', async (req, res) => {
   try {
     const { storagePath } = req.params;
@@ -199,7 +172,7 @@ router.delete('/:storagePath(*)', async (req, res) => {
       return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
-    // Verify user owns this file (path starts with their user ID fragment)
+    
     const userIdFragment = currentUser.id.substring(0, 8);
     if (!storagePath.startsWith(userIdFragment)) {
       return res.status(403).json({ error: 'You can only delete your own files' });
@@ -218,7 +191,6 @@ router.delete('/:storagePath(*)', async (req, res) => {
   }
 });
 
-// Error handling for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {

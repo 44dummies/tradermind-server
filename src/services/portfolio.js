@@ -1,21 +1,16 @@
-/**
- * Portfolio Service - User portfolio management
- * Handles portfolio items with local-only media storage
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const PortfolioService = {
-  /**
-   * Add portfolio item (metadata only - media stored locally)
-   */
+  
   async addItem(userId, itemData) {
     const {
       media_type,
       title,
       description,
       local_filename,
-      thumbnail_data, // Base64 thumbnail
+      thumbnail_data, 
       tags = [],
       privacy_level = 'public'
     } = itemData;
@@ -39,9 +34,7 @@ const PortfolioService = {
     return data;
   },
 
-  /**
-   * Get user's portfolio items
-   */
+  
   async getUserPortfolio(userId, viewerId = null) {
     let query = supabase
       .from('portfolio_items')
@@ -49,9 +42,9 @@ const PortfolioService = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     
-    // Apply privacy filter if viewer is different from owner
+    
     if (viewerId !== userId) {
-      // Check friendship
+      
       const { data: friendship } = await supabase
         .from('friendships')
         .select('status')
@@ -61,10 +54,10 @@ const PortfolioService = {
         .single();
       
       if (friendship) {
-        // Friends can see public and friends_only
+        
         query = query.in('privacy_level', ['public', 'friends_only']);
       } else {
-        // Non-friends can only see public
+        
         query = query.eq('privacy_level', 'public');
       }
     }
@@ -74,9 +67,7 @@ const PortfolioService = {
     return data || [];
   },
 
-  /**
-   * Update portfolio item
-   */
+  
   async updateItem(itemId, userId, updates) {
     const { data, error } = await supabase
       .from('portfolio_items')
@@ -93,9 +84,7 @@ const PortfolioService = {
     return data;
   },
 
-  /**
-   * Delete portfolio item
-   */
+  
   async deleteItem(itemId, userId) {
     const { error } = await supabase
       .from('portfolio_items')
@@ -107,12 +96,10 @@ const PortfolioService = {
     return { success: true };
   },
 
-  /**
-   * Like/unlike portfolio item
-   */
+  
   async toggleLike(itemId, userId) {
-    // For simplicity, we'll just increment/decrement
-    // In production, you'd want a separate likes table
+    
+    
     const { data: item } = await supabase
       .from('portfolio_items')
       .select('likes_count')
@@ -121,7 +108,7 @@ const PortfolioService = {
     
     if (!item) throw new Error('Item not found');
     
-    // Toggle (simple implementation)
+    
     const { error } = await supabase
       .from('portfolio_items')
       .update({ likes_count: item.likes_count + 1 })
@@ -129,7 +116,7 @@ const PortfolioService = {
     
     if (error) throw error;
     
-    // Check for achievement
+    
     if (item.likes_count + 1 >= 100) {
       const { data: itemOwner } = await supabase
         .from('portfolio_items')
@@ -153,15 +140,13 @@ const PortfolioService = {
     return { success: true, new_count: item.likes_count + 1 };
   },
 
-  /**
-   * Increment view count
-   */
+  
   async incrementViews(itemId) {
     const { error } = await supabase.rpc('increment_portfolio_views', {
       item_id: itemId
     });
     
-    // If RPC doesn't exist, do it manually
+    
     if (error) {
       const { data: item } = await supabase
         .from('portfolio_items')

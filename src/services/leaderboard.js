@@ -1,16 +1,11 @@
-/**
- * Leaderboard Service - Friend-only leaderboards
- * Compares stats only among friends
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const LeaderboardService = {
-  /**
-   * Get friend leaderboard
-   */
+  
   async getFriendLeaderboard(userId, category = 'win_rate') {
-    // Get user's friends
+    
     const { data: friendships } = await supabase
       .from('friendships')
       .select('friend_id')
@@ -18,13 +13,13 @@ const LeaderboardService = {
       .eq('status', 'accepted');
     
     const friendIds = (friendships || []).map(f => f.friend_id);
-    friendIds.push(userId); // Include self
+    friendIds.push(userId); 
     
     if (friendIds.length === 0) {
       return [];
     }
     
-    // Get profiles with stats
+    
     const { data: profiles, error } = await supabase
       .from('user_profiles')
       .select('id, username, fullname, profile_photo, win_rate, total_trades, discipline_score, helpfulness_score')
@@ -32,7 +27,7 @@ const LeaderboardService = {
     
     if (error) throw error;
     
-    // Sort by category
+    
     const sortKey = {
       'win_rate': 'win_rate',
       'trades': 'total_trades',
@@ -42,7 +37,7 @@ const LeaderboardService = {
     
     profiles.sort((a, b) => (b[sortKey] || 0) - (a[sortKey] || 0));
     
-    // Add rank
+    
     return profiles.map((profile, index) => ({
       rank: index + 1,
       ...profile,
@@ -50,27 +45,21 @@ const LeaderboardService = {
     }));
   },
 
-  /**
-   * Get improvement trends leaderboard
-   * Compares week-over-week improvement
-   */
+  
   async getImprovementLeaderboard(userId) {
-    // This would require historical data
-    // Simplified version comparing current stats
+    
+    
     const leaderboard = await this.getFriendLeaderboard(userId, 'win_rate');
     
-    // Add mock improvement data (in production, calculate from historical)
+    
     return leaderboard.map(entry => ({
       ...entry,
-      improvement: Math.random() * 10 - 2 // -2% to +8%
+      improvement: Math.random() * 10 - 2 
     })).sort((a, b) => b.improvement - a.improvement)
       .map((entry, index) => ({ ...entry, rank: index + 1 }));
   },
 
-  /**
-   * Get consistency leaderboard
-   * Based on discipline score and trading frequency
-   */
+  
   async getConsistencyLeaderboard(userId) {
     const { data: friendships } = await supabase
       .from('friendships')
@@ -86,7 +75,7 @@ const LeaderboardService = {
       .select('id, username, fullname, profile_photo, discipline_score, total_trades')
       .in('id', friendIds);
     
-    // Calculate consistency score
+    
     const scored = (profiles || []).map(profile => ({
       ...profile,
       consistency_score: (profile.discipline_score || 0) * 0.7 + 
@@ -102,19 +91,14 @@ const LeaderboardService = {
     }));
   },
 
-  /**
-   * Get helpfulness leaderboard
-   * Based on reactions received
-   */
+  
   async getHelpfulnessLeaderboard(userId) {
     return this.getFriendLeaderboard(userId, 'helpfulness');
   },
 
-  /**
-   * Get streak leaderboard
-   */
+  
   async getStreakLeaderboard(userId) {
-    // Get user's chats
+    
     const { data: chats } = await supabase
       .from('friend_chats')
       .select(`

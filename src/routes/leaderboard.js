@@ -1,6 +1,4 @@
-/**
- * Leaderboard API Routes
- */
+
 
 const express = require('express');
 const router = express.Router();
@@ -10,10 +8,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
-/**
- * GET /api/leaderboard
- * Get friend leaderboard
- */
 router.get('/', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -30,10 +24,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * GET /api/leaderboard/improvement
- * Get improvement leaderboard
- */
 router.get('/improvement', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -49,10 +39,6 @@ router.get('/improvement', async (req, res) => {
   }
 });
 
-/**
- * GET /api/leaderboard/consistency
- * Get consistency leaderboard
- */
 router.get('/consistency', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -68,10 +54,6 @@ router.get('/consistency', async (req, res) => {
   }
 });
 
-/**
- * GET /api/leaderboard/helpfulness
- * Get helpfulness leaderboard
- */
 router.get('/helpfulness', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -87,10 +69,6 @@ router.get('/helpfulness', async (req, res) => {
   }
 });
 
-/**
- * GET /api/leaderboard/streaks
- * Get streak leaderboard
- */
 router.get('/streaks', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);

@@ -1,6 +1,4 @@
-/**
- * Mentor API Routes
- */
+
 
 const express = require('express');
 const router = express.Router();
@@ -10,10 +8,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
 
-/**
- * POST /api/mentor/set/:mentorId
- * Set a friend as mentor
- */
 router.post('/set/:mentorId', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -24,7 +18,7 @@ router.post('/set/:mentorId', async (req, res) => {
     const { chatId } = req.body;
     const result = await MentorService.setMentor(currentUser.id, req.params.mentorId, chatId);
     
-    // Notify via socket
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`user:${req.params.mentorId}`).emit('mentor:assigned', {
@@ -40,10 +34,6 @@ router.post('/set/:mentorId', async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/mentor/remove/:mentorId
- * Remove mentor status
- */
 router.delete('/remove/:mentorId', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -59,10 +49,6 @@ router.delete('/remove/:mentorId', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mentor/mentees
- * Get mentees for current user (as mentor)
- */
 router.get('/mentees', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -78,10 +64,6 @@ router.get('/mentees', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mentor/my-mentor
- * Get current user's mentor
- */
 router.get('/my-mentor', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -97,10 +79,6 @@ router.get('/my-mentor', async (req, res) => {
   }
 });
 
-/**
- * POST /api/mentor/feedback/:menteeId
- * Submit weekly feedback
- */
 router.post('/feedback/:menteeId', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -116,7 +94,7 @@ router.post('/feedback/:menteeId', async (req, res) => {
       feedbackData
     );
     
-    // Notify mentee
+    
     const io = req.app.get('io');
     if (io) {
       io.to(`user:${req.params.menteeId}`).emit('mentor:feedback', {
@@ -132,10 +110,6 @@ router.post('/feedback/:menteeId', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mentor/feedback/history
- * Get feedback history for current user
- */
 router.get('/feedback/history', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -152,10 +126,6 @@ router.get('/feedback/history', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mentor/analytics/:menteeId
- * Get mentee analytics (for mentors)
- */
 router.get('/analytics/:menteeId', async (req, res) => {
   try {
     const currentUser = await getProfileByDerivId(req.user.derivId);
@@ -163,7 +133,7 @@ router.get('/analytics/:menteeId', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Verify user is mentor of this mentee
+    
     const mentees = await MentorService.getMentees(currentUser.id);
     const isMentor = mentees.some(m => m.mentee?.id === req.params.menteeId);
     

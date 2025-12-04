@@ -1,112 +1,115 @@
-# TraderMind Real-time Server
+# TraderMind Server
 
-Backend server for TraderMind trading platform with real-time chat and community features.
+Real-time backend server for the TraderMind trading community platform.
+
+## Tech Stack
+
+- Node.js with Express
+- Socket.IO for real-time communication
+- Supabase PostgreSQL database
+- JWT authentication
 
 ## Features
 
-- 🔌 Real-time WebSocket chat with Socket.IO
-- 👥 Community forums and discussions
-- 🔐 JWT authentication
-- 📊 Trade analytics integration
-- 🗄️ Supabase PostgreSQL database
-
-## Quick Deploy
-
-### Option 1: Railway (Recommended - Free tier available)
-
-1. Create account at [railway.app](https://railway.app)
-2. Click "New Project" → "Deploy from GitHub repo"
-3. Connect your GitHub and select this repo
-4. Add environment variables (see below)
-5. Deploy!
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new)
-
-### Option 2: Render (Free tier available)
-
-1. Create account at [render.com](https://render.com)
-2. New → Web Service → Connect repo
-3. Settings:
-   - Build Command: `npm install`
-   - Start Command: `npm start`
-4. Add environment variables
-5. Deploy!
-
-### Option 3: Fly.io
-
-```bash
-# Install flyctl
-curl -L https://fly.io/install.sh | sh
-
-# Login and deploy
-fly auth login
-fly launch
-fly secrets set SUPABASE_URL=your-url SUPABASE_ANON_KEY=your-key JWT_SECRET=your-secret
-fly deploy
-```
-
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `SUPABASE_URL` | Your Supabase project URL | ✅ |
-| `SUPABASE_ANON_KEY` | Supabase anonymous key | ✅ |
-| `JWT_SECRET` | Secret for JWT tokens (min 32 chars) | ✅ |
-| `JWT_REFRESH_SECRET` | Secret for refresh tokens | ✅ |
-| `JWT_EXPIRES_IN` | Token expiry (default: 24h) | ❌ |
-| `PORT` | Server port (default: 3001) | ❌ |
-| `NODE_ENV` | Environment (production/development) | ❌ |
-| `CORS_ORIGIN` | Allowed origins (comma-separated) | ❌ |
-
-## Local Development
-
-```bash
-# Install dependencies
-npm install
-
-# Copy environment file
-cp .env.example .env
-# Edit .env with your values
-
-# Run in development mode
-npm run dev
-
-# Run in production mode
-npm start
-```
+- User authentication via Deriv OAuth
+- Real-time WebSocket messaging
+- Tier-based community chatrooms
+- Trading analytics and portfolio tracking
+- Leaderboard system
+- AI mentor integration
+- File sharing and storage
+- Achievement system
 
 ## API Endpoints
 
-- `GET /health` - Health check
-- `POST /api/auth/login` - Login with Deriv credentials
-- `GET /api/chatrooms` - List chatrooms
-- `GET /api/chatrooms/:id/messages` - Get room messages
-- `POST /api/community/posts` - Create community post
+### Authentication
+- POST /api/auth/login - Deriv OAuth login
+- POST /api/auth/refresh - Refresh JWT token
+
+### Users
+- GET /api/users/me - Get current user profile
+- PUT /api/users/me - Update profile
+
+### Community
+- GET /api/community/feed - Get community feed
+- POST /api/community/posts - Create post
+- GET /api/community/tier-chatrooms - Get tier chatrooms
+- POST /api/community/assign-tier - Assign to tier chatroom
+- GET /api/community/tier-chatroom/:id/messages - Get chatroom messages
+- POST /api/community/tier-chatroom/:id/message - Send message
+
+### Settings
+- GET /api/settings - Get user settings
+- PUT /api/settings - Update settings
+
+### Portfolio
+- GET /api/portfolio - Get portfolio data
+- POST /api/portfolio/sync - Sync with Deriv
+
+### Leaderboard
+- GET /api/leaderboard - Get leaderboard
+
+### Achievements
+- GET /api/achievements - Get achievements
+
+## Environment Variables
+
+```
+PORT=3001
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_KEY=your_service_key
+JWT_SECRET=your_jwt_secret
+DERIV_APP_ID=your_deriv_app_id
+CORS_ORIGIN=https://tradermind.site
+```
+
+## Installation
+
+```bash
+npm install
+```
+
+## Development
+
+```bash
+npm run dev
+```
+
+## Production
+
+```bash
+npm start
+```
+
+## Deployment
+
+Deployed on Railway with automatic deployments from the main branch.
+
+## Database
+
+Uses Supabase PostgreSQL with the following main tables:
+- user_profiles
+- tier_chatrooms
+- chatroom_members
+- chatroom_messages
+- community_posts
+- community_comments
+- achievements
+- user_achievements
 
 ## WebSocket Events
 
-### Client → Server
-- `joinRoom` - Join a chatroom
-- `leaveRoom` - Leave a chatroom
-- `sendMessage` - Send a message
-- `typing` - Typing indicator
+### Client to Server
+- message:send - Send a message
+- typing:start - Start typing indicator
+- typing:stop - Stop typing indicator
+- room:join - Join a chatroom
+- room:leave - Leave a chatroom
 
-### Server → Client
-- `newMessage` - New message received
-- `userJoined` - User joined room
-- `userLeft` - User left room
-- `roomPresence` - Room presence update
-
-## Frontend Configuration
-
-After deploying, update your frontend `.env`:
-
-```env
-REACT_APP_SERVER_URL=https://your-backend-url.railway.app
-REACT_APP_SOCKET_URL=https://your-backend-url.railway.app
-REACT_APP_USE_REALTIME_BACKEND=true
-```
-
-## License
-
-MIT
+### Server to Client
+- message:new - New message received
+- message:delete - Message deleted
+- message:reaction - Reaction updated
+- member:joined - New member joined
+- member:left - Member left
+- typing - Typing indicator update

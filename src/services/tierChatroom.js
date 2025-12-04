@@ -1,13 +1,7 @@
-/**
- * Tier Chatroom Service
- * Handles tier-based community chatrooms where users are auto-grouped by performance
- */
+
 
 const { supabase } = require('../db/supabase');
 
-/**
- * Get all tier chatrooms with member counts
- */
 async function getTierChatrooms() {
   const { data, error } = await supabase
     .from('tier_chatrooms')
@@ -23,9 +17,6 @@ async function getTierChatrooms() {
   return data || [];
 }
 
-/**
- * Get user's assigned tier chatroom
- */
 async function getUserTierChatroom(userId) {
   const { data, error } = await supabase
     .from('chatroom_members')
@@ -43,9 +34,6 @@ async function getUserTierChatroom(userId) {
   return data;
 }
 
-/**
- * Check if user is already assigned to any tier chatroom
- */
 async function isUserAlreadyAssigned(userId) {
   const { data, error } = await supabase
     .from('chatroom_members')
@@ -61,9 +49,6 @@ async function isUserAlreadyAssigned(userId) {
   return data && data.length > 0;
 }
 
-/**
- * Calculate user tier based on their trading analytics
- */
 function calculateTier(winRate, totalTrades) {
   if (totalTrades >= 1000 && winRate >= 80) return 'master';
   if (totalTrades >= 500 && winRate >= 65) return 'expert';
@@ -72,18 +57,13 @@ function calculateTier(winRate, totalTrades) {
   return 'beginner';
 }
 
-/**
- * Assign user to appropriate tier chatroom based on their analytics
- * Only assigns on first login - does not reassign existing users
- * @param {boolean} forceReassign - If true, will reassign even if already assigned (for tier changes)
- */
 async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrades = 0, forceReassign = false) {
-  // Check if user is already assigned (skip reassignment unless forced)
+  
   if (!forceReassign) {
     const alreadyAssigned = await isUserAlreadyAssigned(userId);
     if (alreadyAssigned) {
       console.log(`User ${userId} already assigned to a chatroom, skipping assignment`);
-      // Return their current assignment
+      
       const currentAssignment = await getUserTierChatroom(userId);
       if (currentAssignment?.tier_chatrooms) {
         return { 
@@ -98,7 +78,7 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
   
   const tier = calculateTier(winRate, totalTrades);
   
-  // Get the chatroom for this tier
+  
   const { data: chatroom, error: chatroomError } = await supabase
     .from('tier_chatrooms')
     .select('*')
@@ -110,7 +90,7 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
     return null;
   }
   
-  // Only remove from other chatrooms if forcing reassignment
+  
   if (forceReassign) {
     await supabase
       .from('chatroom_members')
@@ -118,7 +98,7 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
       .eq('user_id', userId);
   }
   
-  // Add to correct tier chatroom
+  
   const { data: member, error: memberError } = await supabase
     .from('chatroom_members')
     .upsert({
@@ -137,7 +117,7 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
     return null;
   }
   
-  // Update member count
+  
   const { count } = await supabase
     .from('chatroom_members')
     .select('*', { count: 'exact', head: true })
@@ -151,9 +131,6 @@ async function assignUserToTierChatroom(userId, derivId, winRate = 0, totalTrade
   return { chatroom, member, tier, alreadyAssigned: false };
 }
 
-/**
- * Get chatroom members with online status
- */
 async function getChatroomMembers(chatroomId, limit = 50) {
   const { data, error } = await supabase
     .from('chatroom_members')
@@ -183,9 +160,6 @@ async function getChatroomMembers(chatroomId, limit = 50) {
   return data || [];
 }
 
-/**
- * Get chatroom messages with pagination
- */
 async function getChatroomMessages(chatroomId, limit = 50, before = null) {
   let query = supabase
     .from('chatroom_messages')
@@ -220,13 +194,10 @@ async function getChatroomMessages(chatroomId, limit = 50, before = null) {
     return [];
   }
   
-  // Return in chronological order
+  
   return (data || []).reverse();
 }
 
-/**
- * Send a message to the chatroom
- */
 async function sendMessage(chatroomId, senderId, messageData) {
   const { 
     text, 
@@ -235,7 +206,7 @@ async function sendMessage(chatroomId, senderId, messageData) {
     fileType = null, 
     fileSize = null,
     fileHash = null,
-    fileUrl = null, // Persistent URL from Supabase Storage
+    fileUrl = null, 
     replyToId = null 
   } = messageData;
   
@@ -250,7 +221,7 @@ async function sendMessage(chatroomId, senderId, messageData) {
       file_type: fileType,
       file_size: fileSize,
       file_hash: fileHash,
-      file_url: fileUrl, // Store the Supabase Storage URL
+      file_url: fileUrl, 
       reply_to_id: replyToId
     })
     .select(`
@@ -270,7 +241,7 @@ async function sendMessage(chatroomId, senderId, messageData) {
     return { success: false, error: error.message };
   }
   
-  // Update user's last active
+  
   await supabase
     .from('chatroom_members')
     .update({ last_active: new Date().toISOString() })
@@ -280,11 +251,8 @@ async function sendMessage(chatroomId, senderId, messageData) {
   return { success: true, message: data };
 }
 
-/**
- * Add reaction to a message
- */
 async function addReaction(messageId, userId, emoji) {
-  // Get current reactions
+  
   const { data: message, error: fetchError } = await supabase
     .from('chatroom_messages')
     .select('reactions')
@@ -297,7 +265,7 @@ async function addReaction(messageId, userId, emoji) {
   
   const reactions = message.reactions || {};
   
-  // Toggle reaction
+  
   if (!reactions[emoji]) {
     reactions[emoji] = [];
   }
@@ -324,11 +292,8 @@ async function addReaction(messageId, userId, emoji) {
   return { success: true, reactions };
 }
 
-/**
- * Delete a message (soft delete)
- */
 async function deleteMessage(messageId, userId, isAdmin = false) {
-  // Check if user is sender or admin
+  
   const { data: message } = await supabase
     .from('chatroom_messages')
     .select('sender_id')
@@ -359,11 +324,8 @@ async function deleteMessage(messageId, userId, isAdmin = false) {
   return { success: true };
 }
 
-/**
- * Pin/unpin a message (moderators only)
- */
 async function togglePinMessage(messageId, userId) {
-  // Check if user is moderator
+  
   const { data: member } = await supabase
     .from('chatroom_members')
     .select('role')
@@ -392,9 +354,6 @@ async function togglePinMessage(messageId, userId) {
   return { success: true, isPinned: !message.is_pinned };
 }
 
-/**
- * Set typing indicator
- */
 async function setTyping(chatroomId, userId, isTyping) {
   if (isTyping) {
     await supabase
@@ -413,11 +372,8 @@ async function setTyping(chatroomId, userId, isTyping) {
   }
 }
 
-/**
- * Get typing users in chatroom
- */
 async function getTypingUsers(chatroomId) {
-  // Only get users who started typing in the last 5 seconds
+  
   const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
   
   const { data } = await supabase
@@ -432,9 +388,6 @@ async function getTypingUsers(chatroomId) {
   return data || [];
 }
 
-/**
- * Update user's online status in chatroom
- */
 async function updateUserOnlineStatus(userId, isOnline) {
   await supabase
     .from('user_profiles')
@@ -445,9 +398,6 @@ async function updateUserOnlineStatus(userId, isOnline) {
     .eq('id', userId);
 }
 
-/**
- * Get online count for a chatroom
- */
 async function getChatroomOnlineCount(chatroomId) {
   const { count } = await supabase
     .from('chatroom_members')

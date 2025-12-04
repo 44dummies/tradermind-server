@@ -1,7 +1,4 @@
-/**
- * Tier Chatroom Routes
- * Users are auto-grouped by their performance tier
- */
+
 
 const express = require('express');
 const { supabase } = require('../db/supabase');
@@ -9,18 +6,10 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Get io from app
 function getIo(req) {
   return req.app.get('io');
 }
 
-// =============================================
-// HELPER FUNCTIONS
-// =============================================
-
-/**
- * Get user's tier based on analytics
- */
 function calculateTier(winRate, totalTrades) {
   if (totalTrades >= 1000 && winRate >= 80) return 'master';
   if (totalTrades >= 500 && winRate >= 65) return 'expert';
@@ -29,11 +18,8 @@ function calculateTier(winRate, totalTrades) {
   return 'beginner';
 }
 
-/**
- * Get user profile by ID
- */
 async function getUserProfile(userId) {
-  // First try to find by deriv_id (the userId from JWT is actually deriv_id)
+  
   let { data, error } = await supabase
     .from('user_profiles')
     .select('id, deriv_id, username, fullname, profile_photo, is_online, win_rate, total_trades')
@@ -41,7 +27,7 @@ async function getUserProfile(userId) {
     .single();
 
   if (!data) {
-    // Try by UUID
+    
     const result = await supabase
       .from('user_profiles')
       .select('id, deriv_id, username, fullname, profile_photo, is_online, win_rate, total_trades')
@@ -58,14 +44,11 @@ async function getUserProfile(userId) {
   return data;
 }
 
-/**
- * Get or create user profile
- */
 async function getOrCreateProfile(derivId, username) {
   let profile = await getUserProfile(derivId);
   
   if (!profile) {
-    // Create profile
+    
     const { data, error } = await supabase
       .from('user_profiles')
       .insert({
@@ -85,14 +68,6 @@ async function getOrCreateProfile(derivId, username) {
   return profile;
 }
 
-// =============================================
-// ROUTES
-// =============================================
-
-/**
- * Get all tier chatrooms
- * GET /api/community/tier-chatrooms
- */
 router.get('/tier-chatrooms', authMiddleware, async (req, res) => {
   try {
     const { data: chatrooms, error } = await supabase
@@ -116,15 +91,11 @@ router.get('/tier-chatrooms', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get user's current tier chatroom assignment
- * GET /api/community/my-tier-chatroom
- */
 router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
   try {
     const derivId = req.username || req.userId;
     
-    // Get user profile
+    
     const profile = await getUserProfile(derivId);
     
     if (!profile) {
@@ -135,7 +106,7 @@ router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
       });
     }
 
-    // Get user's chatroom membership
+    
     const { data: membership, error } = await supabase
       .from('chatroom_members')
       .select(`
@@ -159,16 +130,12 @@ router.get('/my-tier-chatroom', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Assign user to tier chatroom based on analytics
- * POST /api/community/assign-tier
- */
 router.post('/assign-tier', authMiddleware, async (req, res) => {
   try {
     const { winRate = 0, totalTrades = 0 } = req.body;
     const derivId = req.username || req.userId;
     
-    // Get or create user profile
+    
     const profile = await getOrCreateProfile(derivId, req.username);
     
     if (!profile) {
@@ -178,10 +145,10 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
       });
     }
 
-    // Calculate tier
+    
     const tier = calculateTier(winRate, totalTrades);
 
-    // Get the chatroom for this tier
+    
     const { data: chatroom, error: chatroomError } = await supabase
       .from('tier_chatrooms')
       .select('*')
@@ -196,13 +163,13 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
       });
     }
 
-    // Remove from any other tier chatrooms first
+    
     await supabase
       .from('chatroom_members')
       .delete()
       .eq('user_id', profile.id);
 
-    // Add to the correct tier chatroom
+    
     const { error: insertError } = await supabase
       .from('chatroom_members')
       .upsert({
@@ -222,7 +189,7 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
       });
     }
 
-    // Update member count
+    
     const { count } = await supabase
       .from('chatroom_members')
       .select('*', { count: 'exact', head: true })
@@ -236,7 +203,7 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
       })
       .eq('id', chatroom.id);
 
-    // Emit WebSocket event
+    
     const io = getIo(req); if (io) {
       io.to(`tier:${tier}`).emit('member:joined', {
         chatroomId: chatroom.id,
@@ -261,10 +228,6 @@ router.post('/assign-tier', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get chatroom members
- * GET /api/community/tier-chatroom/:id/members
- */
 router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -299,7 +262,7 @@ router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch members' });
     }
 
-    // Return in format frontend expects (with user_profiles nested)
+    
     res.json({
       success: true,
       members: members || []
@@ -310,10 +273,6 @@ router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get chatroom messages
- * GET /api/community/tier-chatroom/:id/messages
- */
 router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -360,7 +319,7 @@ router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch messages' });
     }
 
-    // Transform and reverse to get chronological order
+    
     const transformedMessages = (messages || []).reverse().map(msg => ({
       id: msg.id,
       chatroomId: msg.chatroom_id,
@@ -394,17 +353,13 @@ router.get('/tier-chatroom/:id/messages', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Send a message to chatroom
- * POST /api/community/tier-chatroom/:id/message
- */
 router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
   try {
     const { id: chatroomId } = req.params;
     const { text, type = 'text', fileName, fileType, fileSize, fileUrl, replyToId } = req.body;
     const derivId = req.username || req.userId;
 
-    // Get user profile
+    
     const profile = await getUserProfile(derivId);
     
     if (!profile) {
@@ -414,7 +369,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if user is a member of this chatroom
+    
     const { data: membership } = await supabase
       .from('chatroom_members')
       .select('id')
@@ -429,7 +384,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       });
     }
 
-    // Insert message
+    
     const { data: message, error } = await supabase
       .from('chatroom_messages')
       .insert({
@@ -460,7 +415,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to send message' });
     }
 
-    // Update last_active for the member
+    
     await supabase
       .from('chatroom_members')
       .update({ last_active: new Date().toISOString() })
@@ -490,7 +445,7 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
       } : null
     };
 
-    // Emit WebSocket event
+    
     const io = getIo(req); if (io) {
       io.to(`chatroom:${chatroomId}`).emit('message:new', transformedMessage);
     }
@@ -505,24 +460,20 @@ router.post('/tier-chatroom/:id/message', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Add reaction to message
- * POST /api/community/tier-message/:id/reaction
- */
 router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
   try {
     const { id: messageId } = req.params;
     const { emoji } = req.body;
     const derivId = req.username || req.userId;
 
-    // Get user profile
+    
     const profile = await getUserProfile(derivId);
     
     if (!profile) {
       return res.status(400).json({ error: 'User profile not found' });
     }
 
-    // Get current message
+    
     const { data: message, error: fetchError } = await supabase
       .from('chatroom_messages')
       .select('reactions, chatroom_id')
@@ -533,7 +484,7 @@ router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    // Update reactions
+    
     const reactions = message.reactions || {};
     if (!reactions[emoji]) {
       reactions[emoji] = [];
@@ -549,7 +500,7 @@ router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
       }
     }
 
-    // Save updated reactions
+    
     const { error: updateError } = await supabase
       .from('chatroom_messages')
       .update({ reactions })
@@ -560,7 +511,7 @@ router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to update reaction' });
     }
 
-    // Emit WebSocket event
+    
     const io = getIo(req); if (io) {
       io.to(`chatroom:${message.chatroom_id}`).emit('message:reaction', {
         messageId,
@@ -577,23 +528,19 @@ router.post('/tier-message/:id/reaction', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Delete a message
- * DELETE /api/community/tier-message/:id
- */
 router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
   try {
     const { id: messageId } = req.params;
     const derivId = req.username || req.userId;
 
-    // Get user profile
+    
     const profile = await getUserProfile(derivId);
     
     if (!profile) {
       return res.status(400).json({ error: 'User profile not found' });
     }
 
-    // Get message to verify ownership
+    
     const { data: message, error: fetchError } = await supabase
       .from('chatroom_messages')
       .select('sender_id, chatroom_id')
@@ -608,7 +555,7 @@ router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Cannot delete another user\'s message' });
     }
 
-    // Soft delete the message
+    
     const { error: deleteError } = await supabase
       .from('chatroom_messages')
       .update({ 
@@ -622,7 +569,7 @@ router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to delete message' });
     }
 
-    // Emit WebSocket event
+    
     const io = getIo(req); if (io) {
       io.to(`chatroom:${message.chatroom_id}`).emit('message:delete', {
         messageId,
@@ -637,17 +584,13 @@ router.delete('/tier-message/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Set typing indicator
- * POST /api/community/tier-chatroom/:id/typing
- */
 router.post('/tier-chatroom/:id/typing', authMiddleware, async (req, res) => {
   try {
     const { id: chatroomId } = req.params;
     const { isTyping } = req.body;
     const derivId = req.username || req.userId;
 
-    // Emit WebSocket event only
+    
     const io = getIo(req); if (io) {
       io.to(`chatroom:${chatroomId}`).emit('typing', {
         chatroomId,
@@ -658,7 +601,7 @@ router.post('/tier-chatroom/:id/typing', authMiddleware, async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    res.json({ success: true }); // Silent fail for typing
+    res.json({ success: true }); 
   }
 });
 

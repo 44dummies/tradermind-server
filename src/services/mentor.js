@@ -1,23 +1,18 @@
-/**
- * Mentor Service - Mentorship mode between friends
- * Handles mentor relationships, feedback, and analytics
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const MentorService = {
-  /**
-   * Set a friend as mentor
-   */
+  
   async setMentor(userId, mentorId, chatId) {
-    // Update friendship
+    
     await supabase
       .from('friendships')
       .update({ is_mentor: true })
       .eq('user_id', userId)
       .eq('friend_id', mentorId);
     
-    // Award mentor achievement
+    
     await supabase
       .from('achievements')
       .upsert({
@@ -28,7 +23,7 @@ const MentorService = {
         description: 'Became a mentor to a friend'
       }, { onConflict: 'user_id,achievement_type' });
     
-    // Notify mentor
+    
     await supabase
       .from('notifications')
       .insert({
@@ -43,9 +38,7 @@ const MentorService = {
     return { success: true };
   },
 
-  /**
-   * Remove mentor status
-   */
+  
   async removeMentor(userId, mentorId) {
     await supabase
       .from('friendships')
@@ -56,9 +49,7 @@ const MentorService = {
     return { success: true };
   },
 
-  /**
-   * Get mentees for a mentor
-   */
+  
   async getMentees(mentorId) {
     const { data, error } = await supabase
       .from('friendships')
@@ -77,9 +68,7 @@ const MentorService = {
     return data || [];
   },
 
-  /**
-   * Get mentor for a user
-   */
+  
   async getMentor(userId) {
     const { data, error } = await supabase
       .from('friendships')
@@ -100,9 +89,7 @@ const MentorService = {
     return data;
   },
 
-  /**
-   * Submit weekly feedback
-   */
+  
   async submitFeedback(mentorId, menteeId, chatId, feedbackData) {
     const {
       feedback_text,
@@ -111,7 +98,7 @@ const MentorService = {
       goals_for_next_week = []
     } = feedbackData;
     
-    // Calculate week number
+    
     const weekNumber = this.getWeekNumber(new Date());
     
     const { data, error } = await supabase
@@ -131,7 +118,7 @@ const MentorService = {
     
     if (error) throw error;
     
-    // Notify mentee
+    
     await supabase
       .from('notifications')
       .insert({
@@ -147,9 +134,7 @@ const MentorService = {
     return data;
   },
 
-  /**
-   * Get feedback history
-   */
+  
   async getFeedbackHistory(menteeId, mentorId = null) {
     let query = supabase
       .from('mentor_feedback')
@@ -171,9 +156,7 @@ const MentorService = {
     return data || [];
   },
 
-  /**
-   * Get mentee analytics (for mentor view)
-   */
+  
   async getMenteeAnalytics(menteeId, weeks = 4) {
     const mentee = await supabase
       .from('user_profiles')
@@ -183,7 +166,7 @@ const MentorService = {
     
     const feedback = await this.getFeedbackHistory(menteeId);
     
-    // Calculate progress
+    
     const recentFeedback = feedback.slice(0, weeks);
     const avgRating = recentFeedback.length > 0 
       ? recentFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / recentFeedback.length
@@ -199,9 +182,7 @@ const MentorService = {
     };
   },
 
-  /**
-   * Helper: Get week number of the year
-   */
+  
   getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
@@ -210,9 +191,7 @@ const MentorService = {
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   },
 
-  /**
-   * Helper: Aggregate improvement areas
-   */
+  
   aggregateAreas(feedback) {
     const areas = {};
     for (const f of feedback) {
@@ -226,9 +205,7 @@ const MentorService = {
       .map(([area, count]) => ({ area, count }));
   },
 
-  /**
-   * Helper: Aggregate goals
-   */
+  
   aggregateGoals(feedback) {
     const goals = [];
     for (const f of feedback) {

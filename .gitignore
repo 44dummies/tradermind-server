@@ -32,3 +32,32 @@ Thumbs.db
 # Debug
 .npm
 .node_repl_history
+
+# Sensitive files
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+.secrets
+
+# Database
+*.sqlite
+*.db
+prisma/
+
+# Backup files
+*.bak
+*.backup
+
+# Test coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Server logs
+server.log
+error.log

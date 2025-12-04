@@ -1,18 +1,13 @@
-/**
- * Shared Resources Service - Notes & Watchlists
- * Handles collaborative notes and shared watchlists between friends
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const SharedService = {
-  // =============================================
-  // SHARED NOTES
-  // =============================================
+  
+  
+  
 
-  /**
-   * Get shared notes for a chat
-   */
+  
   async getNotes(chatId) {
     const { data, error } = await supabase
       .from('shared_notes')
@@ -27,7 +22,7 @@ const SharedService = {
     
     if (error && error.code !== 'PGRST116') throw error;
     
-    // Create if doesn't exist
+    
     if (!data) {
       const { data: newNotes, error: createError } = await supabase
         .from('shared_notes')
@@ -46,9 +41,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Update shared notes
-   */
+  
   async updateNotes(chatId, userId, content, title = null) {
     const updates = {
       content,
@@ -58,7 +51,7 @@ const SharedService = {
     
     if (title) updates.title = title;
     
-    // Increment version
+    
     const { data: current } = await supabase
       .from('shared_notes')
       .select('version')
@@ -83,7 +76,7 @@ const SharedService = {
     
     if (error) throw error;
     
-    // Notify the other user
+    
     const { data: chat } = await supabase
       .from('friend_chats')
       .select('user1_id, user2_id')
@@ -107,13 +100,11 @@ const SharedService = {
     return data;
   },
 
-  // =============================================
-  // SHARED WATCHLIST
-  // =============================================
+  
+  
+  
 
-  /**
-   * Get shared watchlist for a chat
-   */
+  
   async getWatchlist(chatId) {
     const { data, error } = await supabase
       .from('shared_watchlists')
@@ -123,7 +114,7 @@ const SharedService = {
     
     if (error && error.code !== 'PGRST116') throw error;
     
-    // Create if doesn't exist
+    
     if (!data) {
       const { data: newWatchlist, error: createError } = await supabase
         .from('shared_watchlists')
@@ -144,21 +135,19 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Add symbol to watchlist
-   */
+  
   async addSymbol(chatId, userId, symbolData) {
     const { symbol, notes = '' } = symbolData;
     
     const watchlist = await this.getWatchlist(chatId);
     const symbols = watchlist.symbols || [];
     
-    // Check if already exists
+    
     if (symbols.some(s => s.symbol === symbol)) {
       throw new Error('Symbol already in watchlist');
     }
     
-    // Get user info
+    
     const { data: user } = await supabase
       .from('user_profiles')
       .select('username')
@@ -187,9 +176,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Remove symbol from watchlist
-   */
+  
   async removeSymbol(chatId, symbol) {
     const watchlist = await this.getWatchlist(chatId);
     const symbols = (watchlist.symbols || []).filter(s => s.symbol !== symbol);
@@ -208,9 +195,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Update symbol notes
-   */
+  
   async updateSymbolNotes(chatId, symbol, notes) {
     const watchlist = await this.getWatchlist(chatId);
     const symbols = watchlist.symbols || [];
@@ -235,9 +220,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Add strategy to watchlist
-   */
+  
   async addStrategy(chatId, userId, strategy) {
     const watchlist = await this.getWatchlist(chatId);
     const strategies = watchlist.strategies || [];
@@ -269,9 +252,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Update timeframes
-   */
+  
   async updateTimeframes(chatId, timeframes) {
     const { data, error } = await supabase
       .from('shared_watchlists')
@@ -287,9 +268,7 @@ const SharedService = {
     return data;
   },
 
-  /**
-   * Rename watchlist
-   */
+  
   async renameWatchlist(chatId, name) {
     const { data, error } = await supabase
       .from('shared_watchlists')

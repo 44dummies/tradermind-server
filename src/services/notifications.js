@@ -1,14 +1,9 @@
-/**
- * Notifications Service - Real-time notifications
- * Handles all notification types and delivery
- */
+
 
 const { supabase } = require('../db/supabase');
 
 const NotificationsService = {
-  /**
-   * Create a notification
-   */
+  
   async create(userId, notificationData) {
     const {
       type,
@@ -39,9 +34,7 @@ const NotificationsService = {
     return data;
   },
 
-  /**
-   * Get notifications for a user
-   */
+  
   async getNotifications(userId, options = {}) {
     const { limit = 50, unreadOnly = false, offset = 0 } = options;
     
@@ -66,9 +59,7 @@ const NotificationsService = {
     return data || [];
   },
 
-  /**
-   * Get unread count
-   */
+  
   async getUnreadCount(userId) {
     const { count, error } = await supabase
       .from('notifications')
@@ -80,9 +71,7 @@ const NotificationsService = {
     return count || 0;
   },
 
-  /**
-   * Mark notification as read
-   */
+  
   async markAsRead(notificationId, userId) {
     const { error } = await supabase
       .from('notifications')
@@ -97,9 +86,7 @@ const NotificationsService = {
     return { success: true };
   },
 
-  /**
-   * Mark all notifications as read
-   */
+  
   async markAllAsRead(userId) {
     const { error } = await supabase
       .from('notifications')
@@ -114,9 +101,7 @@ const NotificationsService = {
     return { success: true };
   },
 
-  /**
-   * Delete notification
-   */
+  
   async delete(notificationId, userId) {
     const { error } = await supabase
       .from('notifications')
@@ -128,9 +113,7 @@ const NotificationsService = {
     return { success: true };
   },
 
-  /**
-   * Delete old notifications (older than 30 days)
-   */
+  
   async cleanupOld() {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - 30);
@@ -145,13 +128,11 @@ const NotificationsService = {
     return { deleted: count };
   },
 
-  // =============================================
-  // NOTIFICATION TRIGGERS
-  // =============================================
+  
+  
+  
 
-  /**
-   * Friend anniversary notification
-   */
+  
   async checkAnniversaries() {
     const milestones = [1, 7, 30, 90, 180, 365];
     const now = new Date();
@@ -188,11 +169,9 @@ const NotificationsService = {
     }
   },
 
-  /**
-   * Trading started notification
-   */
+  
   async notifyTradingStarted(userId) {
-    // Get user's friends
+    
     const { data: friendships } = await supabase
       .from('friendships')
       .select(`
@@ -212,9 +191,7 @@ const NotificationsService = {
     }
   },
 
-  /**
-   * Achievement notification
-   */
+  
   async notifyAchievement(userId, achievement) {
     await this.create(userId, {
       type: 'achievement',
@@ -224,9 +201,7 @@ const NotificationsService = {
     });
   },
 
-  /**
-   * Badge notification
-   */
+  
   async notifyBadge(userId, badge) {
     await this.create(userId, {
       type: 'badge',

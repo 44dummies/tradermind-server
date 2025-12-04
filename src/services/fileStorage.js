@@ -1,33 +1,24 @@
-/**
- * File Storage Service
- * Handles file uploads to Supabase Storage for persistent cross-session file sharing
- */
+
 
 const { supabase } = require('../db/supabase');
 const crypto = require('crypto');
 const path = require('path');
 
-// Storage bucket names
 const CHAT_FILES_BUCKET = 'chat-files';
 const VOICE_NOTES_BUCKET = 'voice-notes';
 const CHATROOM_FILES_BUCKET = 'chatroom-files';
 const PROFILE_PHOTOS_BUCKET = 'profile-photos';
 
-// Maximum file sizes (in bytes)
-const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
-const MAX_VOICE_SIZE = 5 * 1024 * 1024; // 5MB
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; 
+const MAX_VIDEO_SIZE = 50 * 1024 * 1024; 
+const MAX_VOICE_SIZE = 5 * 1024 * 1024; 
+const MAX_FILE_SIZE = 25 * 1024 * 1024; 
 
-// Allowed MIME types
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 const ALLOWED_AUDIO_TYPES = ['audio/webm', 'audio/mp3', 'audio/mpeg', 'audio/ogg', 'audio/wav'];
 const ALLOWED_DOCUMENT_TYPES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
 
-/**
- * Initialize storage buckets (run once on server start)
- */
 async function initializeStorageBuckets() {
   const buckets = [
     { name: CHAT_FILES_BUCKET, public: true },
@@ -61,9 +52,6 @@ async function initializeStorageBuckets() {
   }
 }
 
-/**
- * Generate unique file name
- */
 function generateFileName(originalName, userId) {
   const timestamp = Date.now();
   const randomBytes = crypto.randomBytes(8).toString('hex');
@@ -72,9 +60,6 @@ function generateFileName(originalName, userId) {
   return `${userId.substring(0, 8)}/${timestamp}-${randomBytes}-${baseName}${ext}`;
 }
 
-/**
- * Validate file type and size
- */
 function validateFile(file, type) {
   const { mimetype, size } = file;
   
@@ -114,16 +99,9 @@ function validateFile(file, type) {
   return { valid: true };
 }
 
-/**
- * Upload file to Supabase Storage
- * @param {Object} file - Multer file object with buffer
- * @param {string} userId - User ID uploading the file
- * @param {string} context - 'chat', 'chatroom', or 'voice'
- * @returns {Object} { success, url, error }
- */
 async function uploadFile(file, userId, context = 'chat') {
   try {
-    // Determine bucket based on context
+    
     let bucket = CHAT_FILES_BUCKET;
     if (context === 'chatroom') {
       bucket = CHATROOM_FILES_BUCKET;
@@ -131,7 +109,7 @@ async function uploadFile(file, userId, context = 'chat') {
       bucket = VOICE_NOTES_BUCKET;
     }
     
-    // Determine file type
+    
     let fileType = 'file';
     if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
       fileType = 'image';
@@ -141,16 +119,16 @@ async function uploadFile(file, userId, context = 'chat') {
       fileType = 'voice';
     }
     
-    // Validate file
+    
     const validation = validateFile(file, fileType);
     if (!validation.valid) {
       return { success: false, error: validation.error };
     }
     
-    // Generate unique file path
+    
     const filePath = generateFileName(file.originalname, userId);
     
-    // Upload to Supabase Storage
+    
     const { data, error } = await supabase.storage
       .from(bucket)
       .upload(filePath, file.buffer, {
@@ -163,12 +141,12 @@ async function uploadFile(file, userId, context = 'chat') {
       return { success: false, error: error.message };
     }
     
-    // Get public URL
+    
     const { data: urlData } = supabase.storage
       .from(bucket)
       .getPublicUrl(filePath);
     
-    // Calculate file hash for integrity
+    
     const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
     
     return {
@@ -186,11 +164,6 @@ async function uploadFile(file, userId, context = 'chat') {
   }
 }
 
-/**
- * Delete file from Supabase Storage
- * @param {string} storagePath - Path in storage bucket
- * @param {string} context - 'chat', 'chatroom', or 'voice'
- */
 async function deleteFile(storagePath, context = 'chat') {
   try {
     let bucket = CHAT_FILES_BUCKET;
@@ -216,12 +189,6 @@ async function deleteFile(storagePath, context = 'chat') {
   }
 }
 
-/**
- * Get signed URL for private file (if needed)
- * @param {string} storagePath - Path in storage bucket
- * @param {string} context - 'chat', 'chatroom', or 'voice'
- * @param {number} expiresIn - Expiry time in seconds (default 1 hour)
- */
 async function getSignedUrl(storagePath, context = 'chat', expiresIn = 3600) {
   try {
     let bucket = CHAT_FILES_BUCKET;
@@ -245,29 +212,23 @@ async function getSignedUrl(storagePath, context = 'chat', expiresIn = 3600) {
   }
 }
 
-/**
- * Upload profile photo to Supabase Storage
- * @param {Object} file - Multer file object with buffer
- * @param {string} userId - User ID uploading the photo
- * @returns {Object} { success, url, error }
- */
 async function uploadProfilePhoto(file, userId) {
   try {
-    // Validate it's an image
+    
     if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
       return { success: false, error: 'Only image files are allowed for profile photos' };
     }
     
-    // Validate size (5MB max for profile photos)
+    
     if (file.size > 5 * 1024 * 1024) {
       return { success: false, error: 'Profile photo must be less than 5MB' };
     }
     
-    // Generate file path - use fixed naming so we replace old photos
+    
     const ext = path.extname(file.originalname) || '.jpg';
     const filePath = `${userId}/avatar${ext}`;
     
-    // Delete existing profile photos for this user first
+    
     try {
       const { data: existingFiles } = await supabase.storage
         .from(PROFILE_PHOTOS_BUCKET)
@@ -278,16 +239,16 @@ async function uploadProfilePhoto(file, userId) {
         await supabase.storage.from(PROFILE_PHOTOS_BUCKET).remove(filesToDelete);
       }
     } catch (err) {
-      // Ignore errors when deleting old photos
+      
       console.log('[Profile] Could not delete old photos:', err.message);
     }
     
-    // Upload to Supabase Storage
+    
     const { data, error } = await supabase.storage
       .from(PROFILE_PHOTOS_BUCKET)
       .upload(filePath, file.buffer, {
         contentType: file.mimetype,
-        upsert: true // Replace if exists
+        upsert: true 
       });
     
     if (error) {
@@ -295,12 +256,12 @@ async function uploadProfilePhoto(file, userId) {
       return { success: false, error: error.message };
     }
     
-    // Get public URL
+    
     const { data: urlData } = supabase.storage
       .from(PROFILE_PHOTOS_BUCKET)
       .getPublicUrl(filePath);
     
-    // Add cache buster to URL to prevent stale images
+    
     const publicUrl = `${urlData.publicUrl}?v=${Date.now()}`;
     
     return {
@@ -314,10 +275,6 @@ async function uploadProfilePhoto(file, userId) {
   }
 }
 
-/**
- * Delete profile photo from Supabase Storage
- * @param {string} userId - User ID
- */
 async function deleteProfilePhoto(userId) {
   try {
     const { data: existingFiles } = await supabase.storage

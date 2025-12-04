@@ -1,8 +1,4 @@
-/**
- * User Routes
- * Handles user profiles, settings, and profile pictures
- * No friends functionality - removed for simplification
- */
+
 
 const express = require('express');
 const multer = require('multer');
@@ -21,11 +17,10 @@ const { supabase } = require('../db/supabase');
 
 const router = express.Router();
 
-// Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB
+    fileSize: 5 * 1024 * 1024 
   },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
@@ -36,25 +31,21 @@ const upload = multer({
   }
 });
 
-/**
- * Get current user profile
- * GET /api/users/me
- */
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     const derivId = req.user?.derivId || req.username;
     console.log('[Users] GET /me - derivId:', derivId);
     
-    // Try to get profile by derivId first (more reliable)
+    
     let profile = await getProfileByDerivId(derivId);
     
-    // If not found by derivId, try by userId (UUID)
+    
     if (!profile) {
       profile = await getUserProfile(req.userId);
     }
     
     if (!profile) {
-      // Auto-create profile if it doesn't exist
+      
       console.log('[Users] Creating profile for:', derivId);
       profile = await upsertUserProfile(derivId, {
         username: `trader_${derivId.toLowerCase().slice(0, 8)}`,
@@ -70,10 +61,6 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Update current user profile
- * PUT /api/users/me
- */
 router.put('/me', authMiddleware, async (req, res) => {
   try {
     const derivId = req.user?.derivId || req.username;
@@ -84,7 +71,7 @@ router.put('/me', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'No derivId found in token' });
     }
     
-    // Build update data
+    
     const updateData = {};
     if (req.body.username !== undefined) updateData.username = req.body.username;
     if (req.body.display_name !== undefined) updateData.display_name = req.body.display_name;
@@ -96,7 +83,7 @@ router.put('/me', authMiddleware, async (req, res) => {
     
     console.log('[Users] Update data:', JSON.stringify(updateData));
     
-    // Direct update by deriv_id
+    
     const { data: profile, error } = await supabase
       .from('user_profiles')
       .update(updateData)
@@ -105,7 +92,7 @@ router.put('/me', authMiddleware, async (req, res) => {
       .single();
     
     if (error) {
-      // If no row found, create the profile first
+      
       if (error.code === 'PGRST116') {
         console.log('[Users] Profile not found, creating new one');
         const { data: newProfile, error: createError } = await supabase
@@ -145,10 +132,6 @@ router.put('/me', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Upload profile picture - stores in database as base64
- * POST /api/users/me/avatar
- */
 router.post('/me/avatar', authMiddleware, upload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) {
@@ -166,10 +149,6 @@ router.post('/me/avatar', authMiddleware, upload.single('avatar'), async (req, r
   }
 });
 
-/**
- * Delete profile picture
- * DELETE /api/users/me/avatar
- */
 router.delete('/me/avatar', authMiddleware, async (req, res) => {
   try {
     await deleteProfilePicture(req.userId);
@@ -180,10 +159,6 @@ router.delete('/me/avatar', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Search users by username
- * GET /api/users/search?q=username
- */
 router.get('/search', authMiddleware, async (req, res) => {
   try {
     const { q, limit } = req.query;
@@ -198,10 +173,6 @@ router.get('/search', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Check if username is available
- * GET /api/users/check-username/:username
- */
 router.get('/check-username/:username', authMiddleware, async (req, res) => {
   try {
     const { username } = req.params;
@@ -210,7 +181,7 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
       return res.json({ available: false, error: 'Username too short' });
     }
     
-    // Check if username exists (excluding current user)
+    
     const { data, error } = await supabase
       .from('user_profiles')
       .select('id, deriv_id')
@@ -218,7 +189,7 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
       .single();
     
     if (error && error.code === 'PGRST116') {
-      // No match found - username is available
+      
       return res.json({ available: true });
     }
     
@@ -226,7 +197,7 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
       throw error;
     }
     
-    // Check if it's the current user's username
+    
     const isOwnUsername = data.deriv_id === req.user?.derivId || data.id === req.userId;
     
     res.json({ available: isOwnUsername });
@@ -236,15 +207,11 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Update profile fields
- * PUT /api/users/me/profile
- */
 router.put('/me/profile', authMiddleware, async (req, res) => {
   try {
     const { username, display_name, bio, status_message } = req.body;
     
-    // Validate username if provided
+    
     if (username) {
       if (username.length < 3 || username.length > 20) {
         return res.status(400).json({ error: 'Username must be 3-20 characters' });
@@ -253,7 +220,7 @@ router.put('/me/profile', authMiddleware, async (req, res) => {
         return res.status(400).json({ error: 'Invalid username format' });
       }
       
-      // Check if username is taken
+      
       const { data: existing } = await supabase
         .from('user_profiles')
         .select('id')
@@ -280,10 +247,6 @@ router.put('/me/profile', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Update username only
- * PUT /api/users/me/username
- */
 router.put('/me/username', authMiddleware, async (req, res) => {
   try {
     const { username } = req.body;
@@ -296,7 +259,7 @@ router.put('/me/username', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Invalid username format' });
     }
     
-    // Check if username is taken
+    
     const { data: existing } = await supabase
       .from('user_profiles')
       .select('id')
@@ -317,22 +280,16 @@ router.put('/me/username', authMiddleware, async (req, res) => {
   }
 });
 
-// ============ Settings Routes (MUST be before /:username) ============
-
-/**
- * Get user settings
- * GET /api/users/settings
- */
 router.get('/settings', authMiddleware, async (req, res) => {
   try {
     console.log('GET /settings - User:', req.user);
     
-    // Get user profile by derivId
+    
     let user = await getProfileByDerivId(req.user.derivId);
     
     console.log('Profile found:', user ? user.id : 'null');
     
-    // If user doesn't exist, create a new profile
+    
     if (!user) {
       console.log('User not found, creating profile for:', req.user.derivId);
       user = await upsertUserProfile(req.user.derivId, {
@@ -344,7 +301,7 @@ router.get('/settings', authMiddleware, async (req, res) => {
       console.log('Created user:', user.id);
     }
 
-    // Get settings from user_settings table or use defaults
+    
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
       .select('*')
@@ -402,15 +359,11 @@ router.get('/settings', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Update user settings
- * PUT /api/users/settings
- */
 router.put('/settings', authMiddleware, async (req, res) => {
   try {
     const { profile, privacy, notifications, chat } = req.body;
     
-    // Get user profile or create if doesn't exist
+    
     let user = await getProfileByDerivId(req.user.derivId);
     if (!user) {
       console.log('User not found during settings update, creating profile for:', req.user.derivId);
@@ -422,7 +375,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
       });
     }
 
-    // Validate username uniqueness if changed
+    
     if (profile?.username && profile.username.toLowerCase() !== user.username?.toLowerCase()) {
       const { data: existingUser } = await supabase
         .from('user_profiles')
@@ -436,7 +389,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
       }
     }
 
-    // Update profile
+    
     if (profile) {
       const profileUpdate = {
         updated_at: new Date().toISOString()
@@ -464,7 +417,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
       }
     }
 
-    // Upsert settings
+    
     const settingsData = {
       user_id: user.id,
       privacy: privacy || {},
@@ -491,15 +444,11 @@ router.put('/settings', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Check username availability
- * GET /api/users/check-username/:username
- */
 router.get('/check-username/:username', authMiddleware, async (req, res) => {
   try {
     const username = req.params.username.toLowerCase();
     
-    // Validate format
+    
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
       return res.json({ available: false, reason: 'Invalid format' });
     }
@@ -520,12 +469,6 @@ router.get('/check-username/:username', authMiddleware, async (req, res) => {
   }
 });
 
-// ============ Dynamic Username Route (MUST be LAST) ============
-
-/**
- * Get user public profile by username
- * GET /api/users/:username
- */
 router.get('/:username', authMiddleware, async (req, res) => {
   try {
     const profile = await getPublicProfile(req.params.username);
