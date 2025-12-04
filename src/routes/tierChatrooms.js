@@ -299,21 +299,10 @@ router.get('/tier-chatroom/:id/members', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'Failed to fetch members' });
     }
 
+    // Return in format frontend expects (with user_profiles nested)
     res.json({
       success: true,
-      members: (members || []).map(m => ({
-        id: m.user_id,
-        derivId: m.deriv_id,
-        username: m.user_profiles?.username || `Trader_${m.deriv_id?.slice(-4)}`,
-        displayName: m.user_profiles?.fullname || m.user_profiles?.username,
-        avatarUrl: m.user_profiles?.profile_photo,
-        isOnline: m.user_profiles?.is_online || false,
-        winRate: m.user_profiles?.win_rate || 0,
-        totalTrades: m.user_profiles?.total_trades || 0,
-        role: m.role,
-        joinedAt: m.joined_at,
-        lastActive: m.last_active
-      }))
+      members: members || []
     });
   } catch (error) {
     console.error('Get members error:', error);
