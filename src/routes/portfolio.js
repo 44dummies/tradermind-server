@@ -6,10 +6,26 @@
 const express = require('express');
 const router = express.Router();
 const PortfolioService = require('../services/portfolio');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
+
+/**
+ * Helper to get or create user profile
+ */
+async function getOrCreateUser(derivId) {
+  let user = await getProfileByDerivId(derivId);
+  if (!user) {
+    user = await upsertUserProfile(derivId, {
+      username: `trader_${derivId.toLowerCase().slice(0, 8)}`,
+      fullname: null,
+      email: null,
+      country: null
+    });
+  }
+  return user;
+}
 
 /**
  * GET /api/portfolio
@@ -17,7 +33,7 @@ router.use(authMiddleware);
  */
 router.get('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -36,7 +52,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/user/:userId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -55,25 +71,12 @@ router.get('/user/:userId', async (req, res) => {
  */
 router.post('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
     
     const item = await PortfolioService.addItem(currentUser.id, req.body);
-    
-    // Notify friends about portfolio update
-    const io = req.app.get('io');
-    if (io && req.body.privacy_level !== 'locked') {
-      const friends = await FriendsService.getFriends(currentUser.id);
-      for (const f of friends) {
-        io.to(`user:${f.friend_id}`).emit('portfolio:update', {
-          userId: currentUser.id,
-          username: currentUser.username,
-          item
-        });
-      }
-    }
     
     res.json(item);
   } catch (error) {
@@ -88,7 +91,7 @@ router.post('/', async (req, res) => {
  */
 router.put('/:itemId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -107,7 +110,7 @@ router.put('/:itemId', async (req, res) => {
  */
 router.delete('/:itemId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getOrCreateUser(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

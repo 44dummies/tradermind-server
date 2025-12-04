@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const AchievementsService = require('../services/achievements');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -16,7 +16,7 @@ router.use(authMiddleware);
  */
 router.get('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -40,7 +40,7 @@ router.get('/user/:userId', async (req, res) => {
     
     // If it's a Deriv ID (starts with CR, VRTC, etc.), look up the UUID
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
-      const user = await FriendsService.getProfileByDerivId(userId);
+      const user = await getProfileByDerivId(userId);
       if (!user) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -75,7 +75,7 @@ router.get('/definitions', async (req, res) => {
  */
 router.get('/progress', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

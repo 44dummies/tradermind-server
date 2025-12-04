@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const LeaderboardService = require('../services/leaderboard');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -16,7 +16,7 @@ router.use(authMiddleware);
  */
 router.get('/', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -36,7 +36,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/improvement', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -55,7 +55,7 @@ router.get('/improvement', async (req, res) => {
  */
 router.get('/consistency', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -74,7 +74,7 @@ router.get('/consistency', async (req, res) => {
  */
 router.get('/helpfulness', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -93,7 +93,7 @@ router.get('/helpfulness', async (req, res) => {
  */
 router.get('/streaks', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

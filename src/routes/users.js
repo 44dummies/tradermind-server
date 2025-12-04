@@ -1,26 +1,23 @@
 /**
  * User Routes
+ * Handles user profiles, settings, and profile pictures
+ * No friends functionality - removed for simplification
  */
 
 const express = require('express');
 const multer = require('multer');
 const { 
   getUserProfile,
+  getProfileByDerivId,
+  upsertUserProfile,
   updateUserProfile,
   saveProfilePicture,
   deleteProfilePicture,
   searchUsersByUsername,
-  getPublicProfile,
-  sendFriendRequest,
-  acceptFriendRequest,
-  declineFriendRequest,
-  getFriendList,
-  getPendingRequests,
-  removeFriend,
-  blockUser,
-  unblockUser
+  getPublicProfile
 } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
+const { supabase } = require('../db/supabase');
 
 const router = express.Router();
 
@@ -45,10 +42,27 @@ const upload = multer({
  */
 router.get('/me', authMiddleware, async (req, res) => {
   try {
-    const profile = await getUserProfile(req.userId);
+    const derivId = req.user?.derivId || req.username;
+    console.log('[Users] GET /me - derivId:', derivId);
+    
+    // Try to get profile by derivId first (more reliable)
+    let profile = await getProfileByDerivId(derivId);
+    
+    // If not found by derivId, try by userId (UUID)
     if (!profile) {
-      return res.status(404).json({ error: 'User not found' });
+      profile = await getUserProfile(req.userId);
     }
+    
+    if (!profile) {
+      // Auto-create profile if it doesn't exist
+      console.log('[Users] Creating profile for:', derivId);
+      profile = await upsertUserProfile(derivId, {
+        username: `trader_${derivId.toLowerCase().slice(0, 8)}`,
+        display_name: derivId,
+        fullname: derivId
+      });
+    }
+    
     res.json(profile);
   } catch (error) {
     console.error('Get profile error:', error);
@@ -62,16 +76,77 @@ router.get('/me', authMiddleware, async (req, res) => {
  */
 router.put('/me', authMiddleware, async (req, res) => {
   try {
-    const profile = await updateUserProfile(req.userId, req.body);
+    const derivId = req.user?.derivId || req.username;
+    console.log('[Users] PUT /me - derivId:', derivId);
+    console.log('[Users] PUT /me - body:', JSON.stringify(req.body));
+    
+    if (!derivId) {
+      return res.status(400).json({ error: 'No derivId found in token' });
+    }
+    
+    // Build update data
+    const updateData = {};
+    if (req.body.username !== undefined) updateData.username = req.body.username;
+    if (req.body.display_name !== undefined) updateData.display_name = req.body.display_name;
+    if (req.body.fullname !== undefined) updateData.fullname = req.body.fullname;
+    if (req.body.bio !== undefined) updateData.bio = req.body.bio;
+    if (req.body.profile_photo !== undefined) updateData.profile_photo = req.body.profile_photo;
+    if (req.body.status_message !== undefined) updateData.status_message = req.body.status_message;
+    updateData.updated_at = new Date().toISOString();
+    
+    console.log('[Users] Update data:', JSON.stringify(updateData));
+    
+    // Direct update by deriv_id
+    const { data: profile, error } = await supabase
+      .from('user_profiles')
+      .update(updateData)
+      .eq('deriv_id', derivId)
+      .select()
+      .single();
+    
+    if (error) {
+      // If no row found, create the profile first
+      if (error.code === 'PGRST116') {
+        console.log('[Users] Profile not found, creating new one');
+        const { data: newProfile, error: createError } = await supabase
+          .from('user_profiles')
+          .insert({
+            deriv_id: derivId,
+            username: req.body.username || `trader_${derivId.toLowerCase().slice(0, 8)}`,
+            display_name: req.body.display_name || derivId,
+            fullname: req.body.fullname || req.body.display_name || derivId,
+            bio: req.body.bio || '',
+            profile_photo: req.body.profile_photo || '',
+            performance_tier: 'beginner',
+            is_online: true,
+            last_seen_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        
+        if (createError) {
+          console.error('[Users] Create profile error:', createError);
+          return res.status(500).json({ error: 'Failed to create profile', details: createError.message });
+        }
+        
+        console.log('[Users] Profile created:', newProfile?.id);
+        return res.json(newProfile);
+      }
+      
+      console.error('[Users] Update error:', error);
+      return res.status(500).json({ error: 'Failed to update profile', details: error.message });
+    }
+    
+    console.log('[Users] Profile updated:', profile?.id);
     res.json(profile);
   } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({ error: 'Failed to update profile' });
+    console.error('[Users] Exception:', error);
+    res.status(500).json({ error: 'Failed to update profile', details: error.message });
   }
 });
 
 /**
- * Upload profile picture
+ * Upload profile picture - stores in database as base64
  * POST /api/users/me/avatar
  */
 router.post('/me/avatar', authMiddleware, upload.single('avatar'), async (req, res) => {
@@ -79,7 +154,11 @@ router.post('/me/avatar', authMiddleware, upload.single('avatar'), async (req, r
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
     }
+    
+    console.log('[Avatar] Uploading for user:', req.userId, 'File size:', req.file.size);
     const avatarUrl = await saveProfilePicture(req.userId, req.file);
+    console.log('[Avatar] Upload successful, URL length:', avatarUrl?.length);
+    
     res.json({ avatarUrl });
   } catch (error) {
     console.error('Upload avatar error:', error);
@@ -119,10 +198,126 @@ router.get('/search', authMiddleware, async (req, res) => {
   }
 });
 
-// ============ Settings Routes (MUST be before /:username) ============
+/**
+ * Check if username is available
+ * GET /api/users/check-username/:username
+ */
+router.get('/check-username/:username', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.params;
+    
+    if (!username || username.length < 3) {
+      return res.json({ available: false, error: 'Username too short' });
+    }
+    
+    // Check if username exists (excluding current user)
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, deriv_id')
+      .eq('username', username.toLowerCase())
+      .single();
+    
+    if (error && error.code === 'PGRST116') {
+      // No match found - username is available
+      return res.json({ available: true });
+    }
+    
+    if (error) {
+      throw error;
+    }
+    
+    // Check if it's the current user's username
+    const isOwnUsername = data.deriv_id === req.user?.derivId || data.id === req.userId;
+    
+    res.json({ available: isOwnUsername });
+  } catch (error) {
+    console.error('Check username error:', error);
+    res.status(500).json({ error: 'Failed to check username' });
+  }
+});
 
-const FriendsService = require('../services/friends');
-const { supabase } = require('../db/supabase');
+/**
+ * Update profile fields
+ * PUT /api/users/me/profile
+ */
+router.put('/me/profile', authMiddleware, async (req, res) => {
+  try {
+    const { username, display_name, bio, status_message } = req.body;
+    
+    // Validate username if provided
+    if (username) {
+      if (username.length < 3 || username.length > 20) {
+        return res.status(400).json({ error: 'Username must be 3-20 characters' });
+      }
+      if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+        return res.status(400).json({ error: 'Invalid username format' });
+      }
+      
+      // Check if username is taken
+      const { data: existing } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .eq('username', username.toLowerCase())
+        .neq('id', req.userId)
+        .single();
+      
+      if (existing) {
+        return res.status(400).json({ error: 'Username is already taken' });
+      }
+    }
+    
+    const profile = await updateUserProfile(req.userId, {
+      username: username?.toLowerCase(),
+      display_name,
+      bio,
+      status_message,
+    });
+    
+    res.json({ success: true, profile });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+/**
+ * Update username only
+ * PUT /api/users/me/username
+ */
+router.put('/me/username', authMiddleware, async (req, res) => {
+  try {
+    const { username } = req.body;
+    
+    if (!username || username.length < 3 || username.length > 20) {
+      return res.status(400).json({ error: 'Username must be 3-20 characters' });
+    }
+    
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      return res.status(400).json({ error: 'Invalid username format' });
+    }
+    
+    // Check if username is taken
+    const { data: existing } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .eq('username', username.toLowerCase())
+      .neq('id', req.userId)
+      .single();
+    
+    if (existing) {
+      return res.status(400).json({ error: 'Username is already taken' });
+    }
+    
+    await updateUserProfile(req.userId, { username: username.toLowerCase() });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update username error:', error);
+    res.status(500).json({ error: 'Failed to update username' });
+  }
+});
+
+// ============ Settings Routes (MUST be before /:username) ============
 
 /**
  * Get user settings
@@ -133,15 +328,15 @@ router.get('/settings', authMiddleware, async (req, res) => {
     console.log('GET /settings - User:', req.user);
     
     // Get user profile by derivId
-    let user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    let user = await getProfileByDerivId(req.user.derivId);
     
     console.log('Profile found:', user ? user.id : 'null');
     
     // If user doesn't exist, create a new profile
     if (!user) {
       console.log('User not found, creating profile for:', req.user.derivId);
-      user = await FriendsService.upsertUserProfile(req.user.derivId, {
-        username: `trader_${req.user.derivId.toLowerCase()}`,
+      user = await upsertUserProfile(req.user.derivId, {
+        username: `trader_${req.user.derivId.toLowerCase().slice(0, 8)}`,
         fullname: null,
         email: null,
         country: null
@@ -183,11 +378,8 @@ router.get('/settings', authMiddleware, async (req, res) => {
         showPerformance: true,
         showOnlineStatus: true,
         profileVisibility: 'public',
-        allowFriendRequests: true,
-        allowMessages: 'friends',
       },
       notifications: settings?.notifications || {
-        friendRequests: true,
         messages: true,
         chatMentions: true,
         achievements: true,
@@ -219,11 +411,11 @@ router.put('/settings', authMiddleware, async (req, res) => {
     const { profile, privacy, notifications, chat } = req.body;
     
     // Get user profile or create if doesn't exist
-    let user = await FriendsService.getProfileByDerivId(req.user.derivId);
+    let user = await getProfileByDerivId(req.user.derivId);
     if (!user) {
       console.log('User not found during settings update, creating profile for:', req.user.derivId);
-      user = await FriendsService.upsertUserProfile(req.user.derivId, {
-        username: `trader_${req.user.derivId.toLowerCase()}`,
+      user = await upsertUserProfile(req.user.derivId, {
+        username: `trader_${req.user.derivId.toLowerCase().slice(0, 8)}`,
         fullname: null,
         email: null,
         country: null
@@ -259,7 +451,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
         profileUpdate.profile_photo_metadata = profile.profile_photo_metadata;
       }
 
-      console.log('Updating profile for user:', user.id, 'with:', profileUpdate);
+      console.log('Updating profile for user:', user.id);
       
       const { error: updateError } = await supabase
         .from('user_profiles')
@@ -344,150 +536,6 @@ router.get('/:username', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Get public profile error:', error);
     res.status(500).json({ error: 'Failed to get profile' });
-  }
-});
-
-// ============ Friends Routes ============
-
-/**
- * Get friend list
- * GET /api/users/friends/list
- */
-router.get('/friends/list', authMiddleware, async (req, res) => {
-  try {
-    const friends = await getFriendList(req.userId);
-    res.json(friends);
-  } catch (error) {
-    console.error('Get friends error:', error);
-    res.status(500).json({ error: 'Failed to get friends' });
-  }
-});
-
-/**
- * Get pending friend requests
- * GET /api/users/friends/pending
- */
-router.get('/friends/pending', authMiddleware, async (req, res) => {
-  try {
-    const requests = await getPendingRequests(req.userId);
-    res.json(requests);
-  } catch (error) {
-    console.error('Get pending requests error:', error);
-    res.status(500).json({ error: 'Failed to get pending requests' });
-  }
-});
-
-/**
- * Send friend request
- * POST /api/users/friends/request
- */
-router.post('/friends/request', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await sendFriendRequest(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Send friend request error:', error);
-    res.status(500).json({ error: 'Failed to send friend request' });
-  }
-});
-
-/**
- * Accept friend request
- * POST /api/users/friends/accept/:requestId
- */
-router.post('/friends/accept/:requestId', authMiddleware, async (req, res) => {
-  try {
-    const result = await acceptFriendRequest(req.userId, req.params.requestId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Accept friend request error:', error);
-    res.status(500).json({ error: 'Failed to accept friend request' });
-  }
-});
-
-/**
- * Decline friend request
- * POST /api/users/friends/decline/:requestId
- */
-router.post('/friends/decline/:requestId', authMiddleware, async (req, res) => {
-  try {
-    const result = await declineFriendRequest(req.userId, req.params.requestId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Decline friend request error:', error);
-    res.status(500).json({ error: 'Failed to decline friend request' });
-  }
-});
-
-/**
- * Remove friend
- * DELETE /api/users/friends/:friendshipId
- */
-router.delete('/friends/:friendshipId', authMiddleware, async (req, res) => {
-  try {
-    const result = await removeFriend(req.userId, req.params.friendshipId);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Remove friend error:', error);
-    res.status(500).json({ error: 'Failed to remove friend' });
-  }
-});
-
-/**
- * Block user
- * POST /api/users/block
- */
-router.post('/block', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await blockUser(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Block user error:', error);
-    res.status(500).json({ error: 'Failed to block user' });
-  }
-});
-
-/**
- * Unblock user
- * POST /api/users/unblock
- */
-router.post('/unblock', authMiddleware, async (req, res) => {
-  try {
-    const { username } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: 'Username is required' });
-    }
-    const result = await unblockUser(req.userId, username);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error });
-    }
-    res.json(result);
-  } catch (error) {
-    console.error('Unblock user error:', error);
-    res.status(500).json({ error: 'Failed to unblock user' });
   }
 });
 

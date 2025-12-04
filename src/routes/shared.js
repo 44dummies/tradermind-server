@@ -7,7 +7,7 @@ const express = require('express');
 const router = express.Router();
 const SharedService = require('../services/shared');
 const ChatService = require('../services/chat');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -22,7 +22,7 @@ router.use(authMiddleware);
  */
 router.get('/:chatId/notes', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -47,7 +47,7 @@ router.get('/:chatId/notes', async (req, res) => {
  */
 router.put('/:chatId/notes', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -88,7 +88,7 @@ router.put('/:chatId/notes', async (req, res) => {
  */
 router.get('/:chatId/watchlist', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -113,7 +113,7 @@ router.get('/:chatId/watchlist', async (req, res) => {
  */
 router.post('/:chatId/watchlist/symbol', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -148,7 +148,7 @@ router.post('/:chatId/watchlist/symbol', async (req, res) => {
  */
 router.delete('/:chatId/watchlist/symbol/:symbol', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -183,7 +183,7 @@ router.delete('/:chatId/watchlist/symbol/:symbol', async (req, res) => {
  */
 router.put('/:chatId/watchlist/symbol/:symbol/notes', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -213,7 +213,7 @@ router.put('/:chatId/watchlist/symbol/:symbol/notes', async (req, res) => {
  */
 router.post('/:chatId/watchlist/strategy', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

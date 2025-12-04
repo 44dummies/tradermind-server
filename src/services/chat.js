@@ -59,6 +59,49 @@ const ChatService = {
   },
 
   /**
+   * Get or create a direct chat between two users
+   */
+  async getOrCreateDirectChat(user1Id, user2Id) {
+    // Ensure consistent ordering
+    const [smallerId, largerId] = user1Id < user2Id 
+      ? [user1Id, user2Id] 
+      : [user2Id, user1Id];
+    
+    // Check if chat exists
+    let chat = await this.getChatByUsers(smallerId, largerId);
+    
+    if (!chat) {
+      // Create new chat
+      const { data, error } = await supabase
+        .from('friend_chats')
+        .insert({
+          user1_id: smallerId,
+          user2_id: largerId
+        })
+        .select(`
+          *,
+          user1:user_profiles!friend_chats_user1_id_fkey(
+            id, username, fullname, profile_photo, is_online, last_seen
+          ),
+          user2:user_profiles!friend_chats_user2_id_fkey(
+            id, username, fullname, profile_photo, is_online, last_seen
+          )
+        `)
+        .single();
+      
+      if (error) throw error;
+      chat = data;
+    }
+    
+    // Format the response
+    const otherUser = chat.user1_id === user1Id ? chat.user2 : chat.user1;
+    return {
+      ...chat,
+      otherUser
+    };
+  },
+
+  /**
    * Get all chats for a user
    */
   async getUserChats(userId) {

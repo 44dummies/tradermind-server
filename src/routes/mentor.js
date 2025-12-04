@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const MentorService = require('../services/mentor');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -16,7 +16,7 @@ router.use(authMiddleware);
  */
 router.post('/set/:mentorId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -46,7 +46,7 @@ router.post('/set/:mentorId', async (req, res) => {
  */
 router.delete('/remove/:mentorId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -65,7 +65,7 @@ router.delete('/remove/:mentorId', async (req, res) => {
  */
 router.get('/mentees', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -84,7 +84,7 @@ router.get('/mentees', async (req, res) => {
  */
 router.get('/my-mentor', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -103,7 +103,7 @@ router.get('/my-mentor', async (req, res) => {
  */
 router.post('/feedback/:menteeId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -138,7 +138,7 @@ router.post('/feedback/:menteeId', async (req, res) => {
  */
 router.get('/feedback/history', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -158,7 +158,7 @@ router.get('/feedback/history', async (req, res) => {
  */
 router.get('/analytics/:menteeId', async (req, res) => {
   try {
-    const currentUser = await FriendsService.getProfileByDerivId(req.user.derivId);
+    const currentUser = await getProfileByDerivId(req.user.derivId);
     if (!currentUser) {
       return res.status(404).json({ error: 'User not found' });
     }

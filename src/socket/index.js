@@ -79,17 +79,32 @@ function setupSocketHandlers(io) {
       username: socket.username 
     });
     
+    const isNewUser = !userSockets.has(socket.userId);
     if (!userSockets.has(socket.userId)) {
       userSockets.set(socket.userId, new Set());
     }
     userSockets.get(socket.userId).add(socket.id);
     
-    // Update user online status in database
+    // Update user online status in database and broadcast if new
     try {
-      await supabase
-        .from('User')
-        .update({ isOnline: true, lastSeen: new Date().toISOString() })
-        .eq('derivId', socket.userId);
+      const { data: userProfile } = await supabase
+        .from('user_profiles')
+        .update({ is_online: true, last_seen_at: new Date().toISOString() })
+        .eq('deriv_id', socket.userId)
+        .select('deriv_id, username, display_name, profile_photo, status_message')
+        .single();
+      
+      // If user just came online (first socket), broadcast to all
+      if (isNewUser && userProfile) {
+        io.emit('userOnline', {
+          derivId: userProfile.deriv_id,
+          username: userProfile.username,
+          displayName: userProfile.display_name,
+          avatarUrl: userProfile.profile_photo,
+          statusMessage: userProfile.status_message,
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (err) {
       console.error('Failed to update online status:', err);
     }
@@ -314,6 +329,164 @@ function setupSocketHandlers(io) {
       });
     });
 
+    // ============ Profile Sync Events ============
+
+    /**
+     * Handle profile updates - broadcast to all connected users
+     */
+    socket.on('profileUpdate', async (data) => {
+      const { derivId, username, displayName, avatarUrl, statusMessage } = data;
+      
+      console.log(`Profile update from ${socket.username}:`, data);
+      
+      // Update all rooms this user is in
+      for (const [roomId, presence] of roomPresence) {
+        if (presence.has(socket.userId)) {
+          presence.set(socket.userId, {
+            id: socket.userId,
+            derivId: derivId,
+            username: username || socket.username,
+            displayName: displayName,
+            avatarUrl: avatarUrl,
+            statusMessage: statusMessage,
+            joinedAt: presence.get(socket.userId)?.joinedAt || new Date().toISOString()
+          });
+          
+          // Broadcast updated presence
+          broadcastRoomPresence(io, roomId);
+        }
+      }
+      
+      // Update socket username for future messages
+      if (username) {
+        socket.username = username;
+        const conn = activeConnections.get(socket.id);
+        if (conn) {
+          conn.username = username;
+        }
+      }
+      
+      // Broadcast profile update to all connected clients
+      io.emit('userProfileUpdated', {
+        derivId: derivId,
+        userId: socket.userId,
+        username: username,
+        displayName: displayName,
+        avatarUrl: avatarUrl,
+        statusMessage: statusMessage,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    // ============ Settings Sync Events ============
+
+    /**
+     * Profile update - broadcast to all user's sessions
+     */
+    socket.on('profile:update', (data) => {
+      const { derivId, username, displayName, bio, avatarUrl } = data;
+      
+      // Broadcast to all this user's sockets
+      const sockets = userSockets.get(socket.userId);
+      if (sockets) {
+        sockets.forEach(socketId => {
+          if (socketId !== socket.id) {
+            io.to(socketId).emit('profile:updated', {
+              username, displayName, bio, avatarUrl, timestamp: new Date().toISOString()
+            });
+          }
+        });
+      }
+      
+      // Also broadcast profile change to interested parties (community, chat)
+      io.emit('userProfileUpdated', { derivId, username, displayName, avatarUrl });
+    });
+
+    /**
+     * Avatar update - broadcast globally
+     */
+    socket.on('profile:avatar:update', (data) => {
+      const { derivId, avatarUrl } = data;
+      
+      io.emit('userAvatarUpdated', {
+        derivId,
+        avatarUrl,
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    /**
+     * Settings update - sync across user's sessions
+     */
+    socket.on('settings:update', (data) => {
+      const { type, settings } = data;
+      
+      // Broadcast to all this user's other sockets
+      const sockets = userSockets.get(socket.userId);
+      if (sockets) {
+        sockets.forEach(socketId => {
+          if (socketId !== socket.id) {
+            io.to(socketId).emit('settings:updated', { type, settings });
+          }
+        });
+      }
+    });
+
+    /**
+     * Session termination - force logout specific session
+     */
+    socket.on('session:terminate', (data) => {
+      const { sessionId, all, except } = data;
+      
+      const sockets = userSockets.get(socket.userId);
+      if (!sockets) return;
+
+      if (all) {
+        // Terminate all sessions except the specified one
+        sockets.forEach(socketId => {
+          if (socketId !== except) {
+            io.to(socketId).emit('session:terminated', { all: true });
+          }
+        });
+      } else if (sessionId) {
+        // Terminate specific session
+        io.to(sessionId).emit('session:terminated', { sessionId });
+      }
+    });
+
+    /**
+     * User going offline intentionally
+     */
+    socket.on('user:offline', async (data) => {
+      const { derivId } = data;
+      
+      try {
+        await supabase
+          .from('user_profiles')
+          .update({ is_online: false, last_seen_at: new Date().toISOString() })
+          .eq('deriv_id', derivId);
+        
+        io.emit('userOffline', { derivId, timestamp: new Date().toISOString() });
+      } catch (err) {
+        console.error('Failed to update offline status:', err);
+      }
+    });
+
+    /**
+     * Request online users list
+     */
+    socket.on('getOnlineUsers', () => {
+      const onlineUsers = [];
+      for (const [socketId, info] of activeConnections) {
+        onlineUsers.push({
+          derivId: info.userId,
+          username: info.username,
+          socketId: socketId
+        });
+      }
+      socket.emit('onlineUsers', onlineUsers);
+    });
+
     // ============ Direct Messages ============
 
     /**
@@ -359,7 +532,14 @@ function setupSocketHandlers(io) {
         if (sockets.size === 0) {
           userSockets.delete(socket.userId);
           
-          // User completely offline, update all room presences
+          // User completely offline, broadcast to all clients
+          io.emit('userOffline', {
+            derivId: socket.userId,
+            username: socket.username,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Update all room presences
           for (const [roomId, presence] of roomPresence) {
             if (presence.has(socket.userId)) {
               presence.delete(socket.userId);
@@ -377,9 +557,9 @@ function setupSocketHandlers(io) {
           // Update database
           try {
             await supabase
-              .from('User')
-              .update({ isOnline: false, lastSeen: new Date().toISOString() })
-              .eq('derivId', socket.userId);
+              .from('user_profiles')
+              .update({ is_online: false, last_seen_at: new Date().toISOString() })
+              .eq('deriv_id', socket.userId);
           } catch (err) {
             console.error('Failed to update offline status:', err);
           }

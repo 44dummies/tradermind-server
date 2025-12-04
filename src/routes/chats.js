@@ -1,12 +1,12 @@
 /**
  * Chat API Routes
- * Handles private messaging between friends
+ * Handles private messaging between users
  */
 
 const express = require('express');
 const router = express.Router();
 const ChatService = require('../services/chat');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 const { authMiddleware } = require('../middleware/auth');
 
 router.use(authMiddleware);
@@ -15,10 +15,10 @@ router.use(authMiddleware);
  * Helper to get or create user profile
  */
 async function getOrCreateUser(derivId) {
-  let user = await FriendsService.getProfileByDerivId(derivId);
+  let user = await getProfileByDerivId(derivId);
   if (!user) {
-    user = await FriendsService.upsertUserProfile(derivId, {
-      username: `trader_${derivId.toLowerCase()}`,
+    user = await upsertUserProfile(derivId, {
+      username: `trader_${derivId.toLowerCase().slice(0, 8)}`,
       fullname: null,
       email: null,
       country: null
@@ -96,14 +96,8 @@ router.get('/with/:userId', async (req, res) => {
       return res.status(500).json({ error: 'Failed to get/create user' });
     }
     
-    // Verify friendship
-    const friendship = await FriendsService.getFriendshipStatus(currentUser.id, req.params.userId);
-    if (!friendship || friendship.status !== 'accepted') {
-      return res.status(403).json({ error: 'Must be friends to chat' });
-    }
-    
-    const chatId = await FriendsService.getOrCreateChat(currentUser.id, req.params.userId);
-    const chat = await ChatService.getChatById(chatId);
+    // Get or create chat - friends check removed
+    const chat = await ChatService.getOrCreateDirectChat(currentUser.id, req.params.userId);
     
     res.json(chat);
   } catch (error) {

@@ -8,7 +8,7 @@ const multer = require('multer');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth');
 const { uploadFile, deleteFile } = require('../services/fileStorage');
-const FriendsService = require('../services/friends');
+const { getProfileByDerivId, upsertUserProfile } = require('../services/profile');
 
 // Configure multer for memory storage
 const upload = multer({
@@ -46,10 +46,10 @@ router.use(authMiddleware);
  * Helper to get or create user profile
  */
 async function getOrCreateUser(derivId) {
-  let user = await FriendsService.getProfileByDerivId(derivId);
+  let user = await getProfileByDerivId(derivId);
   if (!user) {
-    user = await FriendsService.upsertUserProfile(derivId, {
-      username: `trader_${derivId.toLowerCase()}`,
+    user = await upsertUserProfile(derivId, {
+      username: `trader_${derivId.toLowerCase().slice(0, 8)}`,
       fullname: null,
       email: null,
       country: null

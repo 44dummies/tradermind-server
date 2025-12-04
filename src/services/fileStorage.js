@@ -11,6 +11,7 @@ const path = require('path');
 const CHAT_FILES_BUCKET = 'chat-files';
 const VOICE_NOTES_BUCKET = 'voice-notes';
 const CHATROOM_FILES_BUCKET = 'chatroom-files';
+const PROFILE_PHOTOS_BUCKET = 'profile-photos';
 
 // Maximum file sizes (in bytes)
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -31,7 +32,8 @@ async function initializeStorageBuckets() {
   const buckets = [
     { name: CHAT_FILES_BUCKET, public: true },
     { name: VOICE_NOTES_BUCKET, public: true },
-    { name: CHATROOM_FILES_BUCKET, public: true }
+    { name: CHATROOM_FILES_BUCKET, public: true },
+    { name: PROFILE_PHOTOS_BUCKET, public: true }
   ];
   
   for (const bucket of buckets) {
@@ -243,12 +245,106 @@ async function getSignedUrl(storagePath, context = 'chat', expiresIn = 3600) {
   }
 }
 
+/**
+ * Upload profile photo to Supabase Storage
+ * @param {Object} file - Multer file object with buffer
+ * @param {string} userId - User ID uploading the photo
+ * @returns {Object} { success, url, error }
+ */
+async function uploadProfilePhoto(file, userId) {
+  try {
+    // Validate it's an image
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      return { success: false, error: 'Only image files are allowed for profile photos' };
+    }
+    
+    // Validate size (5MB max for profile photos)
+    if (file.size > 5 * 1024 * 1024) {
+      return { success: false, error: 'Profile photo must be less than 5MB' };
+    }
+    
+    // Generate file path - use fixed naming so we replace old photos
+    const ext = path.extname(file.originalname) || '.jpg';
+    const filePath = `${userId}/avatar${ext}`;
+    
+    // Delete existing profile photos for this user first
+    try {
+      const { data: existingFiles } = await supabase.storage
+        .from(PROFILE_PHOTOS_BUCKET)
+        .list(userId);
+      
+      if (existingFiles && existingFiles.length > 0) {
+        const filesToDelete = existingFiles.map(f => `${userId}/${f.name}`);
+        await supabase.storage.from(PROFILE_PHOTOS_BUCKET).remove(filesToDelete);
+      }
+    } catch (err) {
+      // Ignore errors when deleting old photos
+      console.log('[Profile] Could not delete old photos:', err.message);
+    }
+    
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from(PROFILE_PHOTOS_BUCKET)
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        upsert: true // Replace if exists
+      });
+    
+    if (error) {
+      console.error('[Profile] Storage upload error:', error);
+      return { success: false, error: error.message };
+    }
+    
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from(PROFILE_PHOTOS_BUCKET)
+      .getPublicUrl(filePath);
+    
+    // Add cache buster to URL to prevent stale images
+    const publicUrl = `${urlData.publicUrl}?v=${Date.now()}`;
+    
+    return {
+      success: true,
+      url: publicUrl,
+      storagePath: data.path
+    };
+  } catch (error) {
+    console.error('[Profile] Photo upload error:', error);
+    return { success: false, error: 'Failed to upload profile photo' };
+  }
+}
+
+/**
+ * Delete profile photo from Supabase Storage
+ * @param {string} userId - User ID
+ */
+async function deleteProfilePhoto(userId) {
+  try {
+    const { data: existingFiles } = await supabase.storage
+      .from(PROFILE_PHOTOS_BUCKET)
+      .list(userId);
+    
+    if (existingFiles && existingFiles.length > 0) {
+      const filesToDelete = existingFiles.map(f => `${userId}/${f.name}`);
+      await supabase.storage.from(PROFILE_PHOTOS_BUCKET).remove(filesToDelete);
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('[Profile] Delete photo error:', error);
+    return { success: false, error: 'Failed to delete profile photo' };
+  }
+}
+
 module.exports = {
   initializeStorageBuckets,
   uploadFile,
   deleteFile,
   getSignedUrl,
+  uploadProfilePhoto,
+  deleteProfilePhoto,
   CHAT_FILES_BUCKET,
   VOICE_NOTES_BUCKET,
-  CHATROOM_FILES_BUCKET
+  CHATROOM_FILES_BUCKET,
+  PROFILE_PHOTOS_BUCKET
 };
