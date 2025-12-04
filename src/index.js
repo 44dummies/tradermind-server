@@ -32,11 +32,11 @@ const app = express();
 const server = http.createServer(app);
 
 const defaultOrigins = [
-  'http:
-  'http:
-  'https:
-  'https:
-  'https:
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://www.tradermind.site',
+  'https://tradermind.site',
+  'https://deriv-ws.vercel.app'
 ];
 
 const corsOrigins = process.env.CORS_ORIGIN 
