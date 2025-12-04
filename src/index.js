@@ -15,6 +15,7 @@ const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const chatroomRoutes = require('./routes/chatrooms');
 const communityRoutes = require('./routes/communityV2');
+const tierChatroomRoutes = require('./routes/tierChatrooms');
 const settingsRoutes = require('./routes/settings');
 
 // Additional routes
@@ -90,6 +91,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/chatrooms', chatroomRoutes);
 app.use('/api/community', communityRoutes);
+app.use('/api/community', tierChatroomRoutes); // Tier chatroom routes
 app.use('/api/settings', settingsRoutes);
 
 // Chat API Routes
