@@ -22,6 +22,7 @@ const mentorRoutes = require('./routes/mentor');
 const achievementsRoutes = require('./routes/achievements');
 
 const filesRoutes = require('./routes/files');
+const tradingRoutes = require('./routes/trading');
 
 const { setupSocketHandlers } = require('./socket');
 
@@ -88,6 +89,7 @@ app.use('/api/mentor', mentorRoutes);
 app.use('/api/achievements', achievementsRoutes);
 
 app.use('/api/files', filesRoutes);
+app.use('/api/trading', tradingRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -179,6 +181,7 @@ async function startServer() {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
       console.log(`📡 WebSocket ready for connections`);
       console.log(`💬 Community System active`);
+      console.log(`📈 Trading System active`);
       console.log(`📁 File storage initialized`);
       console.log(`🔗 CORS origins: ${corsOrigins.join(', ')}`);
     });
