@@ -39,8 +39,7 @@ router.get('/dashboard', isUser, async (req, res) => {
         trading_sessions (*)
       `)
       .eq('user_id', userId)
-      .in('status', ['pending', 'accepted'])
-      .eq('is_removed', false);
+      .in('status', ['pending', 'accepted']);
 
     if (invError) throw invError;
 
@@ -178,7 +177,6 @@ router.get('/sessions/active', isUser, async (req, res) => {
       `)
       .eq('user_id', userId)
       .eq('status', 'accepted')
-      .eq('is_removed', false)
       .order('accepted_at', { ascending: false })
       .limit(1)
       .single();

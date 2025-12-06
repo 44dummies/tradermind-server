@@ -445,7 +445,7 @@ class SessionManager {
 
       const accepted = invitations?.filter(i => i.status === 'accepted').length || 0;
       const pending = invitations?.filter(i => i.status === 'pending').length || 0;
-      const removed = invitations?.filter(i => i.is_removed).length || 0;
+      const removed = invitations?.filter(i => i.status === 'removed' || i.status === 'removed_tp' || i.status === 'removed_sl').length || 0;
 
       const totalTrades = trades?.length || 0;
       const openTrades = trades?.filter(t => t.status === 'open').length || 0;
