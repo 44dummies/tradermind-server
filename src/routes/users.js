@@ -326,6 +326,8 @@ router.get('/settings', authMiddleware, async (req, res) => {
         deriv_id: user.deriv_id,
         performance_tier: user.performance_tier,
         is_profile_complete: user.is_profile_complete || false,
+        is_admin: user.is_admin || false,
+        role: user.role || 'user',
       },
       privacy: settings?.privacy || {
         showUsername: true,
