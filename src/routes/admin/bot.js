@@ -1,25 +1,79 @@
-/**
- * Admin Bot Control Routes
- * Start/stop/override trading bot
- */
-
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../../db/supabase');
-const { v4: uuidv4 } = require('uuid');
+const botManager = require('../../services/botManager');
 
-// Bot state (in-memory, will be moved to a service)
-let botState = {
-    isRunning: false,
-    isPaused: false,
-    startTime: null,
-    activeSessionId: null,
-    tickConnections: new Map(),
-    accountConnections: new Map(),
-    lastSignal: null,
-    tradesExecuted: 0,
-    errors: []
-};
+/**
+ * GET /admin/bot/status
+ * Get current bot status
+ */
+router.get('/status', async (req, res) => {
+    try {
+        res.json(botManager.getState());
+    } catch (error) {
+        console.error('Get bot status error:', error);
+        res.status(500).json({ error: 'Failed to get bot status' });
+    }
+});
+
+/**
+ * POST /admin/bot/start
+ * Start the trading bot
+ */
+router.post('/start', async (req, res) => {
+    try {
+        const { sessionId } = req.body;
+        if (!sessionId) {
+            return res.status(400).json({ error: 'Session ID is required' });
+        }
+        const state = await botManager.startBot(sessionId);
+        res.json({ success: true, message: 'Bot started', state });
+    } catch (error) {
+        console.error('Start bot error:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /admin/bot/stop
+ * Stop the trading bot
+ */
+router.post('/stop', async (req, res) => {
+    try {
+        const state = await botManager.stopBot();
+        res.json({ success: true, message: 'Bot stopped', state });
+    } catch (error) {
+        console.error('Stop bot error:', error);
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /admin/bot/pause
+ * Pause trading
+ */
+router.post('/pause', async (req, res) => {
+    try {
+        const state = await botManager.pauseBot();
+        res.json({ success: true, message: 'Bot paused', state });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /admin/bot/resume
+ * Resume trading
+ */
+router.post('/resume', async (req, res) => {
+    try {
+        const state = await botManager.resumeBot();
+        res.json({ success: true, message: 'Bot resumed', state });
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+module.exports = router;
 
 /**
  * GET /admin/bot/status
@@ -93,6 +147,12 @@ router.post('/start', async (req, res) => {
         botState.tradesExecuted = 0;
         botState.errors = [];
 
+        // Reset executor guards and start signal worker
+        tradeExecutor.paused = false;
+        tradeExecutor.consecutiveLosses = 0;
+        tradeExecutor.apiErrorCount = 0;
+        await signalWorker.start(sessionId);
+
         // Log activity
         await supabase
             .from('activity_logs_v2')
@@ -144,6 +204,10 @@ router.post('/stop', async (req, res) => {
                 })
                 .eq('id', sessionId);
         }
+
+        // Stop signal worker
+        signalWorker.stop();
+        tradeExecutor.paused = true;
 
         // Close all connections
         for (const ws of botState.tickConnections.values()) {
@@ -206,6 +270,7 @@ router.post('/pause', async (req, res) => {
         }
 
         botState.isPaused = true;
+        tradeExecutor.paused = true;
 
         res.json({
             success: true,
@@ -232,6 +297,7 @@ router.post('/resume', async (req, res) => {
         }
 
         botState.isPaused = false;
+        tradeExecutor.paused = false;
 
         res.json({
             success: true,
@@ -258,6 +324,10 @@ router.post('/override', async (req, res) => {
         for (const ws of botState.accountConnections.values()) {
             try { ws.close(); } catch (e) { }
         }
+
+        // Stop signal worker and pause executor
+        signalWorker.stop();
+        tradeExecutor.paused = true;
 
         // Update session status
         if (sessionId) {

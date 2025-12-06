@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const crypto = require('crypto');
+const strategyConfig = require('../config/strategyConfig');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -18,6 +19,9 @@ class TradeExecutor {
     this.activeConnections = new Map(); // derivAccountId -> WebSocket
     this.activeMonitors = new Map(); // tradeId -> monitor interval
     this.rateLimitDelay = 500; // 500ms between trades
+    this.consecutiveLosses = 0;
+    this.apiErrorCount = 0;
+    this.paused = false;
   }
 
   /**
@@ -25,15 +29,20 @@ class TradeExecutor {
    */
   async executeMultiAccountTrade(signal, sessionId) {
     try {
+      if (this.paused) {
+        console.warn('[TradeExecutor] Guardrail active: paused. Skipping execution.');
+        return { success: false, message: 'Bot paused by safety guard' };
+      }
+
       console.log(`[TradeExecutor] 🚀 Executing multi-account trade for session ${sessionId}`);
       console.log(`[TradeExecutor] Signal: ${signal.side} ${signal.digit} (${(signal.confidence * 100).toFixed(1)}%)`);
 
       // Get session details
       const { data: session, error: sessionError } = await supabase
-        .from('trading_sessions')
+        .from('trading_sessions_v2')
         .select('*')
         .eq('id', sessionId)
-        .eq('status', 'active')
+        .eq('status', 'running')
         .single();
 
       if (sessionError || !session) {
@@ -42,14 +51,10 @@ class TradeExecutor {
 
       // Get accepted accounts
       const { data: invitations, error: invError } = await supabase
-        .from('session_invitations')
-        .select(`
-          *,
-          trading_accounts (*)
-        `)
+        .from('session_participants')
+        .select('*')
         .eq('session_id', sessionId)
-        .eq('status', 'accepted')
-        .eq('is_removed', false);
+        .eq('status', 'active');
 
       if (invError) {
         throw new Error(`Failed to fetch invitations: ${invError.message}`);
@@ -70,21 +75,39 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const invitation of invitations) {
-        const account = invitation.trading_accounts;
+        // For now assume a single trading account per user (latest active)
+        const { data: account, error: acctErr } = await supabase
+          .from('trading_accounts')
+          .select('*')
+          .eq('user_id', invitation.user_id)
+          .eq('is_active', true)
+          .order('updated_at', { ascending: false })
+          .maybeSingle();
+
+        if (acctErr || !account) {
+          invalidAccounts.push({
+            accountId: null,
+            userId: invitation.user_id,
+            reason: 'No active trading account',
+            derivAccountId: null
+          });
+          continue;
+        }
         
         // Check balance
-        if (account.balance < session.minimum_balance) {
+        const minBalance = session.min_balance || strategyConfig.minBalance;
+        if (account.balance < minBalance) {
           invalidAccounts.push({
             accountId: account.id,
             userId: account.user_id,
-            reason: `Balance too low: $${account.balance} < $${session.minimum_balance}`,
+            reason: `Balance too low: $${account.balance} < $${minBalance}`,
             derivAccountId: account.deriv_account_id
           });
           
           // Send notification
           await this.sendNotification(account.user_id, {
             type: 'low_balance',
-            message: `Your balance ($${account.balance}) is below the minimum required ($${session.minimum_balance})`,
+            message: `Your balance ($${account.balance}) is below the minimum required ($${minBalance})`,
             sessionId
           });
           
@@ -92,12 +115,29 @@ class TradeExecutor {
         }
 
         // Check TP/SL
+        const minTp = session.default_tp || strategyConfig.minTp;
+        const minSl = session.default_sl || strategyConfig.minSl;
         if (!invitation.take_profit || !invitation.stop_loss) {
           invalidAccounts.push({
             accountId: account.id,
             userId: account.user_id,
             reason: 'TP/SL not set',
             derivAccountId: account.deriv_account_id
+          });
+          continue;
+        }
+
+        if (invitation.take_profit < minTp || Math.abs(invitation.stop_loss) < minSl) {
+          invalidAccounts.push({
+            accountId: account.id,
+            userId: account.user_id,
+            reason: `TP/SL below admin minimums (tp>=${minTp}, sl>=${minSl})`,
+            derivAccountId: account.deriv_account_id
+          });
+
+          await this.sendNotification(account.user_id, {
+            type: 'invalid_tpsl',
+            message: `Your TP/SL is below admin minimums (TP >= ${minTp}, SL >= ${minSl}). Update settings to trade.`
           });
           continue;
         }
@@ -175,6 +215,11 @@ class TradeExecutor {
 
     } catch (error) {
       console.error('[TradeExecutor] Multi-account trade error:', error);
+      this.apiErrorCount += 1;
+      if (this.apiErrorCount >= strategyConfig.apiErrorThreshold) {
+        this.paused = true;
+        console.error('[TradeExecutor] Pausing bot due to API error threshold');
+      }
       throw error;
     }
   }
@@ -191,7 +236,7 @@ class TradeExecutor {
       const ws = await this.getConnection(account.deriv_account_id, apiToken);
 
       // Calculate stake
-      const stake = this.calculateStake(account.balance, session);
+      const stake = await this.calculateStake(account.balance, session, account.user_id);
 
       // Prepare contract parameters
       const contractParams = {
@@ -199,7 +244,7 @@ class TradeExecutor {
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: session.market || 'R_100',
+          symbol: (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
           basis: 'stake',
@@ -362,13 +407,18 @@ class TradeExecutor {
         })
         .eq('contract_id', tradeResult.contractId);
 
+      // Handle Recovery Session Logic
+      if (session.session_type === 'recovery') {
+        await this.handleRecoveryOutcome(session, finalPL);
+      }
+
       // Remove account from session
       await supabase
-        .from('session_invitations')
+        .from('session_participants')
         .update({
-          is_removed: true,
-          removed_reason: reason,
-          removed_at: new Date().toISOString()
+          status: reason === 'tp_hit' ? 'removed_tp' : reason === 'sl_hit' ? 'removed_sl' : 'removed',
+          removed_at: new Date().toISOString(),
+          removal_reason: reason
         })
         .eq('id', invitation.id);
 
@@ -399,10 +449,102 @@ class TradeExecutor {
         profitLoss: finalPL
       });
 
+      // Safety: track loss streaks
+      if (reason === 'sl_hit' || finalPL < 0) {
+        this.consecutiveLosses += 1;
+        if (this.consecutiveLosses >= strategyConfig.maxLossStreak) {
+          this.paused = true;
+          console.error('[TradeExecutor] Pausing bot due to consecutive loss guard');
+          await this.sendNotification(tradeResult.userId, {
+            type: 'guard_pause',
+            message: 'Bot paused due to consecutive losses'
+          });
+        }
+      } else {
+        this.consecutiveLosses = 0;
+      }
+
       console.log(`[TradeExecutor] ✅ Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
 
     } catch (error) {
       console.error('[TradeExecutor] Close trade error:', error);
+    }
+  }
+
+  /**
+   * Handle outcome for recovery sessions
+   */
+  async handleRecoveryOutcome(session, profitLoss) {
+    try {
+      const { data: recoveryState, error } = await supabase
+        .from('recovery_states')
+        .select('*')
+        .eq('session_id', session.id)
+        .single();
+
+      if (error || !recoveryState) return;
+
+      const updates = {
+        updated_at: new Date().toISOString()
+      };
+
+      if (profitLoss > 0) {
+        // WIN: Add to recovered amount, reset multiplier
+        const newRecovered = (parseFloat(recoveryState.recovered_amount) || 0) + parseFloat(profitLoss);
+        updates.recovered_amount = newRecovered;
+        updates.consecutive_losses = 0;
+        updates.current_multiplier = 1.0; // Reset on win
+
+        // Check if recovery target reached
+        if (newRecovered >= parseFloat(recoveryState.recovery_target)) {
+          updates.is_active = false;
+          updates.completed_at = new Date().toISOString();
+          updates.recovery_progress = 100;
+          
+          console.log(`[TradeExecutor] 🏁 Recovery session ${session.id} COMPLETED! Target reached.`);
+          
+          // Also mark session as completed
+          await supabase
+            .from('trading_sessions_v2')
+            .update({ status: 'completed', ended_at: new Date().toISOString() })
+            .eq('id', session.id);
+            
+          // Notify admin
+          await this.sendNotification(session.admin_id, {
+            type: 'recovery_completed',
+            message: `Recovery session completed! Recovered: $${newRecovered.toFixed(2)}`,
+            sessionId: session.id
+          });
+        } else {
+          // Update progress percentage
+          const progress = (newRecovered / parseFloat(recoveryState.recovery_target)) * 100;
+          updates.recovery_progress = Math.min(100, parseFloat(progress.toFixed(2)));
+        }
+
+      } else {
+        // LOSS: Increase multiplier (Martingale)
+        updates.consecutive_losses = (recoveryState.consecutive_losses || 0) + 1;
+        
+        // Update max consecutive losses if needed
+        if (updates.consecutive_losses > (recoveryState.max_consecutive_losses || 0)) {
+          updates.max_consecutive_losses = updates.consecutive_losses;
+        }
+
+        // Apply Martingale multiplier
+        const martingaleMult = parseFloat(session.martingale_multiplier) || 2.0;
+        updates.current_multiplier = (parseFloat(recoveryState.current_multiplier) || 1.0) * martingaleMult;
+        
+        console.log(`[TradeExecutor] 📉 Recovery loss. New multiplier: ${updates.current_multiplier}x`);
+      }
+
+      // Save updates
+      await supabase
+        .from('recovery_states')
+        .update(updates)
+        .eq('id', recoveryState.id);
+
+    } catch (error) {
+      console.error('[TradeExecutor] Handle recovery outcome error:', error);
     }
   }
 
@@ -475,12 +617,38 @@ class TradeExecutor {
   }
 
   /**
-   * Calculate stake based on account balance
+   * Calculate stake based on account balance and session type
    */
-  calculateStake(balance, session) {
-    // Use 2% of balance as default stake
-    const percentage = session.stake_percentage || 0.02;
-    return Math.max(0.35, balance * percentage); // Minimum stake $0.35
+  async calculateStake(balance, session, userId) {
+    try {
+      // Recovery Mode Logic
+      if (session.session_type === 'recovery') {
+        const { data: recoveryState } = await supabase
+          .from('recovery_states')
+          .select('*')
+          .eq('session_id', session.id)
+          .single();
+
+        if (recoveryState) {
+          const stake = session.initial_stake * (recoveryState.current_multiplier || 1.0);
+          return Math.max(0.35, parseFloat(stake.toFixed(2)));
+        }
+      }
+
+      // Fixed Staking
+      if (session.staking_mode === 'fixed') {
+        return Math.max(0.35, parseFloat(session.initial_stake));
+      }
+
+      // Percentage Staking (Default)
+      const percentage = session.stake_percentage || 0.02;
+      const stake = balance * percentage;
+      return Math.max(0.35, parseFloat(stake.toFixed(2))); // Minimum stake $0.35
+
+    } catch (error) {
+      console.error('[TradeExecutor] Calculate stake error:', error);
+      return 0.35; // Fallback to minimum
+    }
   }
 
   /**
@@ -546,6 +714,7 @@ class TradeExecutor {
           payout: tradeResult.payout,
           stake: tradeResult.stake,
           signal: tradeResult.signal,
+          confidence: tradeResult.signal?.confidence,
           status: 'open',
           created_at: tradeResult.timestamp.toISOString()
         });

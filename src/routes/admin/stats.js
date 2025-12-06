@@ -6,6 +6,24 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../../db/supabase');
+const signalWorker = require('../../services/signalWorker');
+
+/**
+ * GET /admin/stats/live
+ * Get live market analysis from SignalWorker
+ */
+router.get('/live', (req, res) => {
+    try {
+        const stats = signalWorker.getLatestStats();
+        res.json({
+            success: true,
+            data: stats
+        });
+    } catch (error) {
+        console.error('Live stats error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 /**
  * GET /admin/stats

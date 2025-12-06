@@ -1,5 +1,3 @@
-
-
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -27,6 +25,8 @@ const tradingRoutes = require('./routes/trading');
 // Role-protected routes
 const adminRoutes = require('./routes/admin');
 const userTradingRoutes = require('./routes/user');
+const adminRecoveryRoutes = require('./routes/admin/recovery');
+const userRecoveryRoutes = require('./routes/user/recovery');
 
 // Middleware
 const { authMiddleware } = require('./middleware/auth');
@@ -37,6 +37,7 @@ const { setupSocketHandlers } = require('./socket');
 
 const { initializeDefaultChatrooms } = require('./services/assignment');
 const { startCronJobs } = require('./cron');
+const schedulerService = require('./services/schedulerService');
 
 const app = express();
 const server = http.createServer(app);
@@ -102,7 +103,9 @@ app.use('/api/trading', tradingRoutes);
 
 // Role-protected routes (with auth + role middleware)
 app.use('/api/admin', authMiddleware, isAdmin, adminRoutes);
+app.use('/api/admin/recovery', authMiddleware, isAdmin, adminRecoveryRoutes);
 app.use('/api/user', authMiddleware, isUser, userTradingRoutes);
+app.use('/api/user/recovery', authMiddleware, isUser, userRecoveryRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -189,6 +192,7 @@ async function startServer() {
 
 
     startCronJobs();
+    schedulerService.start();
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
