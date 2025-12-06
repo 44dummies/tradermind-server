@@ -1,5 +1,4 @@
 
-
 const express = require('express');
 const multer = require('multer');
 const {
@@ -12,7 +11,9 @@ const {
   addComment,
   deleteComment,
   getOnlineUsers,
-  uploadPostImage
+  uploadPostImage,
+  uploadPostFile,
+  getSharedMedia
 } = require('../services/communityV2');
 const { authMiddleware } = require('../middleware/auth');
 
@@ -23,6 +24,7 @@ router.setIo = (socketIo) => {
   io = socketIo;
 };
 
+// Image upload (2MB max)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 }, 
@@ -31,6 +33,39 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only JPG, PNG, and WebP images allowed'));
+    }
+  }
+});
+
+// File upload (10MB max) - for documents, videos, etc
+const fileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+  fileFilter: (req, file, cb) => {
+    // Allow common document and media types
+    const allowedMimes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain',
+      'text/csv',
+      'application/zip',
+      'application/x-rar-compressed',
+      'video/mp4',
+      'video/quicktime',
+      'audio/mpeg',
+      'audio/wav',
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif'
+    ];
+    if (allowedMimes.includes(file.mimetype) || file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/') || file.mimetype.startsWith('audio/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not allowed'));
     }
   }
 });
@@ -59,7 +94,6 @@ router.post('/posts', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    
     if (io) {
       io.emit('community:post:new', result.post);
     }
@@ -91,7 +125,6 @@ router.delete('/posts/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    
     if (io) {
       io.emit('community:post:delete', { postId: req.params.id });
     }
@@ -112,7 +145,6 @@ router.post('/posts/:id/like', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    
     if (io) {
       io.emit('community:post:like', {
         postId: req.params.id,
@@ -152,7 +184,6 @@ router.post('/posts/:id/comments', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: result.error });
     }
 
-    
     if (io) {
       io.emit('community:post:comment', {
         postId: req.params.id,
@@ -192,6 +223,7 @@ router.get('/online-users', authMiddleware, async (req, res) => {
   }
 });
 
+// Upload image (2MB max, images only)
 router.post('/upload-image', authMiddleware, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -207,6 +239,49 @@ router.post('/upload-image', authMiddleware, upload.single('image'), async (req,
   } catch (error) {
     console.error('Upload image error:', error);
     res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// Upload file (10MB max, documents/media)
+router.post('/upload-file', authMiddleware, fileUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file provided' });
+    }
+
+    const result = await uploadPostFile(req.userId, req.file);
+    
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ 
+      url: result.url,
+      fileName: result.fileName,
+      fileType: result.fileType,
+      fileSize: result.fileSize
+    });
+  } catch (error) {
+    console.error('Upload file error:', error);
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+// Get all shared media (images and files) in community - accessible by all members
+router.get('/media', authMiddleware, async (req, res) => {
+  try {
+    const { page, limit, type } = req.query;
+    
+    const result = await getSharedMedia({
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+      type: type || 'all'
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Get shared media error:', error);
+    res.status(500).json({ error: 'Failed to get shared media' });
   }
 });
 

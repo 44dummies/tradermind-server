@@ -113,3 +113,4 @@ Uses Supabase PostgreSQL with the following main tables:
 - member:joined - New member joined
 - member:left - Member left
 - typing - Typing indicator update
+# Trading system deployed Sat Dec  6 12:37:48 AM EAT 2025

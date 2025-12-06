@@ -95,6 +95,10 @@ async function transformPost(post, currentUserId = null) {
     content: post.content || post.title,
     postType: post.post_type || post.category || 'general',
     imageUrl: post.image_url,
+    fileUrl: post.file_url,
+    fileName: post.file_name,
+    fileType: post.file_type,
+    fileSize: post.file_size,
     likeCount,
     commentCount,
     viewCount: post.view_count || 0,
@@ -142,6 +146,10 @@ async function createPost(userId, data) {
   const content = sanitizeText(data.content);
   const postType = data.post_type || data.postType || 'general';
   const imageUrl = data.image_url || data.imageUrl;
+  const fileUrl = data.file_url || data.fileUrl;
+  const fileName = data.file_name || data.fileName;
+  const fileType = data.file_type || data.fileType;
+  const fileSize = data.file_size || data.fileSize;
 
   if (!content || content.length < 1) {
     return { success: false, error: 'Post content is required' };
@@ -165,7 +173,12 @@ async function createPost(userId, data) {
     .insert({
       user_id: userId,
       content,
-      category: postType,  
+      category: postType,
+      image_url: imageUrl,
+      file_url: fileUrl,
+      file_name: fileName,
+      file_type: fileType,
+      file_size: fileSize,
       upvotes: 0,
       downvotes: 0
     })
@@ -556,3 +569,151 @@ module.exports = {
   transformPost,
   transformComment
 };
+
+// Upload any file (documents, etc) to community
+async function uploadPostFile(userId, file) {
+  const maxSize = 10 * 1024 * 1024; // 10MB for files
+
+  if (file.size > maxSize) {
+    return { success: false, error: 'File too large. Maximum 10MB allowed.' };
+  }
+
+  const ext = file.originalname.split('.').pop();
+  const fileName = `${userId}/${Date.now()}_${file.originalname}`;
+
+  const { data, error } = await supabase.storage
+    .from('community-files')
+    .upload(fileName, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    console.error('[Community] Upload file error:', error);
+    return { success: false, error: 'Failed to upload file' };
+  }
+
+  const { data: urlData } = supabase.storage
+    .from('community-files')
+    .getPublicUrl(data.path);
+
+  return { 
+    success: true, 
+    url: urlData.publicUrl,
+    fileName: file.originalname,
+    fileType: file.mimetype,
+    fileSize: file.size
+  };
+}
+
+// Get all media (images and files) shared in community
+async function getSharedMedia(options = {}) {
+  const { page = 1, limit = 50, type = 'all' } = options;
+  
+  try {
+    // Get posts with images
+    let imageQuery = supabase
+      .from('community_posts')
+      .select('id, user_id, image_url, file_url, file_name, file_type, file_size, created_at')
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false });
+
+    if (type === 'image') {
+      imageQuery = imageQuery.not('image_url', 'is', null);
+    } else if (type === 'file') {
+      imageQuery = imageQuery.not('file_url', 'is', null);
+    } else {
+      // Get both - posts that have either image_url or file_url
+      imageQuery = imageQuery.or('image_url.neq.null,file_url.neq.null');
+    }
+
+    const offset = (page - 1) * limit;
+    imageQuery = imageQuery.range(offset, offset + limit - 1);
+
+    const { data: posts, error, count } = await imageQuery;
+
+    if (error) {
+      console.error('[Community] Get shared media error:', error);
+      return { media: [], pagination: { page, limit, total: 0, hasMore: false } };
+    }
+
+    // Transform to media items
+    const mediaItems = await Promise.all((posts || []).map(async (post) => {
+      const author = await getUserProfile(post.user_id);
+      
+      if (post.image_url) {
+        return {
+          id: `img_${post.id}`,
+          postId: post.id,
+          url: post.image_url,
+          type: 'image',
+          fileName: null,
+          fileSize: null,
+          createdAt: post.created_at,
+          author: {
+            id: author.id,
+            username: author.username,
+            avatarUrl: author.avatarUrl
+          }
+        };
+      } else if (post.file_url) {
+        return {
+          id: `file_${post.id}`,
+          postId: post.id,
+          url: post.file_url,
+          type: 'file',
+          fileName: post.file_name,
+          fileType: post.file_type,
+          fileSize: post.file_size,
+          createdAt: post.created_at,
+          author: {
+            id: author.id,
+            username: author.username,
+            avatarUrl: author.avatarUrl
+          }
+        };
+      }
+      return null;
+    }));
+
+    const filteredMedia = mediaItems.filter(m => m !== null);
+    const total = count || filteredMedia.length;
+
+    return {
+      media: filteredMedia,
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: page * limit < total
+      }
+    };
+  } catch (error) {
+    console.error('[Community] getSharedMedia error:', error);
+    return { media: [], pagination: { page: 1, limit: 50, total: 0, hasMore: false } };
+  }
+}
+
+// Initialize the community-files storage bucket
+async function initializeCommunityStorage() {
+  try {
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === 'community-files');
+    
+    if (!bucketExists) {
+      await supabase.storage.createBucket('community-files', {
+        public: true,
+        fileSizeLimit: 10 * 1024 * 1024 // 10MB
+      });
+      console.log('[Community] Created community-files bucket');
+    }
+  } catch (error) {
+    console.error('[Community] Failed to initialize storage:', error);
+  }
+}
+
+// Initialize storage on module load
+initializeCommunityStorage();
+
+module.exports.uploadPostFile = uploadPostFile;
+module.exports.getSharedMedia = getSharedMedia;
