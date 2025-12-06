@@ -30,8 +30,8 @@ const userTradingRoutes = require('./routes/user');
 
 // Middleware
 const { authMiddleware } = require('./middleware/auth');
-const { isAdmin } = require('./middleware/isAdmin');
-const { isUser } = require('./middleware/isUser');
+const isAdmin = require('./middleware/isAdmin');
+const isUser = require('./middleware/isUser');
 
 const { setupSocketHandlers } = require('./socket');
 
@@ -99,10 +99,8 @@ app.use('/api/achievements', achievementsRoutes);
 
 app.use('/api/files', filesRoutes);
 app.use('/api/trading', tradingRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/user', userTradingRoutes);
 
-// Role-protected routes
+// Role-protected routes (with auth + role middleware)
 app.use('/api/admin', authMiddleware, isAdmin, adminRoutes);
 app.use('/api/user', authMiddleware, isUser, userTradingRoutes);
 
