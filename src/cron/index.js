@@ -45,7 +45,7 @@ const scheduler = new CronScheduler();
 
 async function cleanupExpiredMessages() {
   const { error, count } = await supabase
-    .from('friend_messages')
+    .from('friend_chats')
     .delete()
     .lt('expires_at', new Date().toISOString())
     .not('expires_at', 'is', null);
