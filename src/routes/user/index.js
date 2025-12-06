@@ -7,7 +7,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
 );
 
 // ==================== USER DASHBOARD ====================
@@ -304,7 +304,7 @@ router.get('/stats', isUser, async (req, res) => {
     const losses = trades?.filter(t => (t.profit_loss || 0) < 0).length || 0;
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
     const totalPL = trades?.reduce((sum, t) => sum + (t.profit_loss || 0), 0) || 0;
-    const avgProfit = wins > 0 
+    const avgProfit = wins > 0
       ? trades.filter(t => (t.profit_loss || 0) > 0).reduce((sum, t) => sum + t.profit_loss, 0) / wins
       : 0;
     const avgLoss = losses > 0

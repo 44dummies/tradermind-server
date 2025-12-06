@@ -5,7 +5,7 @@ const strategyConfig = require('../config/strategyConfig');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
 );
 
 /**
@@ -93,7 +93,7 @@ class TradeExecutor {
           });
           continue;
         }
-        
+
         // Check balance
         const minBalance = session.min_balance || strategyConfig.minBalance;
         if (account.balance < minBalance) {
@@ -103,14 +103,14 @@ class TradeExecutor {
             reason: `Balance too low: $${account.balance} < $${minBalance}`,
             derivAccountId: account.deriv_account_id
           });
-          
+
           // Send notification
           await this.sendNotification(account.user_id, {
             type: 'low_balance',
             message: `Your balance ($${account.balance}) is below the minimum required ($${minBalance})`,
             sessionId
           });
-          
+
           continue;
         }
 
@@ -185,7 +185,7 @@ class TradeExecutor {
 
         } catch (error) {
           console.error(`[TradeExecutor] Trade failed for account ${account.deriv_account_id}:`, error);
-          
+
           tradeResults.push({
             success: false,
             accountId: account.id,
@@ -318,7 +318,7 @@ class TradeExecutor {
   async checkTPSL(tradeResult, invitation, session) {
     try {
       const ws = this.activeConnections.get(tradeResult.derivAccountId);
-      
+
       if (!ws) {
         console.error(`[TradeExecutor] No connection for ${tradeResult.derivAccountId}`);
         return;
@@ -359,10 +359,10 @@ class TradeExecutor {
       } else {
         // Contract already closed
         console.log(`[TradeExecutor] Contract ${tradeResult.contractId} already closed`);
-        
+
         const finalPL = contract.profit || 0;
         const status = finalPL > 0 ? 'win' : 'loss';
-        
+
         await this.closeTrade(tradeResult, status, finalPL, invitation, session);
       }
 
@@ -436,11 +436,11 @@ class TradeExecutor {
       }
 
       // Send notification
-      const message = reason === 'tp_hit' 
+      const message = reason === 'tp_hit'
         ? `✅ Take Profit hit! Profit: $${finalPL.toFixed(2)}`
         : reason === 'sl_hit'
-        ? `❌ Stop Loss hit! Loss: $${finalPL.toFixed(2)}`
-        : `Trade closed. P&L: $${finalPL.toFixed(2)}`;
+          ? `❌ Stop Loss hit! Loss: $${finalPL.toFixed(2)}`
+          : `Trade closed. P&L: $${finalPL.toFixed(2)}`;
 
       await this.sendNotification(tradeResult.userId, {
         type: reason,
@@ -500,15 +500,15 @@ class TradeExecutor {
           updates.is_active = false;
           updates.completed_at = new Date().toISOString();
           updates.recovery_progress = 100;
-          
+
           console.log(`[TradeExecutor] 🏁 Recovery session ${session.id} COMPLETED! Target reached.`);
-          
+
           // Also mark session as completed
           await supabase
             .from('trading_sessions_v2')
             .update({ status: 'completed', ended_at: new Date().toISOString() })
             .eq('id', session.id);
-            
+
           // Notify admin
           await this.sendNotification(session.admin_id, {
             type: 'recovery_completed',
@@ -524,7 +524,7 @@ class TradeExecutor {
       } else {
         // LOSS: Increase multiplier (Martingale)
         updates.consecutive_losses = (recoveryState.consecutive_losses || 0) + 1;
-        
+
         // Update max consecutive losses if needed
         if (updates.consecutive_losses > (recoveryState.max_consecutive_losses || 0)) {
           updates.max_consecutive_losses = updates.consecutive_losses;
@@ -533,7 +533,7 @@ class TradeExecutor {
         // Apply Martingale multiplier
         const martingaleMult = parseFloat(session.martingale_multiplier) || 2.0;
         updates.current_multiplier = (parseFloat(recoveryState.current_multiplier) || 1.0) * martingaleMult;
-        
+
         console.log(`[TradeExecutor] 📉 Recovery loss. New multiplier: ${updates.current_multiplier}x`);
       }
 
@@ -658,7 +658,7 @@ class TradeExecutor {
     try {
       const algorithm = 'aes-256-gcm';
       const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
-      
+
       const parts = encryptedToken.split(':');
       const iv = Buffer.from(parts[0], 'hex');
       const authTag = Buffer.from(parts[1], 'hex');
