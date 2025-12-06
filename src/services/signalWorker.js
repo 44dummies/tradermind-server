@@ -103,7 +103,8 @@ class SignalWorker {
         digit: signal.digit
       };
 
-      if (!signal.shouldTrade) {
+      if (!signal.shouldTrade) continue;
+
       if (!best || signal.confidence > best.confidence) {
         best = signal;
       }
