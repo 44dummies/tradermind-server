@@ -3,7 +3,7 @@
 const { supabase } = require('../db/supabase');
 
 const db = {
-  
+
   user: {
     async findUnique({ where, include }) {
       let query = supabase.from('user_profiles').select('*');
@@ -12,7 +12,7 @@ const db = {
       if (where.email) query = query.eq('email', where.email);
       const { data, error } = await query.single();
       if (error) return null;
-      
+
       if (data) {
         data.derivId = data.deriv_id;
         data.isOnline = data.is_online;
@@ -22,6 +22,8 @@ const db = {
         data.traderLevel = data.performance_tier;
         data.fullName = data.fullname;
         data.avatarUrl = data.profile_photo;
+        data.isAdmin = data.is_admin || false;
+        data.role = data.is_admin ? 'admin' : (data.role || 'user');
       }
       return data;
     },
@@ -31,15 +33,15 @@ const db = {
       if (where.traderLevel) query = query.eq('performance_tier', where.traderLevel);
       if (orderBy) {
         const key = Object.keys(orderBy)[0];
-        const dbKey = key === 'isOnline' ? 'is_online' : 
-                      key === 'lastSeen' ? 'last_seen' :
-                      key === 'createdAt' ? 'created_at' : key;
+        const dbKey = key === 'isOnline' ? 'is_online' :
+          key === 'lastSeen' ? 'last_seen' :
+            key === 'createdAt' ? 'created_at' : key;
         query = query.order(dbKey, { ascending: orderBy[key] === 'asc' });
       }
       if (take) query = query.limit(take);
       if (skip) query = query.range(skip, skip + (take || 10) - 1);
       const { data, error } = await query;
-      
+
       return (data || []).map(item => ({
         ...item,
         derivId: item.deriv_id,
@@ -53,7 +55,7 @@ const db = {
       }));
     },
     async create({ data }) {
-      
+
       const dbData = {
         id: data.id,
         deriv_id: data.derivId,
@@ -68,7 +70,7 @@ const db = {
       };
       const { data: result, error } = await supabase.from('user_profiles').insert(dbData).select().single();
       if (error) throw error;
-      
+
       if (result) {
         result.derivId = result.deriv_id;
         result.isOnline = result.is_online;
@@ -82,7 +84,7 @@ const db = {
       return result;
     },
     async update({ where, data }) {
-      
+
       const dbData = {};
       if (data.isOnline !== undefined) dbData.is_online = data.isOnline;
       if (data.lastSeen) dbData.last_seen = data.lastSeen;
@@ -91,13 +93,13 @@ const db = {
       if (data.email) dbData.email = data.email;
       if (data.avatarUrl) dbData.profile_photo = data.avatarUrl;
       if (data.traderLevel) dbData.performance_tier = data.traderLevel;
-      
+
       let query = supabase.from('user_profiles').update(dbData);
       if (where.id) query = query.eq('id', where.id);
       if (where.derivId) query = query.eq('deriv_id', where.derivId);
       const { data: result, error } = await query.select().single();
       if (error) throw error;
-      
+
       if (result) {
         result.derivId = result.deriv_id;
         result.isOnline = result.is_online;
@@ -125,7 +127,7 @@ const db = {
     }
   },
 
-  
+
   chatroom: {
     async findUnique({ where }) {
       const { data } = await supabase.from('Chatroom').select('*').eq('id', where.id).single();
@@ -151,7 +153,7 @@ const db = {
     async upsert({ where, create, update }) {
       const existing = await this.findUnique({ where });
       if (existing) {
-        
+
         const { data: result, error } = await supabase
           .from('Chatroom')
           .update(update)
@@ -161,7 +163,7 @@ const db = {
         if (error) throw error;
         return result;
       }
-      
+
       return this.create({ data: create });
     },
     async count({ where = {} } = {}) {
@@ -172,7 +174,7 @@ const db = {
     }
   },
 
-  
+
   message: {
     async findMany({ where = {}, orderBy, take, include } = {}) {
       let query = supabase.from('Message').select('*');
@@ -202,7 +204,7 @@ const db = {
     }
   },
 
-  
+
   userChatroom: {
     async findUnique({ where }) {
       if (where.userId_chatroomId) {
@@ -248,7 +250,7 @@ const db = {
     }
   },
 
-  
+
   friend: {
     async findFirst({ where }) {
       let query = supabase.from('Friend').select('*');
@@ -289,7 +291,7 @@ const db = {
     }
   },
 
-  
+
   communityPost: {
     async findUnique({ where }) {
       const { data } = await supabase.from('CommunityPost').select('*').eq('id', where.id).single();
@@ -330,7 +332,7 @@ const db = {
     }
   },
 
-  
+
   postComment: {
     async findMany({ where = {}, orderBy } = {}) {
       let query = supabase.from('PostComment').select('*');
@@ -350,7 +352,7 @@ const db = {
     }
   },
 
-  
+
   postLike: {
     async findUnique({ where }) {
       if (where.postId_userId) {
@@ -380,7 +382,7 @@ const db = {
     }
   },
 
-  
+
   refreshToken: {
     async findUnique({ where }) {
       const { data } = await supabase.from('RefreshToken').select('*').eq('token', where.token).single();
@@ -403,7 +405,7 @@ const db = {
     }
   },
 
-  
+
   moderationLog: {
     async create({ data }) {
       const { data: result, error } = await supabase.from('ModerationLog').insert(data).select().single();
@@ -423,7 +425,7 @@ const db = {
     }
   },
 
-  
+
   notification: {
     async create({ data }) {
       console.log('Notification:', data);

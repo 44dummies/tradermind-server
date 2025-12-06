@@ -11,19 +11,19 @@ function generateToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-function generateTokens(userId, username) {
+function generateTokens(userId, username, role = 'user', isAdmin = false) {
   const accessToken = jwt.sign(
-    { userId, username },
+    { userId, username, role, is_admin: isAdmin },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
-  
+
   const refreshToken = jwt.sign(
-    { userId, username, type: 'refresh' },
+    { userId, username, role, is_admin: isAdmin, type: 'refresh' },
     JWT_REFRESH_SECRET,
     { expiresIn: JWT_REFRESH_EXPIRES_IN }
   );
-  
+
   return { accessToken, refreshToken };
 }
 
@@ -45,35 +45,35 @@ function verifyRefreshToken(token) {
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: { message: 'No token provided', code: 'NO_TOKEN' } });
   }
-  
+
   const token = authHeader.split(' ')[1];
   const decoded = verifyToken(token);
-  
+
   if (!decoded) {
     return res.status(401).json({ error: { message: 'Invalid token', code: 'INVALID_TOKEN' } });
   }
-  
+
   req.user = decoded;
   next();
 }
 
 function socketAuthMiddleware(socket, next) {
   const token = socket.handshake.auth.token || socket.handshake.query.token;
-  
+
   if (!token) {
     return next(new Error('Authentication required'));
   }
-  
+
   const decoded = verifyToken(token);
-  
+
   if (!decoded) {
     return next(new Error('Invalid token'));
   }
-  
+
   socket.user = decoded;
   next();
 }

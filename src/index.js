@@ -26,6 +26,15 @@ const tradingRoutes = require('./routes/trading');
 const adminRoutes = require('./routes/admin');
 const userTradingRoutes = require('./routes/user');
 
+// Role-protected routes
+const adminRoutes = require('./routes/admin');
+const userTradingRoutes = require('./routes/user');
+
+// Middleware
+const { authMiddleware } = require('./middleware/auth');
+const { isAdmin } = require('./middleware/isAdmin');
+const { isUser } = require('./middleware/isUser');
+
 const { setupSocketHandlers } = require('./socket');
 
 const { initializeDefaultChatrooms } = require('./services/assignment');
@@ -42,7 +51,7 @@ const defaultOrigins = [
   'https://deriv-ws.vercel.app'
 ];
 
-const corsOrigins = process.env.CORS_ORIGIN 
+const corsOrigins = process.env.CORS_ORIGIN
   ? [...new Set([...process.env.CORS_ORIGIN.split(',').map(o => o.trim()), ...defaultOrigins])]
   : defaultOrigins;
 
@@ -55,9 +64,9 @@ const io = new Server(server, {
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization']
   },
-  pingTimeout: 300000,     
-  pingInterval: 25000,     
-  connectTimeout: 60000,   
+  pingTimeout: 300000,
+  pingInterval: 25000,
+  connectTimeout: 60000,
   transports: ['websocket', 'polling'],
   allowUpgrades: true
 });
@@ -80,7 +89,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/chatrooms', chatroomRoutes);
 app.use('/api/community', communityRoutes);
-app.use('/api/community', tierChatroomRoutes); 
+app.use('/api/community', tierChatroomRoutes);
 app.use('/api/settings', settingsRoutes);
 
 app.use('/api/chats', chatsRoutes);
@@ -94,6 +103,10 @@ app.use('/api/files', filesRoutes);
 app.use('/api/trading', tradingRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userTradingRoutes);
+
+// Role-protected routes
+app.use('/api/admin', authMiddleware, isAdmin, adminRoutes);
+app.use('/api/user', authMiddleware, isUser, userTradingRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -115,7 +128,7 @@ app.get('/health/db', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     name: 'TraderMind Real-time Server',
     version: '1.0.0',
     status: 'running',
@@ -142,12 +155,12 @@ app.use((err, req, res, next) => {
 
 process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
-  
+
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Promise Rejection:', reason);
-  
+
 });
 
 process.on('SIGTERM', () => {
@@ -172,15 +185,15 @@ const PORT = process.env.PORT || 3001;
 
 async function startServer() {
   try {
-    
+
     await initializeDefaultChatrooms();
-    
-    
+
+
     await initializeStorageBuckets();
-    
-    
+
+
     startCronJobs();
-    
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
       console.log(`📡 WebSocket ready for connections`);
