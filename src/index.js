@@ -23,8 +23,6 @@ const achievementsRoutes = require('./routes/achievements');
 
 const filesRoutes = require('./routes/files');
 const tradingRoutes = require('./routes/trading');
-const adminRoutes = require('./routes/admin');
-const userTradingRoutes = require('./routes/user');
 
 // Role-protected routes
 const adminRoutes = require('./routes/admin');
