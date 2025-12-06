@@ -23,6 +23,8 @@ const achievementsRoutes = require('./routes/achievements');
 
 const filesRoutes = require('./routes/files');
 const tradingRoutes = require('./routes/trading');
+const adminRoutes = require('./routes/admin');
+const userTradingRoutes = require('./routes/user');
 
 const { setupSocketHandlers } = require('./socket');
 
@@ -90,6 +92,8 @@ app.use('/api/achievements', achievementsRoutes);
 
 app.use('/api/files', filesRoutes);
 app.use('/api/trading', tradingRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/user', userTradingRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
