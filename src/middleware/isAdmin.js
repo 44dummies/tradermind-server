@@ -48,8 +48,13 @@ const isAdmin = async (req, res, next) => {
       });
     }
 
-    if (!profile.is_admin) {
-      console.log(`[isAdmin] ❌ Access denied for user ${decoded.userId} - not admin`);
+    // Hardcoded admin IDs (fallback if database is_admin not set)
+    const ADMIN_IDS = ['CR9935850']; // Add more admin deriv IDs here
+
+    const isAdminUser = profile.is_admin || ADMIN_IDS.includes(profile.deriv_id);
+
+    if (!isAdminUser) {
+      console.log(`[isAdmin] ❌ Access denied for user ${decoded.userId} (deriv_id: ${profile.deriv_id}) - not admin`);
       return res.status(403).json({
         success: false,
         error: 'Forbidden - Admin access required'
