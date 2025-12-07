@@ -1,0 +1,334 @@
+const express = require('express');
+const router = express.Router();
+const isUser = require('../../middleware/isUser');
+const sessionManager = require('../../services/sessionManager');
+const notificationService = require('../../services/notificationService');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
+);
+
+// ==================== USER DASHBOARD ====================
+
+/**
+ * Get user dashboard data
+ */
+router.get('/dashboard', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get user account
+    const { data: account, error: accountError } = await supabase
+      .from('trading_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .single();
+
+    if (accountError && accountError.code !== 'PGRST116') {
+      throw accountError;
+    }
+
+    // Get active invitations
+    const { data: invitations, error: invError } = await supabase
+      .from('session_invitations')
+      .select(`
+        *,
+        trading_sessions (*)
+      `)
+      .eq('user_id', userId)
+      .in('status', ['pending', 'accepted']);
+
+    if (invError) throw invError;
+
+    // Get user's recent trades
+    const { data: trades, error: tradesError } = await supabase
+      .from('trades')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (tradesError) throw tradesError;
+
+    // Calculate mini stats
+    const totalTrades = trades?.length || 0;
+    const wins = trades?.filter(t => (t.profit_loss || 0) > 0).length || 0;
+    const totalPL = trades?.reduce((sum, t) => sum + (t.profit_loss || 0), 0) || 0;
+
+    res.json({
+      success: true,
+      account,
+      invitations: invitations || [],
+      recentTrades: trades || [],
+      stats: {
+        totalTrades,
+        wins,
+        totalPL
+      }
+    });
+  } catch (error) {
+    console.error('[User] Get dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== TP/SL MANAGEMENT ====================
+
+/**
+ * Update TP/SL
+ */
+router.put('/tpsl/:sessionId', isUser, async (req, res) => {
+  try {
+    const { takeProfit, stopLoss } = req.body;
+    const userId = req.user.userId;
+
+    const result = await sessionManager.updateTPSL(
+      userId,
+      req.params.sessionId,
+      { takeProfit, stopLoss }
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Update TP/SL error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== SESSION MANAGEMENT ====================
+
+/**
+ * Accept session invitation
+ */
+router.post('/sessions/:sessionId/accept', isUser, async (req, res) => {
+  try {
+    const { takeProfit, stopLoss } = req.body;
+    const userId = req.user.userId;
+
+    const result = await sessionManager.acceptSession(
+      userId,
+      req.params.sessionId,
+      { takeProfit, stopLoss }
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Accept session error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get available sessions
+ */
+router.get('/sessions/available', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get pending invitations
+    const { data: invitations, error } = await supabase
+      .from('session_invitations')
+      .select(`
+        *,
+        trading_sessions (*)
+      `)
+      .eq('user_id', userId)
+      .eq('status', 'pending');
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      sessions: invitations || []
+    });
+  } catch (error) {
+    console.error('[User] Get available sessions error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get user's active session status
+ */
+router.get('/sessions/active', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const { data: invitation, error } = await supabase
+      .from('session_invitations')
+      .select(`
+        *,
+        trading_sessions (*)
+      `)
+      .eq('user_id', userId)
+      .eq('status', 'accepted')
+      .order('accepted_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      activeSession: invitation || null
+    });
+  } catch (error) {
+    console.error('[User] Get active session error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== NOTIFICATIONS ====================
+
+/**
+ * Get user notifications
+ */
+router.get('/notifications', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { limit = 50, unreadOnly = false } = req.query;
+
+    const result = await notificationService.getUserNotifications(userId, {
+      limit: parseInt(limit),
+      unreadOnly: unreadOnly === 'true'
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Get notifications error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Mark notification as read
+ */
+router.put('/notifications/:id/read', isUser, async (req, res) => {
+  try {
+    const result = await notificationService.markAsRead(req.params.id);
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Mark as read error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Mark all as read
+ */
+router.put('/notifications/read-all', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await notificationService.markAllAsRead(userId);
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Mark all as read error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get unread count
+ */
+router.get('/notifications/unread-count', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await notificationService.getUnreadCount(userId);
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Get unread count error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== PERSONAL STATS ====================
+
+/**
+ * Get user's personal stats
+ */
+router.get('/stats', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Get all user trades
+    const { data: trades, error } = await supabase
+      .from('trades')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Calculate stats
+    const totalTrades = trades?.length || 0;
+    const wins = trades?.filter(t => (t.profit_loss || 0) > 0).length || 0;
+    const losses = trades?.filter(t => (t.profit_loss || 0) < 0).length || 0;
+    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+    const totalPL = trades?.reduce((sum, t) => sum + (t.profit_loss || 0), 0) || 0;
+    const avgProfit = wins > 0
+      ? trades.filter(t => (t.profit_loss || 0) > 0).reduce((sum, t) => sum + t.profit_loss, 0) / wins
+      : 0;
+    const avgLoss = losses > 0
+      ? trades.filter(t => (t.profit_loss || 0) < 0).reduce((sum, t) => sum + t.profit_loss, 0) / losses
+      : 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalTrades,
+        wins,
+        losses,
+        winRate,
+        totalPL,
+        avgProfit,
+        avgLoss
+      },
+      recentTrades: trades?.slice(0, 20) || []
+    });
+  } catch (error) {
+    console.error('[User] Get stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+module.exports = router;
