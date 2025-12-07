@@ -1,17 +1,98 @@
-/**
- * Community Service
- * Handles community posts, comments, voting, and feed
- */
+const { v4: uuidv4 } = require('uuid');
+const { supabase } = require('../db/supabase');
 
-const { prisma } = require('./database');
-
-/**
- * Create a new community post
- */
-async function createPost(userId, data) {
-  const { title, content, category, tags, attachments } = data;
+async function getUserProfile(userId) {
+  if (!userId) return null;
   
-  // Validate
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('id, username, display_name, fullname, profile_photo, performance_tier')
+    .eq('id', userId)
+    .single();
+  
+  if (error || !data) {
+    return {
+      id: userId,
+      username: `Trader_${String(userId).slice(-4)}`,
+      displayName: `Trader ${String(userId).slice(-4)}`,
+      avatarUrl: `https:
+      reputation: 0
+    };
+  }
+  
+  return {
+    id: data.id,
+    username: data.username || `Trader_${String(userId).slice(-4)}`,
+    displayName: data.display_name || data.fullname || data.username,
+    avatarUrl: data.profile_photo || `https:
+    reputation: data.performance_tier === 'elite' ? 500 : data.performance_tier === 'pro' ? 300 : 100
+  };
+}
+
+async function transformPost(post, currentUserId = null) {
+  const author = await getUserProfile(post.user_id);
+  
+  
+  const { count: commentCount } = await supabase
+    .from('post_comments')
+    .select('*', { count: 'exact', head: true })
+    .eq('post_id', post.id)
+    .eq('is_deleted', false);
+  
+  
+  let userVote = 0;
+  if (currentUserId) {
+    const { data: vote } = await supabase
+      .from('post_votes')
+      .select('vote_value')
+      .eq('post_id', post.id)
+      .eq('user_id', currentUserId)
+      .single();
+    userVote = vote?.vote_value || 0;
+  }
+  
+  return {
+    id: post.id,
+    title: post.title,
+    content: post.content,
+    category: post.category || 'discussion',
+    tags: post.tags || [],
+    attachments: post.attachments || [],
+    author: {
+      username: author.username,
+      displayName: author.displayName,
+      avatarUrl: author.avatarUrl,
+      reputation: author.reputation
+    },
+    votes: (post.upvotes || 0) - (post.downvotes || 0),
+    upvotes: post.upvotes || 0,
+    downvotes: post.downvotes || 0,
+    commentCount: commentCount || 0,
+    userVote,
+    isPinned: Boolean(post.is_pinned),
+    createdAt: post.created_at,
+    updatedAt: post.updated_at,
+    viewCount: post.view_count || 0
+  };
+}
+
+async function transformComment(comment) {
+  const author = await getUserProfile(comment.user_id);
+  return {
+    id: comment.id,
+    content: comment.content,
+    author: {
+      username: author.username,
+      displayName: author.displayName,
+      avatarUrl: author.avatarUrl
+    },
+    createdAt: comment.created_at
+  };
+}
+
+async function createPost(userId, data = {}, userInfo = {}) {
+  const { title, content, category, tags = [], attachments = [] } = data;
+  
   if (!title || title.length < 5 || title.length > 200) {
     return { success: false, error: 'Title must be 5-200 characters' };
   }
@@ -19,596 +100,445 @@ async function createPost(userId, data) {
     return { success: false, error: 'Content must be 10-10000 characters' };
   }
   
-  const post = await prisma.communityPost.create({
-    data: {
-      userId,
+  const { data: post, error } = await supabase
+    .from('community_posts')
+    .insert({
+      user_id: userId,
       title: title.trim(),
       content: content.trim(),
       category: category || 'discussion',
-      tags: tags || [],
-      attachments: attachments || []
-    },
-    include: {
-      user: {
-        select: {
-          username: true,
-          displayName: true,
-          avatarUrl: true,
-          reputationScore: true
-        }
-      }
-    }
-  });
+      tags: Array.isArray(tags) ? tags : [],
+      attachments: Array.isArray(attachments) ? attachments : [],
+      upvotes: 0,
+      downvotes: 0,
+      view_count: 0,
+      is_pinned: false,
+      is_deleted: false
+    })
+    .select()
+    .single();
   
-  return { success: true, post };
+  if (error) {
+    console.error('[Community] Create post error:', error);
+    return { success: false, error: 'Failed to create post' };
+  }
+  
+  const transformedPost = await transformPost(post, userId);
+  return { success: true, post: transformedPost };
 }
 
-/**
- * Get community feed with pagination
- */
 async function getFeed(options = {}) {
-  const {
-    page = 1,
-    limit = 20,
-    category = null,
-    sortBy = 'trending', // trending, newest, top
-    timeRange = 'week', // day, week, month, all
-    userId = null
-  } = options;
-  
-  const skip = (page - 1) * limit;
-  
-  // Build where clause
-  const where = {
-    isDeleted: false
-  };
-  
-  if (category) {
-    where.category = category;
-  }
-  
-  // Time range filter for trending/top
-  if (timeRange !== 'all') {
-    const now = new Date();
-    let startDate;
-    switch (timeRange) {
-      case 'day':
-        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case 'week':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
-      default:
-        startDate = null;
-    }
-    if (startDate) {
-      where.createdAt = { gte: startDate };
-    }
-  }
-  
-  // Build order clause
-  let orderBy;
-  switch (sortBy) {
-    case 'newest':
-      orderBy = { createdAt: 'desc' };
-      break;
-    case 'top':
-      orderBy = { voteScore: 'desc' };
-      break;
-    case 'trending':
-    default:
-      // Trending = hot score (combination of votes and recency)
-      orderBy = [{ voteScore: 'desc' }, { createdAt: 'desc' }];
-      break;
-  }
-  
-  const [posts, total] = await Promise.all([
-    prisma.communityPost.findMany({
-      where,
-      include: {
-        user: {
-          select: {
-            username: true,
-            displayName: true,
-            avatarUrl: true,
-            reputationScore: true
-          }
-        },
-        _count: {
-          select: { comments: true }
-        }
-      },
-      orderBy,
-      skip,
-      take: limit
-    }),
-    prisma.communityPost.count({ where })
-  ]);
-  
-  // Get user's votes if authenticated
-  let userVotes = {};
-  if (userId) {
-    const votes = await prisma.postVote.findMany({
-      where: {
-        userId,
-        postId: { in: posts.map(p => p.id) }
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      category, 
+      sortBy = 'trending', 
+      timeRange = 'week',
+      userId = null 
+    } = options;
+    
+    
+    let timeFilter = null;
+    if (timeRange && timeRange !== 'all') {
+      const now = new Date();
+      switch (timeRange) {
+        case 'day':
+          timeFilter = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+          break;
+        case 'week':
+          timeFilter = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+          break;
+        case 'month':
+          timeFilter = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+          break;
       }
-    });
-    userVotes = votes.reduce((acc, v) => {
-      acc[v.postId] = v.value;
-      return acc;
-    }, {});
-  }
-  
-  // Format posts
-  const formattedPosts = posts.map(post => ({
-    id: post.id,
-    title: post.title,
-    content: post.content,
-    category: post.category,
-    tags: post.tags,
-    attachments: post.attachments,
-    author: {
-      username: post.user.username,
-      displayName: post.user.displayName,
-      avatarUrl: post.user.avatarUrl,
-      reputation: post.user.reputationScore
-    },
-    votes: post.voteScore,
-    upvotes: post.upvotes,
-    downvotes: post.downvotes,
-    commentCount: post._count.comments,
-    userVote: userVotes[post.id] || 0,
-    isPinned: post.isPinned,
-    createdAt: post.createdAt,
-    updatedAt: post.updatedAt
-  }));
-  
-  return {
-    posts: formattedPosts,
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      hasMore: skip + posts.length < total
     }
-  };
+    
+    
+    let query = supabase
+      .from('community_posts')
+      .select('*', { count: 'exact' })
+      .eq('is_deleted', false);
+    
+    if (category) {
+      query = query.eq('category', category);
+    }
+    
+    if (timeFilter) {
+      query = query.gte('created_at', timeFilter);
+    }
+    
+    
+    switch (sortBy) {
+      case 'newest':
+        query = query.order('created_at', { ascending: false });
+        break;
+      case 'top':
+        query = query.order('upvotes', { ascending: false });
+        break;
+      case 'trending':
+      default:
+        query = query.order('created_at', { ascending: false });
+        break;
+    }
+    
+    
+    const offset = (page - 1) * limit;
+    query = query.range(offset, offset + limit - 1);
+    
+    const { data: posts, error, count } = await query;
+    
+    if (error) {
+      console.error('[Community] Get feed error:', error);
+      return { posts: [], pagination: { page, limit, total: 0, totalPages: 0, hasMore: false } };
+    }
+    
+    
+    const transformedPosts = await Promise.all(
+      (posts || []).map(post => transformPost(post, userId))
+    );
+    
+    
+    if (sortBy === 'trending') {
+      transformedPosts.sort((a, b) => {
+        const aScore = a.votes / Math.max(1, (Date.now() - new Date(a.createdAt)) / 3600000);
+        const bScore = b.votes / Math.max(1, (Date.now() - new Date(b.createdAt)) / 3600000);
+        return bScore - aScore;
+      });
+    }
+    
+    const total = count || 0;
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      posts: transformedPosts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page < totalPages
+      }
+    };
+  } catch (error) {
+    console.error('[Community] getFeed error:', error);
+    return {
+      posts: [],
+      pagination: {
+        page: 1,
+        limit: 20,
+        total: 0,
+        totalPages: 0,
+        hasMore: false
+      }
+    };
+  }
 }
 
-/**
- * Get single post with comments
- */
 async function getPost(postId, userId = null) {
-  const post = await prisma.communityPost.findUnique({
-    where: { id: postId },
-    include: {
-      user: {
-        select: {
-          username: true,
-          displayName: true,
-          avatarUrl: true,
-          reputationScore: true
-        }
-      },
-      comments: {
-        where: { isDeleted: false },
-        include: {
-          user: {
-            select: {
-              username: true,
-              displayName: true,
-              avatarUrl: true
-            }
-          }
-        },
-        orderBy: { createdAt: 'asc' }
-      }
-    }
-  });
   
-  if (!post || post.isDeleted) {
+  const { data: post, error } = await supabase
+    .from('community_posts')
+    .select('*')
+    .eq('id', postId)
+    .eq('is_deleted', false)
+    .single();
+  
+  if (error || !post) {
     return null;
   }
   
-  // Increment view count
-  await prisma.communityPost.update({
-    where: { id: postId },
-    data: { viewCount: { increment: 1 } }
-  });
   
-  // Get user's vote
-  let userVote = 0;
-  if (userId) {
-    const vote = await prisma.postVote.findUnique({
-      where: {
-        userId_postId: { userId, postId }
-      }
-    });
-    userVote = vote?.value || 0;
-  }
+  await supabase
+    .from('community_posts')
+    .update({ view_count: (post.view_count || 0) + 1 })
+    .eq('id', postId);
+  
+  
+  const { data: comments } = await supabase
+    .from('post_comments')
+    .select('*')
+    .eq('post_id', postId)
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: true });
+  
+  
+  const transformedPost = await transformPost(post, userId);
+  
+  
+  const transformedComments = await Promise.all(
+    (comments || []).map(comment => transformComment(comment))
+  );
   
   return {
-    id: post.id,
-    title: post.title,
-    content: post.content,
-    category: post.category,
-    tags: post.tags,
-    attachments: post.attachments,
-    author: {
-      username: post.user.username,
-      displayName: post.user.displayName,
-      avatarUrl: post.user.avatarUrl,
-      reputation: post.user.reputationScore
-    },
-    votes: post.voteScore,
-    upvotes: post.upvotes,
-    downvotes: post.downvotes,
-    viewCount: post.viewCount + 1,
-    userVote,
-    isPinned: post.isPinned,
-    comments: post.comments.map(c => ({
-      id: c.id,
-      content: c.content,
-      author: {
-        username: c.user.username,
-        displayName: c.user.displayName,
-        avatarUrl: c.user.avatarUrl
-      },
-      createdAt: c.createdAt
-    })),
-    createdAt: post.createdAt,
-    updatedAt: post.updatedAt
+    ...transformedPost,
+    comments: transformedComments
   };
 }
 
-/**
- * Vote on a post
- */
 async function votePost(userId, postId, value) {
-  // Validate value
   if (![1, 0, -1].includes(value)) {
     return { success: false, error: 'Invalid vote value' };
   }
   
-  const post = await prisma.communityPost.findUnique({
-    where: { id: postId }
-  });
   
-  if (!post || post.isDeleted) {
+  const { data: post, error: postError } = await supabase
+    .from('community_posts')
+    .select('id, upvotes, downvotes')
+    .eq('id', postId)
+    .eq('is_deleted', false)
+    .single();
+  
+  if (postError || !post) {
     return { success: false, error: 'Post not found' };
   }
   
-  // Get existing vote
-  const existingVote = await prisma.postVote.findUnique({
-    where: {
-      userId_postId: { userId, postId }
-    }
-  });
   
-  const previousValue = existingVote?.value || 0;
+  const { data: existingVote } = await supabase
+    .from('post_votes')
+    .select('id, vote_value')
+    .eq('post_id', postId)
+    .eq('user_id', userId)
+    .single();
+  
+  const previousValue = existingVote?.vote_value || 0;
   
   if (value === 0) {
-    // Remove vote
+    
     if (existingVote) {
-      await prisma.postVote.delete({
-        where: { userId_postId: { userId, postId } }
-      });
+      await supabase.from('post_votes').delete().eq('id', existingVote.id);
     }
+  } else if (existingVote) {
+    
+    await supabase
+      .from('post_votes')
+      .update({ vote_value: value })
+      .eq('id', existingVote.id);
   } else {
-    // Upsert vote
-    await prisma.postVote.upsert({
-      where: { userId_postId: { userId, postId } },
-      create: { userId, postId, value },
-      update: { value }
-    });
+    
+    await supabase
+      .from('post_votes')
+      .insert({ post_id: postId, user_id: userId, vote_value: value });
   }
   
-  // Calculate vote changes
-  let upvoteChange = 0;
-  let downvoteChange = 0;
   
-  if (previousValue === 1) upvoteChange -= 1;
-  if (previousValue === -1) downvoteChange -= 1;
-  if (value === 1) upvoteChange += 1;
-  if (value === -1) downvoteChange += 1;
+  let upvotes = post.upvotes || 0;
+  let downvotes = post.downvotes || 0;
   
-  // Update post vote counts
-  const updatedPost = await prisma.communityPost.update({
-    where: { id: postId },
-    data: {
-      upvotes: { increment: upvoteChange },
-      downvotes: { increment: downvoteChange },
-      voteScore: { increment: value - previousValue }
-    }
-  });
+  if (previousValue === 1) upvotes--;
+  if (previousValue === -1) downvotes--;
+  if (value === 1) upvotes++;
+  if (value === -1) downvotes++;
   
-  // Update author reputation
-  await prisma.user.update({
-    where: { id: post.userId },
-    data: {
-      reputationScore: { increment: value - previousValue }
-    }
-  });
+  
+  await supabase
+    .from('community_posts')
+    .update({ upvotes, downvotes })
+    .eq('id', postId);
   
   return {
     success: true,
-    votes: updatedPost.voteScore,
-    upvotes: updatedPost.upvotes,
-    downvotes: updatedPost.downvotes
+    votes: upvotes - downvotes,
+    upvotes,
+    downvotes
   };
 }
 
-/**
- * Add comment to post
- */
-async function addComment(userId, postId, content) {
-  if (!content || content.length < 1 || content.length > 2000) {
+async function addComment(userId, postId, content, userInfo = {}) {
+  if (!content || content.trim().length < 1 || content.length > 2000) {
     return { success: false, error: 'Comment must be 1-2000 characters' };
   }
   
-  const post = await prisma.communityPost.findUnique({
-    where: { id: postId }
-  });
   
-  if (!post || post.isDeleted) {
-    return { success: false, error: 'Post not found' };
-  }
-  
-  const comment = await prisma.postComment.create({
-    data: {
-      userId,
-      postId,
-      content: content.trim()
-    },
-    include: {
-      user: {
-        select: {
-          username: true,
-          displayName: true,
-          avatarUrl: true
-        }
-      }
-    }
-  });
-  
-  // Notify post author
-  if (post.userId !== userId) {
-    await prisma.notification.create({
-      data: {
-        userId: post.userId,
-        type: 'comment',
-        title: 'New Comment',
-        message: `Someone commented on your post`,
-        link: `/community/post/${postId}`
-      }
-    });
-  }
-  
-  return {
-    success: true,
-    comment: {
-      id: comment.id,
-      content: comment.content,
-      author: {
-        username: comment.user.username,
-        displayName: comment.user.displayName,
-        avatarUrl: comment.user.avatarUrl
-      },
-      createdAt: comment.createdAt
-    }
-  };
-}
-
-/**
- * Delete post (soft delete)
- */
-async function deletePost(userId, postId) {
-  const post = await prisma.communityPost.findUnique({
-    where: { id: postId }
-  });
+  const { data: post } = await supabase
+    .from('community_posts')
+    .select('id')
+    .eq('id', postId)
+    .eq('is_deleted', false)
+    .single();
   
   if (!post) {
     return { success: false, error: 'Post not found' };
   }
   
-  if (post.userId !== userId) {
+  
+  const { data: comment, error } = await supabase
+    .from('post_comments')
+    .insert({
+      post_id: postId,
+      user_id: userId,
+      content: content.trim(),
+      is_deleted: false
+    })
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('[Community] Add comment error:', error);
+    return { success: false, error: 'Failed to add comment' };
+  }
+  
+  const transformedComment = await transformComment(comment);
+  return { success: true, comment: transformedComment };
+}
+
+async function deletePost(userId, postId) {
+  const { data: post } = await supabase
+    .from('community_posts')
+    .select('user_id')
+    .eq('id', postId)
+    .eq('is_deleted', false)
+    .single();
+  
+  if (!post) {
+    return { success: false, error: 'Post not found' };
+  }
+  
+  if (post.user_id !== userId) {
     return { success: false, error: 'Not authorized to delete this post' };
   }
   
-  await prisma.communityPost.update({
-    where: { id: postId },
-    data: { isDeleted: true }
-  });
+  await supabase
+    .from('community_posts')
+    .update({ is_deleted: true })
+    .eq('id', postId);
   
   return { success: true };
 }
 
-/**
- * Delete comment (soft delete)
- */
 async function deleteComment(userId, commentId) {
-  const comment = await prisma.postComment.findUnique({
-    where: { id: commentId }
-  });
+  const { data: comment } = await supabase
+    .from('post_comments')
+    .select('user_id')
+    .eq('id', commentId)
+    .eq('is_deleted', false)
+    .single();
   
   if (!comment) {
     return { success: false, error: 'Comment not found' };
   }
   
-  if (comment.userId !== userId) {
+  if (comment.user_id !== userId) {
     return { success: false, error: 'Not authorized to delete this comment' };
   }
   
-  await prisma.postComment.update({
-    where: { id: commentId },
-    data: { isDeleted: true }
-  });
+  await supabase
+    .from('post_comments')
+    .update({ is_deleted: true })
+    .eq('id', commentId);
   
   return { success: true };
 }
 
-/**
- * Get user's posts
- */
 async function getUserPosts(username, page = 1, limit = 20) {
-  const user = await prisma.user.findUnique({
-    where: { username },
-    select: { id: true }
-  });
+  
+  const { data: user } = await supabase
+    .from('user_profiles')
+    .select('id')
+    .eq('username', username)
+    .single();
   
   if (!user) {
-    return { posts: [], pagination: { total: 0 } };
+    return { posts: [], pagination: { page, limit, total: 0, totalPages: 0, hasMore: false } };
   }
   
-  const skip = (page - 1) * limit;
+  const offset = (page - 1) * limit;
   
-  const [posts, total] = await Promise.all([
-    prisma.communityPost.findMany({
-      where: {
-        userId: user.id,
-        isDeleted: false
-      },
-      include: {
-        user: {
-          select: {
-            username: true,
-            displayName: true,
-            avatarUrl: true
-          }
-        },
-        _count: {
-          select: { comments: true }
-        }
-      },
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit
-    }),
-    prisma.communityPost.count({
-      where: {
-        userId: user.id,
-        isDeleted: false
-      }
-    })
-  ]);
+  const { data: posts, count } = await supabase
+    .from('community_posts')
+    .select('*', { count: 'exact' })
+    .eq('user_id', user.id)
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
   
-  return {
-    posts: posts.map(post => ({
+  const transformedPosts = await Promise.all(
+    (posts || []).map(async post => ({
       id: post.id,
       title: post.title,
       content: post.content,
       category: post.category,
-      votes: post.voteScore,
-      commentCount: post._count.comments,
-      createdAt: post.createdAt
-    })),
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      hasMore: skip + posts.length < total
-    }
+      votes: (post.upvotes || 0) - (post.downvotes || 0),
+      commentCount: 0, 
+      createdAt: post.created_at
+    }))
+  );
+  
+  const total = count || 0;
+  const totalPages = Math.ceil(total / limit);
+  
+  return {
+    posts: transformedPosts,
+    pagination: { page, limit, total, totalPages, hasMore: page < totalPages }
   };
 }
 
-/**
- * Get trending tags
- */
 async function getTrendingTags(limit = 10) {
-  const recentPosts = await prisma.communityPost.findMany({
-    where: {
-      isDeleted: false,
-      createdAt: {
-        gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      }
-    },
-    select: { tags: true }
+  const { data: posts } = await supabase
+    .from('community_posts')
+    .select('tags')
+    .eq('is_deleted', false);
+  
+  const tagCount = {};
+  (posts || []).forEach(post => {
+    (post.tags || []).forEach(tag => {
+      tagCount[tag] = (tagCount[tag] || 0) + 1;
+    });
   });
   
-  // Count tag occurrences
-  const tagCounts = {};
-  for (const post of recentPosts) {
-    for (const tag of post.tags) {
-      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-    }
-  }
-  
-  // Sort by count and return top tags
-  return Object.entries(tagCounts)
+  return Object.entries(tagCount)
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
     .map(([tag, count]) => ({ tag, count }));
 }
 
-/**
- * Search posts
- */
 async function searchPosts(query, options = {}) {
-  const { page = 1, limit = 20, category = null } = options;
-  const skip = (page - 1) * limit;
+  const { page = 1, limit = 20, category } = options;
   
-  const where = {
-    isDeleted: false,
-    OR: [
-      { title: { contains: query, mode: 'insensitive' } },
-      { content: { contains: query, mode: 'insensitive' } },
-      { tags: { has: query.toLowerCase() } }
-    ]
-  };
-  
-  if (category) {
-    where.category = category;
+  if (!query) {
+    return { posts: [], pagination: { page: 1, limit, total: 0, totalPages: 1, hasMore: false } };
   }
   
-  const [posts, total] = await Promise.all([
-    prisma.communityPost.findMany({
-      where,
-      include: {
-        user: {
-          select: {
-            username: true,
-            displayName: true,
-            avatarUrl: true
-          }
-        },
-        _count: {
-          select: { comments: true }
-        }
-      },
-      orderBy: { voteScore: 'desc' },
-      skip,
-      take: limit
-    }),
-    prisma.communityPost.count({ where })
-  ]);
+  const searchPattern = `%${query}%`;
+  const offset = (page - 1) * limit;
+  
+  let dbQuery = supabase
+    .from('community_posts')
+    .select('*', { count: 'exact' })
+    .eq('is_deleted', false)
+    .or(`title.ilike.${searchPattern},content.ilike.${searchPattern}`);
+  
+  if (category) {
+    dbQuery = dbQuery.eq('category', category);
+  }
+  
+  const { data: posts, count } = await dbQuery
+    .order('upvotes', { ascending: false })
+    .range(offset, offset + limit - 1);
+  
+  const transformedPosts = await Promise.all(
+    (posts || []).map(async post => {
+      const author = await getUserProfile(post.user_id);
+      return {
+        id: post.id,
+        title: post.title,
+        content: post.content.substring(0, 200),
+        category: post.category,
+        author,
+        votes: (post.upvotes || 0) - (post.downvotes || 0),
+        commentCount: 0,
+        createdAt: post.created_at
+      };
+    })
+  );
+  
+  const total = count || 0;
+  const totalPages = Math.ceil(total / limit);
   
   return {
-    posts: posts.map(post => ({
-      id: post.id,
-      title: post.title,
-      content: post.content.substring(0, 200),
-      category: post.category,
-      author: {
-        username: post.user.username,
-        displayName: post.user.displayName,
-        avatarUrl: post.user.avatarUrl
-      },
-      votes: post.voteScore,
-      commentCount: post._count.comments,
-      createdAt: post.createdAt
-    })),
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      hasMore: skip + posts.length < total
-    }
+    posts: transformedPosts,
+    pagination: { page, limit, total, totalPages, hasMore: page < totalPages }
   };
 }
 

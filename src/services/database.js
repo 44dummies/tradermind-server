@@ -1,50 +1,115 @@
-/**
- * Database Service - Supabase Client
- * Provides ORM-like interface for database operations
- */
+
 
 const { supabase } = require('../db/supabase');
 
-/**
- * Database wrapper for Supabase
- * Provides consistent interface for all database operations
- */
 const db = {
-  // User operations
+
   user: {
     async findUnique({ where, include }) {
-      const query = supabase.from('User').select('*');
-      if (where.id) query.eq('id', where.id);
-      if (where.derivId) query.eq('derivId', where.derivId);
-      if (where.email) query.eq('email', where.email);
+      let query = supabase.from('user_profiles').select('*');
+      if (where.id) query = query.eq('id', where.id);
+      if (where.derivId) query = query.eq('deriv_id', where.derivId);
+      if (where.email) query = query.eq('email', where.email);
       const { data, error } = await query.single();
       if (error) return null;
+
+      if (data) {
+        data.derivId = data.deriv_id;
+        data.isOnline = data.is_online;
+        data.lastSeen = data.last_seen;
+        data.createdAt = data.created_at;
+        data.updatedAt = data.updated_at;
+        data.traderLevel = data.performance_tier;
+        data.fullName = data.fullname;
+        data.avatarUrl = data.profile_photo;
+        data.isAdmin = data.is_admin || false;
+        data.role = data.is_admin ? 'admin' : (data.role || 'user');
+      }
       return data;
     },
     async findMany({ where = {}, orderBy, take, skip, select } = {}) {
-      let query = supabase.from('User').select('*');
-      if (where.isOnline !== undefined) query = query.eq('isOnline', where.isOnline);
-      if (where.traderLevel) query = query.eq('traderLevel', where.traderLevel);
+      let query = supabase.from('user_profiles').select('*');
+      if (where.isOnline !== undefined) query = query.eq('is_online', where.isOnline);
+      if (where.traderLevel) query = query.eq('performance_tier', where.traderLevel);
       if (orderBy) {
         const key = Object.keys(orderBy)[0];
-        query = query.order(key, { ascending: orderBy[key] === 'asc' });
+        const dbKey = key === 'isOnline' ? 'is_online' :
+          key === 'lastSeen' ? 'last_seen' :
+            key === 'createdAt' ? 'created_at' : key;
+        query = query.order(dbKey, { ascending: orderBy[key] === 'asc' });
       }
       if (take) query = query.limit(take);
       if (skip) query = query.range(skip, skip + (take || 10) - 1);
       const { data, error } = await query;
-      return data || [];
+
+      return (data || []).map(item => ({
+        ...item,
+        derivId: item.deriv_id,
+        isOnline: item.is_online,
+        lastSeen: item.last_seen,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at,
+        traderLevel: item.performance_tier,
+        fullName: item.fullname,
+        avatarUrl: item.profile_photo
+      }));
     },
     async create({ data }) {
-      const { data: result, error } = await supabase.from('User').insert(data).select().single();
+
+      const dbData = {
+        id: data.id,
+        deriv_id: data.derivId,
+        username: data.username || data.derivId || `user_${data.derivId}`,
+        fullname: data.fullName || data.fullname,
+        email: data.email,
+        country: data.country,
+        profile_photo: data.avatarUrl,
+        performance_tier: data.traderLevel || 'beginner',
+        is_online: data.isOnline !== undefined ? data.isOnline : false,
+        last_seen: data.lastSeen || new Date()
+      };
+      const { data: result, error } = await supabase.from('user_profiles').insert(dbData).select().single();
       if (error) throw error;
+
+      if (result) {
+        result.derivId = result.deriv_id;
+        result.isOnline = result.is_online;
+        result.lastSeen = result.last_seen;
+        result.createdAt = result.created_at;
+        result.updatedAt = result.updated_at;
+        result.traderLevel = result.performance_tier;
+        result.fullName = result.fullname;
+        result.avatarUrl = result.profile_photo;
+      }
       return result;
     },
     async update({ where, data }) {
-      let query = supabase.from('User').update(data);
+
+      const dbData = {};
+      if (data.isOnline !== undefined) dbData.is_online = data.isOnline;
+      if (data.lastSeen) dbData.last_seen = data.lastSeen;
+      if (data.country) dbData.country = data.country;
+      if (data.fullName || data.fullname) dbData.fullname = data.fullName || data.fullname;
+      if (data.email) dbData.email = data.email;
+      if (data.avatarUrl) dbData.profile_photo = data.avatarUrl;
+      if (data.traderLevel) dbData.performance_tier = data.traderLevel;
+
+      let query = supabase.from('user_profiles').update(dbData);
       if (where.id) query = query.eq('id', where.id);
-      if (where.derivId) query = query.eq('derivId', where.derivId);
+      if (where.derivId) query = query.eq('deriv_id', where.derivId);
       const { data: result, error } = await query.select().single();
       if (error) throw error;
+
+      if (result) {
+        result.derivId = result.deriv_id;
+        result.isOnline = result.is_online;
+        result.lastSeen = result.last_seen;
+        result.createdAt = result.created_at;
+        result.updatedAt = result.updated_at;
+        result.traderLevel = result.performance_tier;
+        result.fullName = result.fullname;
+        result.avatarUrl = result.profile_photo;
+      }
       return result;
     },
     async upsert({ where, create, update }) {
@@ -55,14 +120,14 @@ const db = {
       return this.create({ data: create });
     },
     async count({ where = {} } = {}) {
-      let query = supabase.from('User').select('id', { count: 'exact', head: true });
-      if (where.isOnline !== undefined) query = query.eq('isOnline', where.isOnline);
+      let query = supabase.from('user_profiles').select('id', { count: 'exact', head: true });
+      if (where.isOnline !== undefined) query = query.eq('is_online', where.isOnline);
       const { count } = await query;
       return count || 0;
     }
   },
 
-  // Chatroom operations
+
   chatroom: {
     async findUnique({ where }) {
       const { data } = await supabase.from('Chatroom').select('*').eq('id', where.id).single();
@@ -88,7 +153,7 @@ const db = {
     async upsert({ where, create, update }) {
       const existing = await this.findUnique({ where });
       if (existing) {
-        // Update existing chatroom
+
         const { data: result, error } = await supabase
           .from('Chatroom')
           .update(update)
@@ -98,7 +163,7 @@ const db = {
         if (error) throw error;
         return result;
       }
-      // Create new chatroom
+
       return this.create({ data: create });
     },
     async count({ where = {} } = {}) {
@@ -109,7 +174,7 @@ const db = {
     }
   },
 
-  // Message operations
+
   message: {
     async findMany({ where = {}, orderBy, take, include } = {}) {
       let query = supabase.from('Message').select('*');
@@ -139,7 +204,7 @@ const db = {
     }
   },
 
-  // UserChatroom operations
+
   userChatroom: {
     async findUnique({ where }) {
       if (where.userId_chatroomId) {
@@ -185,7 +250,7 @@ const db = {
     }
   },
 
-  // Friend operations
+
   friend: {
     async findFirst({ where }) {
       let query = supabase.from('Friend').select('*');
@@ -226,7 +291,7 @@ const db = {
     }
   },
 
-  // CommunityPost operations
+
   communityPost: {
     async findUnique({ where }) {
       const { data } = await supabase.from('CommunityPost').select('*').eq('id', where.id).single();
@@ -267,7 +332,7 @@ const db = {
     }
   },
 
-  // PostComment operations
+
   postComment: {
     async findMany({ where = {}, orderBy } = {}) {
       let query = supabase.from('PostComment').select('*');
@@ -287,7 +352,7 @@ const db = {
     }
   },
 
-  // PostLike operations
+
   postLike: {
     async findUnique({ where }) {
       if (where.postId_userId) {
@@ -317,7 +382,7 @@ const db = {
     }
   },
 
-  // RefreshToken operations
+
   refreshToken: {
     async findUnique({ where }) {
       const { data } = await supabase.from('RefreshToken').select('*').eq('token', where.token).single();
@@ -340,7 +405,7 @@ const db = {
     }
   },
 
-  // ModerationLog operations
+
   moderationLog: {
     async create({ data }) {
       const { data: result, error } = await supabase.from('ModerationLog').insert(data).select().single();
@@ -360,7 +425,7 @@ const db = {
     }
   },
 
-  // Notification placeholder (not in schema yet)
+
   notification: {
     async create({ data }) {
       console.log('Notification:', data);
@@ -369,6 +434,5 @@ const db = {
   }
 };
 
-// Export as both 'db' and 'prisma' for backward compatibility
 module.exports = { db, prisma: db, supabase };
 

@@ -1,31 +1,25 @@
-/**
- * Chat Moderation Service
- * Handles toxicity detection, spam filtering, and content moderation
- */
+
 
 const { prisma } = require('./database');
 
-// Toxicity patterns and keywords
 const TOXIC_PATTERNS = [
-  // Slurs and hate speech (simplified - in production, use a proper ML model)
+  
   { pattern: /\b(idiot|stupid|dumb|moron|fool)\b/gi, severity: 'low', score: 10 },
   { pattern: /\b(scam|scammer|fraud|fake)\b/gi, severity: 'medium', score: 25 },
   { pattern: /\b(guaranteed\s+profit|100%\s+win|free\s+money)\b/gi, severity: 'high', score: 50 },
   { pattern: /\b(telegram|whatsapp|signal)\s*(group|channel)?\s*[@:]\s*\S+/gi, severity: 'high', score: 40 },
-  { pattern: /(https?:\/\/[^\s]+)/gi, severity: 'medium', score: 15 }, // External links
+  { pattern: /(https?:\/\/[^\s]+)/gi, severity: 'medium', score: 15 }, 
   { pattern: /\b(dm\s+me|pm\s+me|contact\s+me)\b/gi, severity: 'medium', score: 20 },
   { pattern: /\b(deposit|invest)\s*(with\s+me|now)\b/gi, severity: 'high', score: 50 }
 ];
 
-// Spam patterns
 const SPAM_PATTERNS = [
-  { pattern: /(.)\1{5,}/gi, severity: 'low', score: 15 }, // Repeated characters
-  { pattern: /(.{3,})\1{3,}/gi, severity: 'medium', score: 25 }, // Repeated phrases
-  { pattern: /[A-Z]{10,}/g, severity: 'low', score: 10 }, // All caps
-  { pattern: /\$\d+/gi, severity: 'low', score: 5 } // Dollar amounts (potential pumping)
+  { pattern: /(.)\1{5,}/gi, severity: 'low', score: 15 }, 
+  { pattern: /(.{3,})\1{3,}/gi, severity: 'medium', score: 25 }, 
+  { pattern: /[A-Z]{10,}/g, severity: 'low', score: 10 }, 
+  { pattern: /\$\d+/gi, severity: 'low', score: 5 } 
 ];
 
-// Fake signal patterns
 const FAKE_SIGNAL_PATTERNS = [
   { pattern: /\b(buy|sell)\s+(now|immediately|urgent)\b/gi, severity: 'high', score: 40 },
   { pattern: /\b(guaranteed|sure|100%)\s+(win|profit|money)\b/gi, severity: 'high', score: 60 },
@@ -33,20 +27,15 @@ const FAKE_SIGNAL_PATTERNS = [
   { pattern: /\b(pump|moon|rocket)\b/gi, severity: 'medium', score: 20 }
 ];
 
-// Rate limiting config
 const RATE_LIMITS = {
   messagesPerMinute: 10,
   messagesPerHour: 100,
-  duplicateWindow: 5000, // 5 seconds between identical messages
-  minMessageInterval: 500 // 500ms between any messages
+  duplicateWindow: 5000, 
+  minMessageInterval: 500 
 };
 
-// User message history for rate limiting (in-memory, use Redis in production)
 const userMessageHistory = new Map();
 
-/**
- * Analyze message for toxicity
- */
 function analyzeToxicity(message) {
   let totalScore = 0;
   const violations = [];
@@ -58,7 +47,7 @@ function analyzeToxicity(message) {
       violations.push({
         type: 'toxicity',
         severity: pattern.severity,
-        matches: matches.slice(0, 3) // Limit to first 3 matches
+        matches: matches.slice(0, 3) 
       });
     }
   }
@@ -66,9 +55,6 @@ function analyzeToxicity(message) {
   return { score: Math.min(totalScore, 100), violations };
 }
 
-/**
- * Analyze message for spam
- */
 function analyzeSpam(message) {
   let totalScore = 0;
   const violations = [];
@@ -88,9 +74,6 @@ function analyzeSpam(message) {
   return { score: Math.min(totalScore, 100), violations };
 }
 
-/**
- * Analyze message for fake trading signals
- */
 function analyzeFakeSignals(message) {
   let totalScore = 0;
   const violations = [];
@@ -110,9 +93,6 @@ function analyzeFakeSignals(message) {
   return { score: Math.min(totalScore, 100), violations };
 }
 
-/**
- * Check rate limiting for a user
- */
 function checkRateLimit(userId) {
   const now = Date.now();
   let history = userMessageHistory.get(userId);
@@ -122,25 +102,25 @@ function checkRateLimit(userId) {
     userMessageHistory.set(userId, history);
   }
   
-  // Clean old messages
+  
   history.messages = history.messages.filter(t => now - t < 3600000);
   
   const result = { allowed: true, violations: [] };
   
-  // Check minimum interval
+  
   if (now - history.lastMessage < RATE_LIMITS.minMessageInterval) {
     result.allowed = false;
     result.violations.push({ type: 'rate_limit', reason: 'Too fast' });
   }
   
-  // Check messages per minute
+  
   const lastMinute = history.messages.filter(t => now - t < 60000).length;
   if (lastMinute >= RATE_LIMITS.messagesPerMinute) {
     result.allowed = false;
     result.violations.push({ type: 'rate_limit', reason: 'Too many messages per minute' });
   }
   
-  // Check messages per hour
+  
   if (history.messages.length >= RATE_LIMITS.messagesPerHour) {
     result.allowed = false;
     result.violations.push({ type: 'rate_limit', reason: 'Too many messages per hour' });
@@ -149,9 +129,6 @@ function checkRateLimit(userId) {
   return result;
 }
 
-/**
- * Check for duplicate messages
- */
 function checkDuplicate(userId, messageHash) {
   const history = userMessageHistory.get(userId);
   if (!history) return { isDuplicate: false };
@@ -166,9 +143,6 @@ function checkDuplicate(userId, messageHash) {
   return { isDuplicate: false };
 }
 
-/**
- * Record a message for rate limiting
- */
 function recordMessage(userId, messageHash) {
   const now = Date.now();
   let history = userMessageHistory.get(userId);
@@ -182,7 +156,7 @@ function recordMessage(userId, messageHash) {
   history.lastMessage = now;
   history.duplicates.set(messageHash, now);
   
-  // Clean old duplicates
+  
   for (const [hash, time] of history.duplicates) {
     if (now - time > RATE_LIMITS.duplicateWindow * 2) {
       history.duplicates.delete(hash);
@@ -190,9 +164,6 @@ function recordMessage(userId, messageHash) {
   }
 }
 
-/**
- * Simple hash function for messages
- */
 function hashMessage(message) {
   let hash = 0;
   for (let i = 0; i < message.length; i++) {
@@ -203,14 +174,10 @@ function hashMessage(message) {
   return hash.toString();
 }
 
-/**
- * Moderate a message
- * Returns moderation result with decision and violations
- */
 async function moderateMessage(userId, message, chatroomId) {
   const messageHash = hashMessage(message.toLowerCase().trim());
   
-  // Check rate limiting
+  
   const rateLimit = checkRateLimit(userId);
   if (!rateLimit.allowed) {
     return {
@@ -221,7 +188,7 @@ async function moderateMessage(userId, message, chatroomId) {
     };
   }
   
-  // Check duplicates
+  
   const duplicate = checkDuplicate(userId, messageHash);
   if (duplicate.isDuplicate) {
     return {
@@ -232,7 +199,7 @@ async function moderateMessage(userId, message, chatroomId) {
     };
   }
   
-  // Analyze content
+  
   const toxicity = analyzeToxicity(message);
   const spam = analyzeSpam(message);
   const fakeSignals = analyzeFakeSignals(message);
@@ -240,7 +207,7 @@ async function moderateMessage(userId, message, chatroomId) {
   const totalScore = toxicity.score + spam.score + fakeSignals.score;
   const allViolations = [...toxicity.violations, ...spam.violations, ...fakeSignals.violations];
   
-  // Determine action based on score
+  
   let approved = true;
   let reason = null;
   let action = 'allow';
@@ -253,19 +220,19 @@ async function moderateMessage(userId, message, chatroomId) {
   } else if (totalScore >= 50) {
     approved = true;
     action = 'flag';
-    // Message goes through but is flagged for review
+    
   } else if (totalScore >= 30) {
     approved = true;
     action = 'warn';
-    // Message goes through with warning to user
+    
   }
   
-  // Record message for rate limiting
+  
   if (approved) {
     recordMessage(userId, messageHash);
   }
   
-  // Log moderation if there are violations
+  
   if (allViolations.length > 0) {
     try {
       await prisma.moderationLog.create({
@@ -294,9 +261,6 @@ async function moderateMessage(userId, message, chatroomId) {
   };
 }
 
-/**
- * Update user reputation based on moderation actions
- */
 async function updateUserReputation(userId, action) {
   let reputationChange = 0;
   
@@ -329,9 +293,6 @@ async function updateUserReputation(userId, action) {
   }
 }
 
-/**
- * Check if user should be muted or banned
- */
 async function checkUserStatus(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -344,9 +305,9 @@ async function checkUserStatus(userId) {
     return { canPost: false, reason: 'Temporarily muted', until: user.muteUntil };
   }
   
-  // Auto-mute based on violations
+  
   if (user.violationCount >= 10) {
-    const muteUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const muteUntil = new Date(Date.now() + 24 * 60 * 60 * 1000); 
     await prisma.user.update({
       where: { id: userId },
       data: { muteUntil }
@@ -357,9 +318,6 @@ async function checkUserStatus(userId) {
   return { canPost: true };
 }
 
-/**
- * Report a message
- */
 async function reportMessage(messageId, reporterId, reason) {
   const message = await prisma.message.findUnique({
     where: { id: messageId },
@@ -368,7 +326,7 @@ async function reportMessage(messageId, reporterId, reason) {
   
   if (!message) return { success: false, error: 'Message not found' };
   
-  // Log the report
+  
   await prisma.moderationLog.create({
     data: {
       userId: message.userId,
@@ -380,7 +338,7 @@ async function reportMessage(messageId, reporterId, reason) {
     }
   });
   
-  // Update violation count
+  
   await prisma.user.update({
     where: { id: message.userId },
     data: { violationCount: { increment: 1 } }
@@ -389,9 +347,6 @@ async function reportMessage(messageId, reporterId, reason) {
   return { success: true };
 }
 
-/**
- * Get moderation stats for a chatroom
- */
 async function getChatroomModerationStats(chatroomId) {
   const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
   

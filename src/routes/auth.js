@@ -1,6 +1,4 @@
-/**
- * Authentication Routes
- */
+
 
 const express = require('express');
 const { prisma } = require('../services/database');
@@ -11,42 +9,38 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
-/**
- * Register new user
- * POST /api/auth/register
- */
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password, derivUserId, currency, country } = req.body;
-    
-    // Validate required fields
+
+
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'Username, email, and password are required' });
     }
-    
-    // Validate username format
+
+
     if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-      return res.status(400).json({ 
-        error: 'Username must be 3-20 characters and contain only letters, numbers, and underscores' 
+      return res.status(400).json({
+        error: 'Username must be 3-20 characters and contain only letters, numbers, and underscores'
       });
     }
-    
-    // Check if username exists
+
+
     const existingUsername = await prisma.user.findUnique({ where: { username } });
     if (existingUsername) {
       return res.status(400).json({ error: 'Username already taken' });
     }
-    
-    // Check if email exists
+
+
     const existingEmail = await prisma.user.findUnique({ where: { email } });
     if (existingEmail) {
       return res.status(400).json({ error: 'Email already registered' });
     }
-    
-    // Hash password
+
+
     const passwordHash = await bcrypt.hash(password, 12);
-    
-    // Create user
+
+
     const user = await prisma.user.create({
       data: {
         id: uuidv4(),
@@ -59,19 +53,19 @@ router.post('/register', async (req, res) => {
         country
       }
     });
-    
-    // Auto-assign to chatrooms
+
+
     await autoAssignUserToChatrooms(user.id);
-    
-    // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user.id, user.username);
-    
-    // Store refresh token
+
+    // New users start with 'user' role
+    const { accessToken, refreshToken } = generateTokens(user.id, user.username, 'user', false);
+
+
     await prisma.user.update({
       where: { id: user.id },
       data: { refreshToken }
     });
-    
+
     res.status(201).json({
       user: {
         id: user.id,
@@ -87,39 +81,36 @@ router.post('/register', async (req, res) => {
   }
 });
 
-/**
- * Login
- * POST /api/auth/login
- */
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
-    
-    // Find user
+
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    
-    // Check if banned
+
+
     if (user.isBanned) {
       return res.status(403).json({ error: 'Account suspended' });
     }
-    
-    // Verify password
+
+
     const isValidPassword = await bcrypt.compare(password, user.passwordHash);
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    
-    // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user.id, user.username);
-    
-    // Update user
+
+    // Generate tokens with role
+    const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
+    const { accessToken, refreshToken } = generateTokens(user.id, user.username, userRole, user.isAdmin || false);
+
+
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -128,7 +119,7 @@ router.post('/login', async (req, res) => {
         lastSeenAt: new Date()
       }
     });
-    
+
     res.json({
       user: {
         id: user.id,
@@ -146,115 +137,136 @@ router.post('/login', async (req, res) => {
   }
 });
 
-/**
- * Login with Deriv OAuth
- * POST /api/auth/deriv
- */
 router.post('/deriv', async (req, res) => {
   try {
+    console.log('Deriv auth request body:', req.body);
     const { derivUserId, loginid, email, currency, country, fullname } = req.body;
-    
-    if (!derivUserId || !loginid) {
-      return res.status(400).json({ error: 'Deriv user ID and login ID are required' });
+
+
+    const derivId = derivUserId || loginid;
+
+    console.log('Extracted values:', { derivUserId, loginid, derivId, email });
+
+    if (!derivId) {
+      console.error('Missing derivId. Request body:', req.body);
+      return res.status(400).json({ error: 'Deriv user ID or login ID is required' });
     }
-    
-    // Find or create user
-    let user = await prisma.user.findUnique({ where: { derivUserId } });
-    
+
+    console.log('Looking for user with derivId:', derivId);
+
+
+    let user;
+    try {
+      user = await prisma.user.findUnique({ where: { derivId } });
+      console.log('User lookup result:', user ? 'found' : 'not found');
+    } catch (dbErr) {
+      console.error('Database lookup error:', dbErr.message);
+      throw dbErr;
+    }
+
     if (!user) {
-      // Create new user from Deriv login
-      const username = `trader_${loginid}`;
-      
-      user = await prisma.user.create({
-        data: {
-          id: uuidv4(),
-          username,
-          displayName: fullname || username,
-          email: email || `${loginid}@deriv.local`,
-          passwordHash: '', // No password for OAuth users
-          derivUserId,
-          currency,
-          country
-        }
-      });
-      
-      // Auto-assign to chatrooms
+      console.log('Creating new user...');
+
+      try {
+
+        const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
+
+        user = await prisma.user.create({
+          data: {
+            id: uuidv4(),
+            derivId,
+            username,
+            email: email || null,
+            fullName: fullname || null,
+            country: country || null,
+            traderLevel: 'beginner'
+          }
+        });
+        console.log('User created:', user.id);
+      } catch (createErr) {
+        console.error('User creation error:', createErr.message);
+        console.error('Create error details:', createErr);
+        throw createErr;
+      }
+
+
       await autoAssignUserToChatrooms(user.id);
     }
-    
-    // Check if banned
+
+
     if (user.isBanned) {
       return res.status(403).json({ error: 'Account suspended' });
     }
-    
-    // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user.id, user.username);
-    
-    // Update user
+
+    // Generate tokens with role
+    const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
+    const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
+
+    // Update user status
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        refreshToken,
         isOnline: true,
-        lastSeenAt: new Date(),
-        currency,
-        country
+        lastSeen: new Date(),
+        country: country || user.country
       }
     });
-    
+
     res.json({
       user: {
         id: user.id,
-        username: user.username,
+        derivId: user.derivId,
         email: user.email,
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        traderLevel: user.traderLevel,
+        role: userRole,
+        is_admin: user.isAdmin || false
       },
       accessToken,
       refreshToken
     });
   } catch (error) {
     console.error('Deriv login error:', error);
-    res.status(500).json({ error: 'Login failed' });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      error: 'Login failed',
+      details: error.message
+    });
   }
 });
 
-/**
- * Refresh token
- * POST /api/auth/refresh
- */
 router.post('/refresh', async (req, res) => {
   try {
     const { refreshToken } = req.body;
-    
+
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
-    
-    // Verify refresh token
+
+
     const decoded = verifyRefreshToken(refreshToken);
     if (!decoded) {
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
-    
-    // Find user and verify stored token
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId }
     });
-    
+
     if (!user || user.refreshToken !== refreshToken) {
       return res.status(401).json({ error: 'Invalid refresh token' });
     }
-    
-    // Generate new tokens
-    const tokens = generateTokens(user.id, user.username);
-    
-    // Update stored refresh token
+
+    // Generate tokens with role
+    const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
+    const tokens = generateTokens(user.id, user.username, userRole, user.isAdmin || false);
+
     await prisma.user.update({
       where: { id: user.id },
       data: { refreshToken: tokens.refreshToken }
     });
-    
+
     res.json(tokens);
   } catch (error) {
     console.error('Token refresh error:', error);
@@ -262,20 +274,16 @@ router.post('/refresh', async (req, res) => {
   }
 });
 
-/**
- * Logout
- * POST /api/auth/logout
- */
 router.post('/logout', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(200).json({ success: true });
     }
-    
+
     const token = authHeader.split(' ')[1];
     const decoded = verifyToken(token);
-    
+
     if (decoded) {
       await prisma.user.update({
         where: { id: decoded.userId },
@@ -286,31 +294,27 @@ router.post('/logout', async (req, res) => {
         }
       });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     res.json({ success: true });
   }
 });
 
-/**
- * Get current user
- * GET /api/auth/me
- */
 router.get('/me', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'No token provided' });
     }
-    
+
     const token = authHeader.split(' ')[1];
     const decoded = verifyToken(token);
-    
+
     if (!decoded) {
       return res.status(401).json({ error: 'Invalid or expired token' });
     }
-    
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       select: {
@@ -328,11 +332,11 @@ router.get('/me', async (req, res) => {
         createdAt: true
       }
     });
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     res.json(user);
   } catch (error) {
     console.error('Get user error:', error);

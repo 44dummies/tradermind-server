@@ -1,6 +1,4 @@
-/**
- * Chatroom Routes
- */
+
 
 const express = require('express');
 const { prisma } = require('../services/database');
@@ -13,10 +11,6 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-/**
- * Get user's assigned chatrooms
- * GET /api/chatrooms
- */
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const chatrooms = await getUserChatrooms(req.userId);
@@ -27,10 +21,6 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get recommended chatrooms
- * GET /api/chatrooms/recommendations
- */
 router.get('/recommendations', authMiddleware, async (req, res) => {
   try {
     const recommendations = await getRecommendedChatrooms(req.userId);
@@ -41,10 +31,6 @@ router.get('/recommendations', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get single chatroom details
- * GET /api/chatrooms/:id
- */
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const chatroom = await prisma.chatroom.findUnique({
@@ -60,7 +46,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Chatroom not found' });
     }
     
-    // Check if user is a member
+    
     const membership = await prisma.userChatroom.findUnique({
       where: {
         userId_chatroomId: {
@@ -84,15 +70,11 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get chatroom messages
- * GET /api/chatrooms/:id/messages
- */
 router.get('/:id/messages', authMiddleware, async (req, res) => {
   try {
     const { before, limit = 50 } = req.query;
     
-    // Check if user is a member
+    
     const membership = await prisma.userChatroom.findUnique({
       where: {
         userId_chatroomId: {
@@ -149,7 +131,7 @@ router.get('/:id/messages', authMiddleware, async (req, res) => {
       take: parseInt(limit)
     });
     
-    // Reverse to get chronological order
+    
     res.json(messages.reverse());
   } catch (error) {
     console.error('Get messages error:', error);
@@ -157,10 +139,6 @@ router.get('/:id/messages', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Get chatroom members
- * GET /api/chatrooms/:id/members
- */
 router.get('/:id/members', authMiddleware, async (req, res) => {
   try {
     const { limit = 50 } = req.query;
@@ -197,10 +175,6 @@ router.get('/:id/members', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Join a chatroom
- * POST /api/chatrooms/:id/join
- */
 router.post('/:id/join', authMiddleware, async (req, res) => {
   try {
     const chatroom = await prisma.chatroom.findUnique({
@@ -211,7 +185,7 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Chatroom not found' });
     }
     
-    // Only public rooms can be joined directly
+    
     if (chatroom.type !== 'public') {
       return res.status(403).json({ error: 'Cannot join this chatroom directly' });
     }
@@ -240,10 +214,6 @@ router.post('/:id/join', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Leave a chatroom
- * POST /api/chatrooms/:id/leave
- */
 router.post('/:id/leave', authMiddleware, async (req, res) => {
   try {
     await prisma.userChatroom.update({
@@ -263,10 +233,6 @@ router.post('/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Mute/unmute a chatroom
- * POST /api/chatrooms/:id/mute
- */
 router.post('/:id/mute', authMiddleware, async (req, res) => {
   try {
     const { muted } = req.body;
@@ -288,10 +254,6 @@ router.post('/:id/mute', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * Update trading profile and reassign chatrooms
- * POST /api/chatrooms/sync-profile
- */
 router.post('/sync-profile', authMiddleware, async (req, res) => {
   try {
     const profileData = req.body;
