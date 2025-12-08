@@ -31,7 +31,7 @@ router.get('/dashboard', isUser, async (req, res) => {
       throw accountError;
     }
 
-    // Get active invitations
+    // Get active invitations (Active Sessions)
     const { data: invitations, error: invError } = await supabase
       .from('session_invitations')
       .select(`
@@ -39,9 +39,58 @@ router.get('/dashboard', isUser, async (req, res) => {
         trading_sessions (*)
       `)
       .eq('user_id', userId)
-      .in('status', ['pending', 'accepted']);
+      .in('status', ['accepted']);
 
     if (invError) throw invError;
+
+    // Get PENDING invitations (Explicit Invites)
+    const { data: pendingInvitations, error: availError } = await supabase
+      .from('session_invitations')
+      .select(`
+        *,
+        trading_sessions (*)
+      `)
+      .eq('user_id', userId)
+      .eq('status', 'pending');
+
+    if (availError) throw availError;
+
+    // Get ALL Open Public Sessions (that I am not invited to yet)
+    // 1. Get all open sessions
+    const { data: openSessions, error: openError } = await supabase
+      .from('trading_sessions')
+      .select('*')
+      .in('status', ['pending', 'running']) // Include Running sessions too
+      .filter('type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
+
+    if (openError && openError.code !== 'PGRST100') throw openError; // Ignore column error if type doesn't exist
+
+    // 2. Filter out sessions I'm already involved in (active or pending)
+    const mySessionIds = new Set([
+      ...(invitations?.map(i => i.session_id) || []),
+      ...(pendingInvitations?.map(i => i.session_id) || [])
+    ]);
+
+    const publicSessions = (openSessions || [])
+      .filter(s => !mySessionIds.has(s.id))
+      .map(s => ({
+        // Mock invitation structure for frontend compatibility
+        session_id: s.id,
+        user_id: userId,
+        status: 'pending', // Treat as pending invite
+        created_at: new Date().toISOString(),
+        trading_sessions: s
+      }));
+
+    const availableSessions = [...(pendingInvitations || []), ...publicSessions];
+
+    // Get user settings
+    const { data: settings, error: settingsError } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
 
     // Get user's recent trades
     const { data: trades, error: tradesError } = await supabase
@@ -58,9 +107,19 @@ router.get('/dashboard', isUser, async (req, res) => {
     const wins = trades?.filter(t => (t.profit_loss || 0) > 0).length || 0;
     const totalPL = trades?.reduce((sum, t) => sum + (t.profit_loss || 0), 0) || 0;
 
+    // Determine current active session
+    const currentSession = invitations?.length > 0 ? invitations[0] : null;
+
     res.json({
       success: true,
       account,
+      currentSession: currentSession ? {
+        sessionId: currentSession.session_id,
+        name: currentSession.trading_sessions?.name || 'Unknown Session',
+        status: currentSession.trading_sessions?.status
+      } : null,
+      availableSessions: availableSessions || [],
+      settings: settings || { default_tp: 10, default_sl: 5 },
       invitations: invitations || [],
       recentTrades: trades || [],
       stats: {
@@ -81,7 +140,39 @@ router.get('/dashboard', isUser, async (req, res) => {
 // ==================== TP/SL MANAGEMENT ====================
 
 /**
- * Update TP/SL
+ * Update Default TP/SL
+ */
+router.put('/tpsl', isUser, async (req, res) => {
+  try {
+    const { tp, sl } = req.body;
+    const userId = req.user.userId;
+
+    // Upsert user settings
+    const { data, error } = await supabase
+      .from('user_settings')
+      .upsert({
+        user_id: userId,
+        default_tp: tp,
+        default_sl: sl,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ success: true, settings: data });
+  } catch (error) {
+    console.error('[User] Update Default TP/SL error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Update Session Specific TP/SL
  */
 router.put('/tpsl/:sessionId', isUser, async (req, res) => {
   try {
