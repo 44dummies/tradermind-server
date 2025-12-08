@@ -9,6 +9,8 @@ const supabase = createClient(
 /**
  * Middleware to protect admin-only routes
  * Verifies JWT and checks is_admin flag in user_profiles
+ * 
+ * Single source of truth: Supabase user_profiles.is_admin
  */
 const isAdmin = async (req, res, next) => {
   try {
@@ -33,7 +35,7 @@ const isAdmin = async (req, res, next) => {
       });
     }
 
-    // Check is_admin in database
+    // Check is_admin in database - SINGLE SOURCE OF TRUTH
     const { data: profile, error } = await supabase
       .from('user_profiles')
       .select('is_admin, deriv_id')
@@ -48,14 +50,8 @@ const isAdmin = async (req, res, next) => {
       });
     }
 
-    const { ADMIN_IDS } = require('../config/admin');
-
-    // Hardcoded admin IDs (fallback if database is_admin not set)
-    // const ADMIN_IDS = ['CR9935850']; // Add more admin deriv IDs here
-
-    const isAdminUser = profile.is_admin || ADMIN_IDS.includes(profile.deriv_id);
-
-    if (!isAdminUser) {
+    // Check only database flag
+    if (profile.is_admin !== true) {
       console.log(`[isAdmin] ❌ Access denied for user ${decoded.userId} (deriv_id: ${profile.deriv_id}) - not admin`);
       return res.status(403).json({
         success: false,
