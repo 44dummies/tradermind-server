@@ -163,7 +163,7 @@ async function getSessions(adminId, options = {}) {
     .eq('admin_id', adminId);
 
   if (options.status) query = query.eq('status', options.status);
-  if (options.type) query = query.eq('type', options.type);
+  if (options.type) query = query.eq('session_type', options.type);
 
   query = query.order('created_at', { ascending: false });
   if (options.limit) query = query.limit(options.limit);

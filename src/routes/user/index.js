@@ -61,7 +61,7 @@ router.get('/dashboard', isUser, async (req, res) => {
       .from('trading_sessions')
       .select('*')
       .in('status', ['pending', 'running']) // Include Running sessions too
-      .filter('type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
+      .filter('session_type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
 
     if (openError && openError.code !== 'PGRST100') throw openError; // Ignore column error if type doesn't exist
 

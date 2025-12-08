@@ -63,7 +63,7 @@ class SessionManager {
         .from('trading_sessions')
         .insert({
           created_by: adminId,
-          type,
+          session_type: type,
           name: name || `${type.toUpperCase()} Session`,
           minimum_balance: minBalance,
           default_tp: defaultTP || 10,
