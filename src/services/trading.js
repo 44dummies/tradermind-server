@@ -9,9 +9,9 @@ const WebSocket = require('ws');
 // ==================== Constants ====================
 
 const SESSION_TYPE = { DAY: 'day', ONE_TIME: 'one_time', RECOVERY: 'recovery' };
-const SESSION_STATUS = { 
-  PENDING: 'pending', RUNNING: 'running', PAUSED: 'paused', 
-  COMPLETED: 'completed', TP_REACHED: 'tp_reached', SL_REACHED: 'sl_reached', ERROR: 'error' 
+const SESSION_STATUS = {
+  PENDING: 'pending', RUNNING: 'running', PAUSED: 'paused',
+  COMPLETED: 'completed', TP_REACHED: 'tp_reached', SL_REACHED: 'sl_reached', ERROR: 'error'
 };
 const ACCOUNT_STATUS = { ACTIVE: 'active', DISCONNECTED: 'disconnected', ERROR: 'error', DISABLED: 'disabled' };
 
@@ -25,7 +25,7 @@ async function getAccounts(userId) {
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
-  
+
   if (error) throw error;
   return data || [];
 }
@@ -48,7 +48,7 @@ async function addAccount(userId, accountData) {
     })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -60,7 +60,7 @@ async function updateAccount(accountId, updates) {
     .eq('id', accountId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -70,7 +70,7 @@ async function deleteAccount(accountId) {
     .from('trading_accounts')
     .delete()
     .eq('id', accountId);
-  
+
   if (error) throw error;
   return { success: true };
 }
@@ -82,14 +82,14 @@ async function verifyDerivToken(token) {
       ws.close();
       reject(new Error('Connection timeout'));
     }, 10000);
-    
+
     ws.on('open', () => ws.send(JSON.stringify({ authorize: token })));
-    
+
     ws.on('message', (data) => {
       clearTimeout(timeout);
       const response = JSON.parse(data.toString());
       ws.close();
-      
+
       if (response.error) {
         reject(new Error(response.error.message));
       } else if (response.authorize) {
@@ -103,7 +103,7 @@ async function verifyDerivToken(token) {
         });
       }
     });
-    
+
     ws.on('error', (err) => {
       clearTimeout(timeout);
       reject(err);
@@ -124,6 +124,7 @@ async function createSession(adminId, sessionData) {
       status: 'pending',
       volatility_index: sessionData.volatility_index || sessionData.volatilityIndex || 'R_100',
       contract_type: sessionData.contract_type || sessionData.contractType || 'DIGITEVEN',
+      mode: sessionData.mode || 'real', // Add mode support
       strategy_name: sessionData.strategy || 'DFPM',
       staking_mode: sessionData.staking_mode || sessionData.stakingMode || 'fixed',
       initial_stake: sessionData.initial_stake || sessionData.baseStake || 1.0,
@@ -138,7 +139,7 @@ async function createSession(adminId, sessionData) {
     })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -149,7 +150,7 @@ async function getSession(sessionId) {
     .select('*')
     .eq('id', sessionId)
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -159,13 +160,13 @@ async function getSessions(adminId, options = {}) {
     .from('trading_sessions')
     .select('*')
     .eq('admin_id', adminId);
-  
+
   if (options.status) query = query.eq('status', options.status);
   if (options.type) query = query.eq('type', options.type);
-  
+
   query = query.order('created_at', { ascending: false });
   if (options.limit) query = query.limit(options.limit);
-  
+
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
@@ -178,7 +179,7 @@ async function updateSession(sessionId, updates) {
     .eq('id', sessionId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -187,12 +188,12 @@ async function deleteSession(sessionId) {
   // Delete related data first
   await supabase.from('session_invitations').delete().eq('session_id', sessionId);
   await supabase.from('trades').delete().eq('session_id', sessionId);
-  
+
   const { error } = await supabase
     .from('trading_sessions')
     .delete()
     .eq('id', sessionId);
-  
+
   if (error) throw error;
   return { success: true };
 }
@@ -201,7 +202,7 @@ async function deleteSession(sessionId) {
 
 async function createInvitation(sessionId, accountId, adminId) {
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-  
+
   const { data, error } = await supabase
     .from('session_invitations')
     .insert({
@@ -215,7 +216,7 @@ async function createInvitation(sessionId, accountId, adminId) {
     })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -227,7 +228,7 @@ async function getInvitations(accountId) {
     .eq('account_id', accountId)
     .eq('status', 'pending')
     .gt('expires_at', new Date().toISOString());
-  
+
   if (error) throw error;
   return data || [];
 }
@@ -239,19 +240,19 @@ async function acceptInvitation(invitationId, accountId) {
     .eq('id', invitationId)
     .eq('account_id', accountId)
     .single();
-  
+
   if (fetchError) throw fetchError;
   if (!invitation) throw new Error('Invitation not found');
   if (new Date(invitation.expires_at) < new Date()) throw new Error('Invitation expired');
   if (invitation.status !== 'pending') throw new Error('Invitation already processed');
-  
+
   const { data, error } = await supabase
     .from('session_invitations')
     .update({ status: 'accepted', accepted_at: new Date().toISOString() })
     .eq('id', invitationId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -264,7 +265,7 @@ async function declineInvitation(invitationId, accountId) {
     .eq('account_id', accountId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -290,7 +291,7 @@ async function recordTrade(tradeData) {
     })
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -308,7 +309,7 @@ async function updateTradeResult(tradeId, result, profit, exitTick) {
     .eq('id', tradeId)
     .select()
     .single();
-  
+
   if (error) throw error;
   return data;
 }
@@ -318,11 +319,11 @@ async function getSessionTrades(sessionId, options = {}) {
     .from('trades')
     .select('*')
     .eq('session_id', sessionId);
-  
+
   if (options.accountId) query = query.eq('account_id', options.accountId);
   query = query.order('created_at', { ascending: false });
   if (options.limit) query = query.limit(options.limit);
-  
+
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
@@ -331,14 +332,14 @@ async function getSessionTrades(sessionId, options = {}) {
 async function getTradeStats(sessionId, accountId = null) {
   let query = supabase.from('trades').select('*').eq('session_id', sessionId);
   if (accountId) query = query.eq('account_id', accountId);
-  
+
   const { data: trades, error } = await query;
   if (error) throw error;
-  
+
   const completed = trades.filter(t => t.result !== 'pending');
   const wins = completed.filter(t => t.result === 'won');
   const losses = completed.filter(t => t.result === 'lost');
-  
+
   return {
     totalTrades: trades.length,
     completedTrades: completed.length,
@@ -362,7 +363,7 @@ async function logActivity(type, message, metadata = {}) {
       metadata,
       created_at: new Date().toISOString()
     });
-  
+
   if (error) console.error('Failed to log activity:', error);
 }
 
@@ -371,10 +372,10 @@ async function getActivityLogs(options = {}) {
     .from('activity_logs')
     .select('*')
     .order('created_at', { ascending: false });
-  
+
   if (options.type) query = query.eq('type', options.type);
   if (options.limit) query = query.limit(options.limit);
-  
+
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
@@ -391,27 +392,27 @@ const botState = {
 
 async function startBot() {
   if (botState.isRunning) return { success: false, message: 'Bot already running' };
-  
+
   botState.isRunning = true;
   botState.startTime = Date.now();
   await logActivity('bot_start', 'Trading bot started');
-  
+
   return { success: true, message: 'Bot started' };
 }
 
 async function stopBot() {
   if (!botState.isRunning) return { success: false, message: 'Bot not running' };
-  
+
   for (const ws of botState.connections.values()) {
-    try { ws.close(); } catch (e) {}
+    try { ws.close(); } catch (e) { }
   }
   botState.connections.clear();
   botState.activeSessions.clear();
   botState.isRunning = false;
   botState.startTime = null;
-  
+
   await logActivity('bot_stop', 'Trading bot stopped');
-  
+
   return { success: true, message: 'Bot stopped' };
 }
 
@@ -429,22 +430,22 @@ function getBotStatus() {
 module.exports = {
   // Constants
   SESSION_TYPE, SESSION_STATUS, ACCOUNT_STATUS,
-  
+
   // Accounts
   getAccounts, addAccount, updateAccount, deleteAccount, verifyDerivToken,
-  
+
   // Sessions
   createSession, getSession, getSessions, updateSession, deleteSession,
-  
+
   // Invitations
   createInvitation, getInvitations, acceptInvitation, declineInvitation,
-  
+
   // Trades
   recordTrade, updateTradeResult, getSessionTrades, getTradeStats,
-  
+
   // Logs
   logActivity, getActivityLogs,
-  
+
   // Bot
   startBot, stopBot, getBotStatus, botState
 };

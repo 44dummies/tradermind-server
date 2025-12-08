@@ -75,14 +75,20 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const invitation of invitations) {
-        // For now assume a single trading account per user (latest active)
-        const { data: account, error: acctErr } = await supabase
-          .from('trading_accounts')
-          .select('*')
-          .eq('user_id', invitation.user_id)
-          .eq('is_active', true)
-          .order('updated_at', { ascending: false })
-          .maybeSingle();
+        // DUAL ACCOUNT LOGIC: Use bound account if available, else fallback to active
+        let accountQuery = supabase.from('trading_accounts').select('*');
+
+        if (invitation.account_id) {
+          accountQuery = accountQuery.eq('id', invitation.account_id);
+        } else {
+          // Legacy fallback
+          accountQuery = accountQuery
+            .eq('user_id', invitation.user_id)
+            .eq('is_active', true)
+            .order('updated_at', { ascending: false });
+        }
+
+        const { data: account, error: acctErr } = await accountQuery.maybeSingle();
 
         if (acctErr || !account) {
           invalidAccounts.push({
