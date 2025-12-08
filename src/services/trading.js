@@ -5,6 +5,7 @@
 const { supabase } = require('../db/supabase');
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
+const botManager = require('./botManager');
 
 // ==================== Constants ====================
 
@@ -391,29 +392,46 @@ const botState = {
 };
 
 async function startBot() {
-  if (botState.isRunning) return { success: false, message: 'Bot already running' };
+  // Check if already running via manager
+  const state = botManager.getState();
+  if (state.isRunning) return { success: false, message: 'Bot already running' };
 
-  botState.isRunning = true;
-  botState.startTime = Date.now();
-  await logActivity('bot_start', 'Trading bot started');
+  // Find active session
+  const { data: session, error } = await supabase
+    .from('trading_sessions')
+    .select('*')
+    .eq('status', 'running')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
 
-  return { success: true, message: 'Bot started' };
+  if (error || !session) {
+    return { success: false, message: 'No active session found. Please start a session first.' };
+  }
+
+  // Start Bot Manager
+  try {
+    await botManager.startBot(session.id);
+    await logActivity('bot_start', `Trading bot started for session ${session.session_name || session.name}`);
+    return { success: true, message: `Bot started for session ${session.session_name || session.name}` };
+  } catch (err) {
+    console.error('Failed to start bot manager:', err);
+    return { success: false, message: `Failed to start bot: ${err.message}` };
+  }
 }
 
 async function stopBot() {
-  if (!botState.isRunning) return { success: false, message: 'Bot not running' };
+  const state = botManager.getState();
+  if (!state.isRunning) return { success: false, message: 'Bot not running' };
 
-  for (const ws of botState.connections.values()) {
-    try { ws.close(); } catch (e) { }
+  try {
+    await botManager.stopBot();
+    await logActivity('bot_stop', 'Trading bot stopped');
+    return { success: true, message: 'Bot stopped' };
+  } catch (err) {
+    console.error('Failed to stop bot:', err);
+    return { success: false, message: `Failed to stop bot: ${err.message}` };
   }
-  botState.connections.clear();
-  botState.activeSessions.clear();
-  botState.isRunning = false;
-  botState.startTime = null;
-
-  await logActivity('bot_stop', 'Trading bot stopped');
-
-  return { success: true, message: 'Bot stopped' };
 }
 
 function getBotStatus() {

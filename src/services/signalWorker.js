@@ -55,7 +55,7 @@ class SignalWorker {
   async tick(markets) {
     // Ensure session is still running
     const { data: session, error } = await supabase
-      .from('trading_sessions_v2')
+      .from('trading_sessions')
       .select('*')
       .eq('id', this.sessionId)
       .single();
