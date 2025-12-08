@@ -43,8 +43,8 @@ router.get('/dashboard', isUser, async (req, res) => {
 
     if (invError) throw invError;
 
-    // Get PENDING invitations (Available to Join)
-    const { data: availableSessions, error: availError } = await supabase
+    // Get PENDING invitations (Explicit Invites)
+    const { data: pendingInvitations, error: availError } = await supabase
       .from('session_invitations')
       .select(`
         *,
@@ -55,12 +55,42 @@ router.get('/dashboard', isUser, async (req, res) => {
 
     if (availError) throw availError;
 
+    // Get ALL Open Public Sessions (that I am not invited to yet)
+    // 1. Get all open sessions
+    const { data: openSessions, error: openError } = await supabase
+      .from('trading_sessions')
+      .select('*')
+      .in('status', ['pending', 'running']) // Include Running sessions too
+      .filter('type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
+
+    if (openError && openError.code !== 'PGRST100') throw openError; // Ignore column error if type doesn't exist
+
+    // 2. Filter out sessions I'm already involved in (active or pending)
+    const mySessionIds = new Set([
+      ...(invitations?.map(i => i.session_id) || []),
+      ...(pendingInvitations?.map(i => i.session_id) || [])
+    ]);
+
+    const publicSessions = (openSessions || [])
+      .filter(s => !mySessionIds.has(s.id))
+      .map(s => ({
+        // Mock invitation structure for frontend compatibility
+        session_id: s.id,
+        user_id: userId,
+        status: 'pending', // Treat as pending invite
+        created_at: new Date().toISOString(),
+        trading_sessions: s
+      }));
+
+    const availableSessions = [...(pendingInvitations || []), ...publicSessions];
+
     // Get user settings
     const { data: settings, error: settingsError } = await supabase
       .from('user_settings')
       .select('*')
       .eq('user_id', userId)
       .single();
+
 
     // Get user's recent trades
     const { data: trades, error: tradesError } = await supabase
