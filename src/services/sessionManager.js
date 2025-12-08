@@ -553,6 +553,45 @@ class SessionManager {
       console.error('[SessionManager] Log activity error:', error);
     }
   }
+  /**
+   * User leaves session
+   */
+  async leaveSession(userId, sessionId) {
+    try {
+      const { data, error } = await supabase
+        .from('session_invitations')
+        .update({
+          status: 'left',
+          left_at: new Date().toISOString()
+        })
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to leave session: ${error.message}`);
+      }
+
+      console.log(`[SessionManager] ✅ User ${userId} left session ${sessionId}`);
+
+      // Log activity
+      await this.logActivity({
+        session_id: sessionId,
+        action: 'user_left',
+        user_id: userId
+      });
+
+      return {
+        success: true,
+        invitation: data
+      };
+
+    } catch (error) {
+      console.error('[SessionManager] Leave session error:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new SessionManager();

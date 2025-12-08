@@ -222,6 +222,28 @@ router.post('/sessions/:sessionId/accept', isUser, async (req, res) => {
 });
 
 /**
+ * Leave session
+ */
+router.post('/sessions/:sessionId/leave', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await sessionManager.leaveSession(
+      userId,
+      req.params.sessionId
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Leave session error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * Get available sessions
  */
 router.get('/sessions/available', isUser, async (req, res) => {
