@@ -20,4 +20,3 @@ router.use('/recovery', recoveryRoutes);
 router.use('/users', usersRoutes);
 
 module.exports = router;
-
