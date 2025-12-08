@@ -532,10 +532,19 @@ class SessionManager {
    */
   async logActivity(activity) {
     try {
+      // Map legacy fields to v2 schema
+      const { action_type, action_details, user_id, session_id } = activity;
+      
       await supabase
-        .from('trading_activity_logs')
+        .from('activity_logs_v2')
         .insert({
-          ...activity,
+          id: uuidv4(),
+          type: action_type || activity.type || 'info', 
+          level: 'info',
+          message: action_type ? `Action: ${action_type}` : (activity.message || 'Activity Logged'),
+          metadata: action_details || activity.metadata || {}, 
+          user_id: user_id || activity.user_id,
+          session_id: session_id || activity.session_id,
           created_at: new Date().toISOString()
         });
     } catch (error) {
