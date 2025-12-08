@@ -8,6 +8,13 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { supabase } = require('../../db/supabase');
 
+// Get socket io instance for broadcasting (set by main app)
+let io = null;
+function setIO(ioInstance) {
+  io = ioInstance;
+}
+module.exports.setIO = setIO;
+
 // Notification types
 const NOTIFICATION_TYPE = {
     BROADCAST: 'broadcast',
@@ -81,6 +88,18 @@ router.post('/broadcast', async (req, res) => {
             .single();
 
         if (error) throw error;
+
+        // Broadcast via WebSocket to all connected users
+        if (io) {
+            io.emit('notification', {
+                id: data.id,
+                type: 'broadcast',
+                title: data.title,
+                message: data.message,
+                timestamp: data.created_at
+            });
+            console.log('[Notifications] Broadcast sent via WebSocket');
+        }
 
         res.status(201).json({
             success: true,
