@@ -161,19 +161,7 @@ class SessionManager {
     try {
       const { takeProfit, stopLoss } = tpsl;
 
-      // Get user's account
-      const { data: account, error: accountError } = await supabase
-        .from('trading_accounts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .single();
-
-      if (accountError || !account) {
-        throw new Error('Active trading account not found');
-      }
-
-      // Get session
+      // Get session first to know the mode
       const { data: session, error: sessionError } = await supabase
         .from('trading_sessions')
         .select('*')
@@ -182,6 +170,26 @@ class SessionManager {
 
       if (sessionError || !session) {
         throw new Error('Session not found');
+      }
+
+      // Resolve account based on session mode (Dual Account System)
+      // If mode is set (v2), find specific account type. If null (v1), fallback to active.
+      let accountQuery = supabase
+        .from('trading_accounts')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (session.mode) {
+        accountQuery = accountQuery.eq('account_type', session.mode);
+      } else {
+        accountQuery = accountQuery.eq('is_active', true);
+      }
+
+      const { data: account, error: accountError } = await accountQuery.maybeSingle();
+
+      if (accountError || !account) {
+        const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
+        throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
       }
 
       // Check balance
@@ -205,6 +213,9 @@ class SessionManager {
           status: 'accepted',
           take_profit: takeProfit,
           stop_loss: stopLoss,
+          // Store the resolved account info for specific binding
+          account_id: account.id,
+          account_type: account.account_type,
           accepted_at: new Date().toISOString()
         })
         .eq('session_id', sessionId)
@@ -532,19 +543,10 @@ class SessionManager {
    */
   async logActivity(activity) {
     try {
-      // Map legacy fields to v2 schema
-      const { action_type, action_details, user_id, session_id } = activity;
-      
       await supabase
-        .from('activity_logs_v2')
+        .from('trading_activity_logs')
         .insert({
-          id: uuidv4(),
-          type: action_type || activity.type || 'info', 
-          level: 'info',
-          message: action_type ? `Action: ${action_type}` : (activity.message || 'Activity Logged'),
-          metadata: action_details || activity.metadata || {}, 
-          user_id: user_id || activity.user_id,
-          session_id: session_id || activity.session_id,
+          ...activity,
           created_at: new Date().toISOString()
         });
     } catch (error) {

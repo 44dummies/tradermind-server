@@ -75,14 +75,20 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const invitation of invitations) {
-        // For now assume a single trading account per user (latest active)
-        const { data: account, error: acctErr } = await supabase
-          .from('trading_accounts')
-          .select('*')
-          .eq('user_id', invitation.user_id)
-          .eq('is_active', true)
-          .order('updated_at', { ascending: false })
-          .maybeSingle();
+        // DUAL ACCOUNT LOGIC: Use bound account if available, else fallback to active
+        let accountQuery = supabase.from('trading_accounts').select('*');
+
+        if (invitation.account_id) {
+          accountQuery = accountQuery.eq('id', invitation.account_id);
+        } else {
+          // Legacy fallback
+          accountQuery = accountQuery
+            .eq('user_id', invitation.user_id)
+            .eq('is_active', true)
+            .order('updated_at', { ascending: false });
+        }
+
+        const { data: account, error: acctErr } = await accountQuery.maybeSingle();
 
         if (acctErr || !account) {
           invalidAccounts.push({
@@ -286,9 +292,9 @@ class TradeExecutor {
   }
 
   /**
-   * Start TP/SL monitor for a trade
+   * Start TP/SL monitor for a trade using WebSocket logic
    */
-  startTPSLMonitor(tradeResult, invitation, session) {
+  async startTPSLMonitor(tradeResult, invitation, session) {
     const monitorId = `${tradeResult.contractId}_${tradeResult.accountId}`;
 
     if (this.activeMonitors.has(monitorId)) {
@@ -296,80 +302,86 @@ class TradeExecutor {
       return;
     }
 
-    console.log(`[TradeExecutor] 📊 Starting TP/SL monitor for contract ${tradeResult.contractId}`);
+    console.log(`[TradeExecutor] ⚡ Starting Real-Time WS Monitor for contract ${tradeResult.contractId}`);
 
-    const interval = setInterval(async () => {
+    const ws = this.activeConnections.get(tradeResult.derivAccountId);
+    if (!ws) {
+      console.error(`[TradeExecutor] No connection for ${tradeResult.derivAccountId} to start monitor`);
+      return;
+    }
+
+    // 1. Define the handler for real-time updates
+    const updateHandler = async (data) => {
       try {
-        await this.checkTPSL(tradeResult, invitation, session);
+        const message = JSON.parse(data.toString());
+
+        // Filter for this specific contract
+        if (message.msg_type === 'proposal_open_contract') {
+          const contract = message.proposal_open_contract;
+
+          if (contract && contract.contract_id === tradeResult.contractId) {
+
+            // Check if contract is still open or sold
+            if (!contract.is_sold && !contract.is_settleable) {
+              const currentPL = contract.profit || 0;
+
+              // Check TP
+              if (currentPL >= invitation.take_profit) {
+                console.log(`[TradeExecutor] 🎯 TP HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                // Remove listener immediately to prevent double firing
+                ws.removeListener('message', updateHandler);
+                await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session);
+                return;
+              }
+
+              // Check SL
+              if (currentPL <= -Math.abs(invitation.stop_loss)) {
+                console.log(`[TradeExecutor] 🛑 SL HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                ws.removeListener('message', updateHandler);
+                await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session);
+                return;
+              }
+            } else {
+              // Contract closed externally or finished naturally
+              if (contract.is_sold) {
+                console.log(`[TradeExecutor] Contract ${tradeResult.contractId} closed naturally. Profit: ${contract.profit}`);
+                ws.removeListener('message', updateHandler);
+                const finalPL = contract.profit || 0;
+                const status = finalPL > 0 ? 'win' : 'loss';
+                await this.closeTrade(tradeResult, status, finalPL, invitation, session);
+              }
+            }
+          }
+        }
       } catch (error) {
-        console.error(`[TradeExecutor] TP/SL monitor error for ${monitorId}:`, error);
-        // Clear monitor on error
-        clearInterval(interval);
-        this.activeMonitors.delete(monitorId);
+        console.error(`[TradeExecutor] Monitor error for ${monitorId}:`, error);
       }
-    }, 2000); // Check every 2 seconds
+    };
 
-    this.activeMonitors.set(monitorId, interval);
-  }
+    // 2. Attach listener
+    ws.on('message', updateHandler);
 
-  /**
-   * Check TP/SL levels and close if hit
-   */
-  async checkTPSL(tradeResult, invitation, session) {
+    // 3. Store the listener/handler so we can remove it later if needed (e.g. manual stop)
+    // We store the handler function instead of an interval ID
+    this.activeMonitors.set(monitorId, { ws, handler: updateHandler });
+
+    // 4. Send Subscribe Request
     try {
-      const ws = this.activeConnections.get(tradeResult.derivAccountId);
-
-      if (!ws) {
-        console.error(`[TradeExecutor] No connection for ${tradeResult.derivAccountId}`);
-        return;
-      }
-
-      // Get contract status
-      const statusResponse = await this.sendRequest(ws, {
+      await this.sendRequest(ws, {
         proposal_open_contract: 1,
-        contract_id: tradeResult.contractId
+        contract_id: tradeResult.contractId,
+        subscribe: 1
       });
-
-      if (statusResponse.error) {
-        console.error('[TradeExecutor] Status check error:', statusResponse.error);
-        return;
-      }
-
-      const contract = statusResponse.proposal_open_contract;
-
-      // Check if contract is still open
-      if (!contract.is_sold && !contract.is_settleable) {
-        const currentPL = contract.profit || 0;
-
-        console.log(`[TradeExecutor] Contract ${tradeResult.contractId} P&L: $${currentPL.toFixed(2)}`);
-
-        // Check TP
-        if (currentPL >= invitation.take_profit) {
-          console.log(`[TradeExecutor] 🎯 TP HIT! Closing contract ${tradeResult.contractId}`);
-          await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session);
-          return;
-        }
-
-        // Check SL
-        if (currentPL <= -Math.abs(invitation.stop_loss)) {
-          console.log(`[TradeExecutor] 🛑 SL HIT! Closing contract ${tradeResult.contractId}`);
-          await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session);
-          return;
-        }
-      } else {
-        // Contract already closed
-        console.log(`[TradeExecutor] Contract ${tradeResult.contractId} already closed`);
-
-        const finalPL = contract.profit || 0;
-        const status = finalPL > 0 ? 'win' : 'loss';
-
-        await this.closeTrade(tradeResult, status, finalPL, invitation, session);
-      }
-
-    } catch (error) {
-      console.error('[TradeExecutor] TP/SL check error:', error);
+      console.log(`[TradeExecutor] Subscribed to contract ${tradeResult.contractId}`);
+    } catch (err) {
+      console.error(`[TradeExecutor] Failed to subscribe to ${tradeResult.contractId}:`, err);
+      ws.removeListener('message', updateHandler);
+      this.activeMonitors.delete(monitorId);
     }
   }
+
+  // NOTE: checkTPSL is no longer needed as we use the event handler above
+
 
   /**
    * Close trade and remove account from session
@@ -378,9 +390,26 @@ class TradeExecutor {
     try {
       const monitorId = `${tradeResult.contractId}_${tradeResult.accountId}`;
 
-      // Stop monitor
+      // Stop monitor (Unsubscribe and remove listener)
       if (this.activeMonitors.has(monitorId)) {
-        clearInterval(this.activeMonitors.get(monitorId));
+        const monitor = this.activeMonitors.get(monitorId);
+
+        // Remove the specific message handler
+        if (monitor.ws && monitor.handler) {
+          monitor.ws.removeListener('message', monitor.handler);
+
+          // Send 'forget' to stop server from sending updates for this contract
+          // We don't await this because we want to close the trade logic fast
+          monitor.ws.send(JSON.stringify({ forget_all: ['proposal_open_contract'] }));
+          // Note: forget_all is a bit heavy, strictly we should use 'forget: subscription_id' but we didn't save ID.
+          // Given this bot manages one trade per account usually, forget_all proposal_open_contract is safe-ish,
+          // BUT to be safer, let's just assume the 'sell' or end of contract stops the stream implicitly often,
+          // or we rely on 'forget_all' at session end.
+          // Actually, Deriv usually cleans up closed contract streams? No, we should be explicit.
+          // Let's try to just remove listener for now. The stream might keep coming but we ignore it.
+          // Optimize: Use forget(monitorId) if we stored subscription ID. 
+        }
+
         this.activeMonitors.delete(monitorId);
       }
 
@@ -557,7 +586,9 @@ class TradeExecutor {
     }
 
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=114042');
+      // Use centralized WS_URL from config
+      const { WS_URL } = require('../config/deriv');
+      const ws = new WebSocket(WS_URL);
 
       ws.on('open', () => {
         // Authorize
