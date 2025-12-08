@@ -396,8 +396,8 @@ async function startBot() {
   const state = botManager.getState();
   if (state.isRunning) return { success: false, message: 'Bot already running' };
 
-  // Find active session
-  const { data: session, error } = await supabase
+  // 1. Try to find a RUNNING session first
+  let { data: session, error } = await supabase
     .from('trading_sessions')
     .select('*')
     .eq('status', 'running')
@@ -405,8 +405,30 @@ async function startBot() {
     .limit(1)
     .single();
 
-  if (error || !session) {
-    return { success: false, message: 'No active session found. Please start a session first.' };
+  // 2. If no running session, try to find a PENDING session and auto-start it
+  if (!session) {
+    const { data: pendingSession } = await supabase
+      .from('trading_sessions')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (pendingSession) {
+      // Auto-promote to running
+      await supabase
+        .from('trading_sessions')
+        .update({ status: 'running', started_at: new Date().toISOString() })
+        .eq('id', pendingSession.id);
+
+      session = pendingSession;
+      await logActivity('system', `Auto-started pending session: ${session.session_name || session.name}`);
+    }
+  }
+
+  if (!session) {
+    return { success: false, message: 'No active or pending session found. Please create a session first.' };
   }
 
   // Start Bot Manager
