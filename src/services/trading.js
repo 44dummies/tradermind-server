@@ -114,13 +114,18 @@ async function verifyDerivToken(token) {
 // ==================== Session Operations ====================
 
 async function createSession(adminId, sessionData) {
+  // Map session type to valid DB values
+  let sType = sessionData.session_type || sessionData.type || 'day';
+  if (sType === 'standard') sType = 'day'; // Fix for legacy frontend
+  if (!['day', 'one_time', 'recovery'].includes(sType)) sType = 'day';
+
   const { data, error } = await supabase
     .from('trading_sessions')
     .insert({
       id: uuidv4(),
       admin_id: adminId,
       session_name: sessionData.name || `Session ${new Date().toLocaleDateString()}`,
-      session_type: sessionData.session_type || sessionData.type || 'day',
+      session_type: sType,
       status: 'pending',
       volatility_index: sessionData.volatility_index || sessionData.volatilityIndex || 'R_100',
       contract_type: sessionData.contract_type || sessionData.contractType || 'DIGITEVEN',
