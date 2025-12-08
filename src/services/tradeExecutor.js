@@ -39,7 +39,7 @@ class TradeExecutor {
 
       // Get session details
       const { data: session, error: sessionError } = await supabase
-        .from('trading_sessions_v2')
+        .from('trading_sessions') // Use V1 table (matching trading.js)
         .select('*')
         .eq('id', sessionId)
         .eq('status', 'running')
@@ -249,12 +249,12 @@ class TradeExecutor {
         buy: 1,
         price: stake,
         parameters: {
-          contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: (session.markets && session.markets[0]) || 'R_100',
+          contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER', // DUAL SUPPORT: Check volatility_index (V1) or markets[0] (V2)
+          symbol: session.volatility_index || (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
-          basis: 'stake',
-          amount: stake,
+          currency: account.currency || 'USD',
+          amount: stake, // Assuming 'proposal: 1stake' was meant to replace 'amount: stake' and '1stake' was a typo for 'stake'
           barrier: signal.digit.toString()
         }
       };
