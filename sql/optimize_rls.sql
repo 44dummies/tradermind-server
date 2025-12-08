@@ -54,6 +54,11 @@ CREATE POLICY "notifications_user" ON system_notifications
   TO authenticated
   USING (user_id = (select auth.uid()) OR user_id IS NULL);
 
+-- Admin Write Access (Send Notifications)
+CREATE POLICY "notifications_admin_insert" ON system_notifications FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM user_profiles WHERE id = (select auth.uid()) AND is_admin = true));
+CREATE POLICY "notifications_admin_update" ON system_notifications FOR UPDATE TO authenticated USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = (select auth.uid()) AND is_admin = true));
+CREATE POLICY "notifications_admin_delete" ON system_notifications FOR DELETE TO authenticated USING (EXISTS (SELECT 1 FROM user_profiles WHERE id = (select auth.uid()) AND is_admin = true));
+
 
 -- 5. TRADE LOGS
 DROP POLICY IF EXISTS "trade_logs_user_own" ON trade_logs;
