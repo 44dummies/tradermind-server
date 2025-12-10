@@ -61,7 +61,7 @@ router.get('/dashboard', isUser, async (req, res) => {
       .from('trading_sessions')
       .select('*')
       .in('status', ['pending', 'running']) // Include Running sessions too
-      .filter('type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
+      .filter('session_type', 'neq', 'private'); // Assuming we only show public non-private sessions, or show all if private column doesn't exist
 
     if (openError && openError.code !== 'PGRST100') throw openError; // Ignore column error if type doesn't exist
 
@@ -214,6 +214,28 @@ router.post('/sessions/:sessionId/accept', isUser, async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[User] Accept session error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Leave session
+ */
+router.post('/sessions/:sessionId/leave', isUser, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await sessionManager.leaveSession(
+      userId,
+      req.params.sessionId
+    );
+
+    res.json(result);
+  } catch (error) {
+    console.error('[User] Leave session error:', error);
     res.status(500).json({
       success: false,
       error: error.message
