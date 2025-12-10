@@ -115,6 +115,48 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /admin/stats/balances
+ * Get aggregated balances across all users
+ */
+router.get('/balances', async (req, res) => {
+    try {
+        // Get all active trading accounts
+        const { data: accounts, error } = await supabase
+            .from('trading_accounts')
+            .select('account_type, balance, is_active, is_virtual')
+            .eq('is_active', true);
+
+        if (error) throw error;
+
+        // Aggregate balances by type
+        let realBalance = 0;
+        let demoBalance = 0;
+
+        (accounts || []).forEach(account => {
+            const balance = parseFloat(account.balance) || 0;
+            // Check if demo/virtual account
+            if (account.is_virtual || account.account_type === 'demo') {
+                demoBalance += balance;
+            } else {
+                realBalance += balance;
+            }
+        });
+
+        res.json({
+            success: true,
+            data: {
+                real: realBalance,
+                demo: demoBalance,
+                totalAccounts: accounts?.length || 0
+            }
+        });
+    } catch (error) {
+        console.error('Get balances error:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch balances' });
+    }
+});
+
+/**
  * GET /admin/stats/accounts
  * Get per-account performance
  */
