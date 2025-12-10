@@ -70,87 +70,62 @@ class TradeExecutor {
 
       console.log(`[TradeExecutor] Found ${invitations.length} accepted accounts`);
 
-      // Validate balances and prepare accounts
+      // Validate participants and prepare for trading
       const validAccounts = [];
       const invalidAccounts = [];
 
-      for (const invitation of invitations) {
-        // DUAL ACCOUNT LOGIC: Use bound account if available, else fallback to active
-        let accountQuery = supabase.from('trading_accounts').select('*');
-
-        if (invitation.account_id) {
-          accountQuery = accountQuery.eq('id', invitation.account_id);
-        } else {
-          // Legacy fallback
-          accountQuery = accountQuery
-            .eq('user_id', invitation.user_id)
-            .eq('is_active', true)
-            .order('updated_at', { ascending: false });
-        }
-
-        const { data: account, error: acctErr } = await accountQuery.maybeSingle();
-
-        if (acctErr || !account) {
+      for (const participant of invitations) {
+        // Check if participant has a deriv token
+        if (!participant.deriv_token) {
           invalidAccounts.push({
-            accountId: null,
-            userId: invitation.user_id,
-            reason: 'No active trading account',
-            derivAccountId: null
+            userId: participant.user_id,
+            reason: 'No trading token provided',
+            participantId: participant.id
           });
           continue;
         }
 
-        // Check balance
-        const minBalance = session.min_balance || strategyConfig.minBalance;
-        if (account.balance < minBalance) {
+        // Get user profile for deriv_id
+        const { data: profile, error: profileErr } = await supabase
+          .from('user_profiles')
+          .select('deriv_id, currency')
+          .eq('id', participant.user_id)
+          .single();
+
+        if (profileErr || !profile) {
           invalidAccounts.push({
-            accountId: account.id,
-            userId: account.user_id,
-            reason: `Balance too low: $${account.balance} < $${minBalance}`,
-            derivAccountId: account.deriv_account_id
+            userId: participant.user_id,
+            reason: 'User profile not found',
+            participantId: participant.id
           });
-
-          // Send notification
-          await this.sendNotification(account.user_id, {
-            type: 'low_balance',
-            message: `Your balance ($${account.balance}) is below the minimum required ($${minBalance})`,
-            sessionId
-          });
-
           continue;
         }
 
-        // Check TP/SL
+        // Check TP/SL are set
+        if (!participant.tp || !participant.sl) {
+          invalidAccounts.push({
+            userId: participant.user_id,
+            reason: 'TP/SL not set',
+            participantId: participant.id
+          });
+          continue;
+        }
+
         const minTp = session.default_tp || strategyConfig.minTp;
         const minSl = session.default_sl || strategyConfig.minSl;
-        if (!invitation.take_profit || !invitation.stop_loss) {
+        if (participant.tp < minTp || participant.sl < minSl) {
           invalidAccounts.push({
-            accountId: account.id,
-            userId: account.user_id,
-            reason: 'TP/SL not set',
-            derivAccountId: account.deriv_account_id
-          });
-          continue;
-        }
-
-        if (invitation.take_profit < minTp || Math.abs(invitation.stop_loss) < minSl) {
-          invalidAccounts.push({
-            accountId: account.id,
-            userId: account.user_id,
-            reason: `TP/SL below admin minimums (tp>=${minTp}, sl>=${minSl})`,
-            derivAccountId: account.deriv_account_id
-          });
-
-          await this.sendNotification(account.user_id, {
-            type: 'invalid_tpsl',
-            message: `Your TP/SL is below admin minimums (TP >= ${minTp}, SL >= ${minSl}). Update settings to trade.`
+            userId: participant.user_id,
+            reason: `TP/SL below minimums (tp>=${minTp}, sl>=${minSl})`,
+            participantId: participant.id
           });
           continue;
         }
 
         validAccounts.push({
-          invitation,
-          account
+          participant,
+          profile,
+          apiToken: participant.deriv_token // Use token directly from participant
         });
       }
 
@@ -167,14 +142,15 @@ class TradeExecutor {
       // Execute trades for all valid accounts
       const tradeResults = [];
 
-      for (const { invitation, account } of validAccounts) {
+      for (const { participant, profile, apiToken } of validAccounts) {
         try {
           // Rate limiting
           await this.sleep(this.rateLimitDelay);
 
           const tradeResult = await this.executeSingleTrade(
-            account,
-            invitation,
+            participant,
+            profile,
+            apiToken,
             signal,
             session
           );
@@ -186,21 +162,21 @@ class TradeExecutor {
 
           // Start TP/SL monitor
           if (tradeResult.success) {
-            this.startTPSLMonitor(tradeResult, invitation, session);
+            this.startTPSLMonitor(tradeResult, participant, session);
           }
 
         } catch (error) {
-          console.error(`[TradeExecutor] Trade failed for account ${account.deriv_account_id}:`, error);
+          console.error(`[TradeExecutor] Trade failed for user ${profile.deriv_id}:`, error);
 
           tradeResults.push({
             success: false,
-            accountId: account.id,
-            userId: account.user_id,
-            derivAccountId: account.deriv_account_id,
+            participantId: participant.id,
+            userId: participant.user_id,
+            derivAccountId: profile.deriv_id,
             error: error.message
           });
 
-          await this.sendNotification(account.user_id, {
+          await this.sendNotification(participant.user_id, {
             type: 'trade_failed',
             message: `Trade execution failed: ${error.message}`,
             sessionId
@@ -231,30 +207,27 @@ class TradeExecutor {
   }
 
   /**
-   * Execute single trade for one account
+   * Execute single trade for one participant
    */
-  async executeSingleTrade(account, invitation, signal, session) {
+  async executeSingleTrade(participant, profile, apiToken, signal, session) {
     try {
-      // Decrypt API token
-      const apiToken = this.decryptToken(account.api_token);
+      // Connect to Deriv WebSocket using the participant's token
+      const ws = await this.getConnection(profile.deriv_id, apiToken);
 
-      // Connect to Deriv WebSocket
-      const ws = await this.getConnection(account.deriv_account_id, apiToken);
-
-      // Calculate stake
-      const stake = await this.calculateStake(account.balance, session, account.user_id);
+      // Calculate stake (use session base stake for now)
+      const stake = session.initial_stake || session.base_stake || 0.35;
 
       // Prepare contract parameters
       const contractParams = {
         buy: 1,
         price: stake,
         parameters: {
-          contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER', // DUAL SUPPORT: Check volatility_index (V1) or markets[0] (V2)
+          contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
           symbol: session.volatility_index || (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
-          currency: account.currency || 'USD',
-          amount: stake, // Assuming 'proposal: 1stake' was meant to replace 'amount: stake' and '1stake' was a typo for 'stake'
+          currency: profile.currency || 'USD',
+          amount: stake,
           barrier: signal.digit.toString()
         }
       };
@@ -268,25 +241,25 @@ class TradeExecutor {
 
       const contract = buyResponse.buy;
 
-      console.log(`[TradeExecutor] ✅ Trade executed for ${account.deriv_account_id}: Contract ${contract.contract_id}`);
+      console.log(`[TradeExecutor] ✅ Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
 
       return {
         success: true,
-        accountId: account.id,
-        userId: account.user_id,
-        derivAccountId: account.deriv_account_id,
+        participantId: participant.id,
+        userId: participant.user_id,
+        derivAccountId: profile.deriv_id,
         contractId: contract.contract_id,
         buyPrice: contract.buy_price,
         payout: contract.payout,
         signal,
         stake,
-        takeProfit: invitation.take_profit,
-        stopLoss: invitation.stop_loss,
+        takeProfit: participant.tp,
+        stopLoss: participant.sl,
         timestamp: new Date()
       };
 
     } catch (error) {
-      console.error(`[TradeExecutor] Single trade error for ${account.deriv_account_id}:`, error);
+      console.error(`[TradeExecutor] Single trade error for ${profile.deriv_id}:`, error);
       throw error;
     }
   }
