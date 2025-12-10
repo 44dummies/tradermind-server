@@ -284,4 +284,127 @@ router.post('/:id/stop', async (req, res) => {
     }
 });
 
+/**
+ * GET /admin/sessions/:id/participants
+ * Get detailed participant list for a session
+ */
+router.get('/:id/participants', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Verify session exists
+        const { data: session, error: sessionError } = await supabase
+            .from('trading_sessions_v2')
+            .select('id, name, status')
+            .eq('id', id)
+            .single();
+
+        if (sessionError || !session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Get participants with user profile data
+        const { data: participants, error } = await supabase
+            .from('session_participants')
+            .select(`
+                id,
+                user_id,
+                session_id,
+                tp,
+                sl,
+                status,
+                current_pnl,
+                initial_balance,
+                accepted_at,
+                removed_at,
+                removal_reason,
+                user_profiles (
+                    id,
+                    deriv_id,
+                    username,
+                    fullname,
+                    email,
+                    is_admin
+                )
+            `)
+            .eq('session_id', id)
+            .order('accepted_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Calculate aggregate stats
+        const stats = {
+            total: participants?.length || 0,
+            active: participants?.filter(p => p.status === 'active').length || 0,
+            removed: participants?.filter(p => ['removed', 'removed_tp', 'removed_sl', 'left'].includes(p.status)).length || 0,
+            totalPnl: participants?.reduce((sum, p) => sum + (p.current_pnl || 0), 0) || 0,
+            totalInitialBalance: participants?.reduce((sum, p) => sum + (p.initial_balance || 0), 0) || 0
+        };
+
+        res.json({
+            session,
+            participants: participants || [],
+            stats
+        });
+    } catch (error) {
+        console.error('Get participants error:', error);
+        res.status(500).json({ error: 'Failed to fetch participants' });
+    }
+});
+
+/**
+ * POST /admin/sessions/:id/kick/:userId
+ * Remove a user from a session
+ */
+router.post('/:id/kick/:userId', async (req, res) => {
+    try {
+        const { id, userId } = req.params;
+        const { reason } = req.body;
+
+        // Verify session exists and is active
+        const { data: session } = await supabase
+            .from('trading_sessions_v2')
+            .select('id, status')
+            .eq('id', id)
+            .single();
+
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Update participant status
+        const { data, error } = await supabase
+            .from('session_participants')
+            .update({
+                status: 'removed',
+                removed_at: new Date().toISOString(),
+                removal_reason: reason || 'admin_kick'
+            })
+            .eq('session_id', id)
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') {
+                return res.status(404).json({ error: 'Participant not found or already removed' });
+            }
+            throw error;
+        }
+
+        // Log the kick action
+        console.log(`[Admin] User ${userId} kicked from session ${id} by admin. Reason: ${reason || 'admin_kick'}`);
+
+        res.json({
+            success: true,
+            message: 'User removed from session',
+            participant: data
+        });
+    } catch (error) {
+        console.error('Kick user error:', error);
+        res.status(500).json({ error: 'Failed to remove user from session' });
+    }
+});
+
 module.exports = router;
