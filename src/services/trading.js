@@ -159,10 +159,18 @@ async function getSession(sessionId) {
 async function getSessions(adminId, options = {}) {
   let query = supabase
     .from('trading_sessions')
-    .select('*')
-    .eq('admin_id', adminId);
+    .select('*');
 
-  if (options.status) query = query.eq('status', options.status);
+  if (options.publicAccess) {
+    // For normal users, show only pending/running sessions regardless of creator
+    // Using 'in' which works like SQL IN
+    query = query.in('status', ['pending', 'running']);
+  } else {
+    // For admins, restrictive by owner
+    query = query.eq('admin_id', adminId);
+    if (options.status) query = query.eq('status', options.status);
+  }
+
   if (options.type) query = query.eq('session_type', options.type);
 
   query = query.order('created_at', { ascending: false });
@@ -264,6 +272,47 @@ async function declineInvitation(invitationId, accountId) {
     .update({ status: 'declined' })
     .eq('id', invitationId)
     .eq('account_id', accountId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function joinSession(sessionId, accountId) {
+  // Check if invitation already exists
+  const { data: existing } = await supabase
+    .from('session_invitations')
+    .select('*')
+    .eq('session_id', sessionId)
+    .eq('account_id', accountId)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.status === 'accepted') return existing; // Already joined
+    // If pending or declined, update to accepted
+    const { data, error } = await supabase
+      .from('session_invitations')
+      .update({ status: 'accepted', accepted_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // Create new accepted invitation
+  const { data, error } = await supabase
+    .from('session_invitations')
+    .insert({
+      id: uuidv4(),
+      session_id: sessionId,
+      account_id: accountId,
+      status: 'accepted',
+      accepted_at: new Date().toISOString(),
+      created_at: new Date().toISOString()
+    })
     .select()
     .single();
 
@@ -478,7 +527,7 @@ module.exports = {
   createSession, getSession, getSessions, updateSession, deleteSession,
 
   // Invitations
-  createInvitation, getInvitations, acceptInvitation, declineInvitation,
+  createInvitation, getInvitations, acceptInvitation, declineInvitation, joinSession,
 
   // Trades
   recordTrade, updateTradeResult, getSessionTrades, getTradeStats,
