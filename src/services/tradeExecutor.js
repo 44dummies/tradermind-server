@@ -160,8 +160,26 @@ class TradeExecutor {
           // Log trade
           await this.logTrade(tradeResult, sessionId);
 
-          // Start TP/SL monitor
+          // Send analysis notification to user
           if (tradeResult.success) {
+            await this.sendNotification(participant.user_id, {
+              type: 'trade_executed',
+              message: `📊 Trade Executed: ${tradeResult.signal.side} ${tradeResult.signal.digit}`,
+              data: {
+                contractId: tradeResult.contractId,
+                signal: tradeResult.signal.side,
+                digit: tradeResult.signal.digit,
+                confidence: `${(tradeResult.signal.confidence * 100).toFixed(1)}%`,
+                stake: tradeResult.stake,
+                payout: tradeResult.payout,
+                takeProfit: tradeResult.takeProfit,
+                stopLoss: tradeResult.stopLoss,
+                timestamp: tradeResult.timestamp
+              },
+              sessionId
+            });
+
+            // Start TP/SL monitor
             this.startTPSLMonitor(tradeResult, participant, session);
           }
 
