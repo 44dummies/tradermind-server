@@ -25,7 +25,7 @@ router.post('/accounts', authMiddleware, async (req, res) => {
     if (!derivToken) {
       return res.status(400).json({ success: false, error: 'Deriv token required' });
     }
-    
+
     const accountInfo = await trading.verifyDerivToken(derivToken);
     const account = await trading.addAccount(req.userId, {
       accountId: accountInfo.accountId,
@@ -34,7 +34,7 @@ router.post('/accounts', authMiddleware, async (req, res) => {
       currency: accountInfo.currency,
       balance: accountInfo.balance
     });
-    
+
     await trading.logActivity('account_added', `Account ${accountInfo.accountId} added`, { adminId: req.userId });
     res.status(201).json({ success: true, data: { ...account, email: accountInfo.email, fullName: accountInfo.fullName } });
   } catch (error) {
@@ -49,7 +49,7 @@ router.post('/accounts/verify', authMiddleware, async (req, res) => {
     if (!derivToken) {
       return res.status(400).json({ success: false, error: 'Deriv token required' });
     }
-    
+
     const accountInfo = await trading.verifyDerivToken(derivToken);
     res.json({ success: true, data: accountInfo });
   } catch (error) {
@@ -84,9 +84,17 @@ router.delete('/accounts/:id', authMiddleware, async (req, res) => {
 router.get('/sessions', authMiddleware, async (req, res) => {
   try {
     const { status, type, limit } = req.query;
-    const sessions = await trading.getSessions(req.userId, {
-      status, type, limit: limit ? parseInt(limit) : undefined
-    });
+    const isAdmin = req.user && (req.user.role === 'admin' || req.user.is_admin);
+
+    // If not admin, force public access mode
+    const options = {
+      status,
+      type,
+      limit: limit ? parseInt(limit) : undefined,
+      publicAccess: !isAdmin
+    };
+
+    const sessions = await trading.getSessions(req.userId, options);
     res.json({ success: true, data: sessions });
   } catch (error) {
     console.error('Error fetching sessions:', error);
@@ -187,6 +195,22 @@ router.post('/sessions/:id/resume', authMiddleware, async (req, res) => {
   }
 });
 
+router.post('/sessions/:id/join', authMiddleware, async (req, res) => {
+  try {
+    const { accountId } = req.body;
+    if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
+
+    // Optional: Check if session allows public joining or invite only
+    // For now, allow joining any visible session
+    const invitation = await trading.joinSession(req.params.id, accountId);
+    await trading.logActivity('session_joined', 'User joined session', { sessionId: req.params.id, accountId });
+    res.json({ success: true, data: invitation });
+  } catch (error) {
+    console.error('Error joining session:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== Invitation Routes ====================
 
 router.post('/sessions/:id/invite', authMiddleware, async (req, res) => {
@@ -195,11 +219,11 @@ router.post('/sessions/:id/invite', authMiddleware, async (req, res) => {
     if (!accountIds || !Array.isArray(accountIds) || accountIds.length === 0) {
       return res.status(400).json({ success: false, error: 'Account IDs required' });
     }
-    
+
     const invitations = await Promise.all(
       accountIds.map(accountId => trading.createInvitation(req.params.id, accountId, req.userId))
     );
-    
+
     await trading.logActivity('invitations_sent', `${invitations.length} invitations sent`, { sessionId: req.params.id });
     res.status(201).json({ success: true, data: invitations });
   } catch (error) {
@@ -212,7 +236,7 @@ router.get('/invitations', authMiddleware, async (req, res) => {
   try {
     const { accountId } = req.query;
     if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
-    
+
     const invitations = await trading.getInvitations(accountId);
     res.json({ success: true, data: invitations });
   } catch (error) {
@@ -225,7 +249,7 @@ router.post('/invitations/:id/accept', authMiddleware, async (req, res) => {
   try {
     const { accountId } = req.body;
     if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
-    
+
     const invitation = await trading.acceptInvitation(req.params.id, accountId);
     await trading.logActivity('invitation_accepted', 'Invitation accepted', { invitationId: req.params.id, accountId });
     res.json({ success: true, data: invitation });
@@ -239,7 +263,7 @@ router.post('/invitations/:id/decline', authMiddleware, async (req, res) => {
   try {
     const { accountId } = req.body;
     if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
-    
+
     const invitation = await trading.declineInvitation(req.params.id, accountId);
     res.json({ success: true, data: invitation });
   } catch (error) {

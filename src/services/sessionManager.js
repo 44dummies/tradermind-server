@@ -63,7 +63,7 @@ class SessionManager {
         .from('trading_sessions')
         .insert({
           created_by: adminId,
-          type,
+          session_type: type,
           name: name || `${type.toUpperCase()} Session`,
           minimum_balance: minBalance,
           default_tp: defaultTP || 10,
@@ -161,19 +161,7 @@ class SessionManager {
     try {
       const { takeProfit, stopLoss } = tpsl;
 
-      // Get user's account
-      const { data: account, error: accountError } = await supabase
-        .from('trading_accounts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .single();
-
-      if (accountError || !account) {
-        throw new Error('Active trading account not found');
-      }
-
-      // Get session
+      // Get session first to know the mode
       const { data: session, error: sessionError } = await supabase
         .from('trading_sessions')
         .select('*')
@@ -182,6 +170,26 @@ class SessionManager {
 
       if (sessionError || !session) {
         throw new Error('Session not found');
+      }
+
+      // Resolve account based on session mode (Dual Account System)
+      // If mode is set (v2), find specific account type. If null (v1), fallback to active.
+      let accountQuery = supabase
+        .from('trading_accounts')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (session.mode) {
+        accountQuery = accountQuery.eq('account_type', session.mode);
+      } else {
+        accountQuery = accountQuery.eq('is_active', true);
+      }
+
+      const { data: account, error: accountError } = await accountQuery.maybeSingle();
+
+      if (accountError || !account) {
+        const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
+        throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
       }
 
       // Check balance
@@ -205,6 +213,9 @@ class SessionManager {
           status: 'accepted',
           take_profit: takeProfit,
           stop_loss: stopLoss,
+          // Store the resolved account info for specific binding
+          account_id: account.id,
+          account_type: account.account_type,
           accepted_at: new Date().toISOString()
         })
         .eq('session_id', sessionId)
@@ -540,6 +551,45 @@ class SessionManager {
         });
     } catch (error) {
       console.error('[SessionManager] Log activity error:', error);
+    }
+  }
+  /**
+   * User leaves session
+   */
+  async leaveSession(userId, sessionId) {
+    try {
+      const { data, error } = await supabase
+        .from('session_invitations')
+        .update({
+          status: 'left',
+          left_at: new Date().toISOString()
+        })
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to leave session: ${error.message}`);
+      }
+
+      console.log(`[SessionManager] ✅ User ${userId} left session ${sessionId}`);
+
+      // Log activity
+      await this.logActivity({
+        session_id: sessionId,
+        action: 'user_left',
+        user_id: userId
+      });
+
+      return {
+        success: true,
+        invitation: data
+      };
+
+    } catch (error) {
+      console.error('[SessionManager] Leave session error:', error);
+      throw error;
     }
   }
 }

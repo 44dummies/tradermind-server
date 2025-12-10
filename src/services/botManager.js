@@ -30,7 +30,7 @@ class BotManager {
 
     // Verify session
     const { data: session, error } = await supabase
-      .from('trading_sessions_v2')
+      .from('trading_sessions')
       .select('*')
       .eq('id', sessionId)
       .single();
@@ -41,7 +41,7 @@ class BotManager {
 
     // Update session status
     await supabase
-      .from('trading_sessions_v2')
+      .from('trading_sessions')
       .update({
         status: 'running',
         started_at: new Date().toISOString()
@@ -87,7 +87,7 @@ class BotManager {
     // Update session status
     if (sessionId) {
       await supabase
-        .from('trading_sessions_v2')
+        .from('trading_sessions')
         .update({
           status: 'completed',
           ended_at: new Date().toISOString()
@@ -106,7 +106,7 @@ class BotManager {
     // Update session status
     if (this.state.activeSessionId) {
       await supabase
-        .from('trading_sessions_v2')
+        .from('trading_sessions')
         .update({ status: 'paused', paused_at: new Date().toISOString() })
         .eq('id', this.state.activeSessionId);
     }
@@ -120,7 +120,7 @@ class BotManager {
     // Update session status
     if (this.state.activeSessionId) {
       await supabase
-        .from('trading_sessions_v2')
+        .from('trading_sessions')
         .update({ status: 'running' })
         .eq('id', this.state.activeSessionId);
     }
@@ -144,7 +144,7 @@ class BotManager {
     // Update session status to cancelled
     if (sessionId) {
       await supabase
-        .from('trading_sessions_v2')
+        .from('trading_sessions')
         .update({
           status: 'cancelled',
           ended_at: new Date().toISOString()

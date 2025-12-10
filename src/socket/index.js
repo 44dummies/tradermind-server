@@ -536,3 +536,44 @@ function setupSocketHandlers(io) {
 }
 
 module.exports = { setupSocketHandlers };
+
+// ============================================
+// NOTIFICATION BROADCASTING
+// ============================================
+
+/**
+ * Broadcast a notification to all connected users
+ */
+function broadcastNotification(io, notification) {
+  io.emit('notification', {
+    id: notification.id,
+    type: notification.type || 'info',
+    title: notification.title,
+    message: notification.message,
+    timestamp: notification.created_at || new Date().toISOString()
+  });
+  console.log(`[Socket] Broadcast notification: ${notification.title}`);
+}
+
+/**
+ * Send notification to a specific user
+ */
+function sendUserNotification(io, userId, notification) {
+  const userSocketIds = userSockets.get(userId);
+  if (userSocketIds) {
+    userSocketIds.forEach(socketId => {
+      io.to(socketId).emit('notification', {
+        id: notification.id,
+        type: notification.type || 'info',
+        title: notification.title,
+        message: notification.message,
+        timestamp: notification.created_at || new Date().toISOString()
+      });
+    });
+    console.log(`[Socket] Sent notification to user ${userId}: ${notification.title}`);
+  }
+}
+
+// Export notification functions
+module.exports.broadcastNotification = broadcastNotification;
+module.exports.sendUserNotification = sendUserNotification;

@@ -28,23 +28,24 @@ class TickCollector extends EventEmitter {
     return new Promise((resolve, reject) => {
       try {
         console.log('[TickCollector] 🔌 Connecting to Deriv WebSocket...');
-        
+
         this.apiToken = apiToken;
-        this.ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=114042');
+        const { WS_URL } = require('../config/deriv');
+        this.ws = new WebSocket(WS_URL);
 
         this.ws.on('open', () => {
           console.log('[TickCollector] ✅ Connected to Deriv WebSocket');
           this.connected = true;
           this.reconnectAttempts = 0;
-          
+
           // Start ping to keep connection alive
           this.startPing();
-          
+
           // Authorize if token provided
           if (this.apiToken) {
             this.authorize(this.apiToken);
           }
-          
+
           this.emit('connected');
           resolve();
         });
@@ -63,7 +64,7 @@ class TickCollector extends EventEmitter {
           this.connected = false;
           this.stopPing();
           this.emit('disconnected');
-          
+
           // Attempt reconnect
           this.reconnect();
         });
@@ -110,7 +111,7 @@ class TickCollector extends EventEmitter {
     }
 
     console.log(`[TickCollector] 📊 Subscribing to ${market} ticks`);
-    
+
     this.send({
       ticks: market,
       subscribe: 1
@@ -128,7 +129,7 @@ class TickCollector extends EventEmitter {
    */
   unsubscribeTicks(market) {
     const subscriptionId = this.subscriptions.get(market);
-    
+
     if (!subscriptionId) {
       return false;
     }
@@ -149,20 +150,20 @@ class TickCollector extends EventEmitter {
     if (message.msg_type === 'tick') {
       this.handleTick(message);
     }
-    
+
     // Handle subscription confirmation
     else if (message.msg_type === 'tick' && message.subscription) {
       const market = message.echo_req.ticks;
       this.subscriptions.set(market, message.subscription.id);
       console.log(`[TickCollector] ✅ Subscribed to ${market} (ID: ${message.subscription.id})`);
     }
-    
+
     // Handle authorization
     else if (message.msg_type === 'authorize') {
       console.log('[TickCollector] ✅ Authorized');
       this.emit('authorized', message.authorize);
     }
-    
+
     // Handle errors
     else if (message.msg_type === 'error') {
       console.error('[TickCollector] API Error:', message.error);
@@ -177,7 +178,7 @@ class TickCollector extends EventEmitter {
     const market = tickData.tick.symbol;
     const quote = tickData.tick.quote;
     const epoch = tickData.tick.epoch;
-    
+
     // Extract last digit
     const lastDigit = this.extractLastDigit(quote);
 
@@ -297,14 +298,14 @@ class TickCollector extends EventEmitter {
     }
 
     this.reconnectAttempts++;
-    
+
     const delay = this.reconnectDelay * this.reconnectAttempts;
     console.log(`[TickCollector] 🔄 Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
 
     setTimeout(async () => {
       try {
         await this.connect(this.apiToken);
-        
+
         // Resubscribe to all markets
         const markets = Array.from(this.tickHistory.keys());
         for (const market of markets) {
@@ -321,9 +322,9 @@ class TickCollector extends EventEmitter {
    */
   disconnect() {
     console.log('[TickCollector] 🔌 Disconnecting...');
-    
+
     this.stopPing();
-    
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -351,7 +352,7 @@ class TickCollector extends EventEmitter {
     for (const market of markets) {
       const ticks = this.tickHistory.get(market) || [];
       const digits = this.digitHistory.get(market) || [];
-      
+
       stats[market] = {
         tickCount: ticks.length,
         digitCount: digits.length,
