@@ -99,7 +99,7 @@ router.get('/:userId', async (req, res) => {
 
         // Get recent activity
         const { data: activity } = await supabase
-            .from('activity_logs')
+            .from('activity_logs_v2')
             .select('type, message, created_at')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
