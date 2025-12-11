@@ -2,6 +2,7 @@ const { createClient } = require('@supabase/supabase-js');
 const WebSocket = require('ws');
 const crypto = require('crypto');
 const strategyConfig = require('../config/strategyConfig');
+const { decryptToken } = require('../utils/encryption');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -596,10 +597,18 @@ class TradeExecutor {
 
   /**
    * Get or create WebSocket connection for account
+   * Includes reconnect logic on disconnect
    */
-  async getConnection(derivAccountId, apiToken) {
+  async getConnection(derivAccountId, apiToken, retryCount = 0) {
+    const maxRetries = 3;
+
     if (this.activeConnections.has(derivAccountId)) {
-      return this.activeConnections.get(derivAccountId);
+      const existingWs = this.activeConnections.get(derivAccountId);
+      if (existingWs.readyState === WebSocket.OPEN) {
+        return existingWs;
+      }
+      // Connection dead, remove it
+      this.activeConnections.delete(derivAccountId);
     }
 
     return new Promise((resolve, reject) => {
@@ -625,12 +634,32 @@ class TradeExecutor {
       });
 
       ws.on('error', (error) => {
+        console.error(`[TradeExecutor] WS error for ${derivAccountId}:`, error.message);
         reject(error);
+      });
+
+      ws.on('close', async () => {
+        console.warn(`[TradeExecutor] WS disconnected for ${derivAccountId}`);
+        this.activeConnections.delete(derivAccountId);
+
+        // Auto-reconnect if within retry limit
+        if (retryCount < maxRetries && !this.paused) {
+          console.log(`[TradeExecutor] Attempting reconnect (${retryCount + 1}/${maxRetries})...`);
+          await this.sleep(2000 * (retryCount + 1)); // Exponential backoff
+          try {
+            await this.getConnection(derivAccountId, apiToken, retryCount + 1);
+          } catch (err) {
+            console.error(`[TradeExecutor] Reconnect failed:`, err.message);
+          }
+        }
       });
 
       // Timeout after 30 seconds
       setTimeout(() => {
-        reject(new Error('Connection timeout'));
+        if (ws.readyState !== WebSocket.OPEN) {
+          ws.close();
+          reject(new Error('Connection timeout'));
+        }
       }, 30000);
     });
   }
