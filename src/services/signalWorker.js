@@ -61,7 +61,18 @@ class SignalWorker {
       .eq('id', this.sessionId)
       .single();
 
-    if (error || !session || session.status !== 'running') {
+    if (error) {
+      console.error('[SignalWorker] ❌ Session query error:', error.message);
+      return;
+    }
+
+    if (!session) {
+      console.error('[SignalWorker] ❌ Session not found:', this.sessionId);
+      return;
+    }
+
+    if (session.status !== 'running') {
+      console.log(`[SignalWorker] ⏸️ Session status is "${session.status}", not running. Skipping.`);
       return;
     }
 
@@ -87,6 +98,10 @@ class SignalWorker {
     for (const market of markets) {
       const ticks = tickCollector.getTickHistory(market);
       const digits = tickCollector.getDigitHistory(market);
+
+      // Log tick collection status
+      console.log(`[SignalWorker] 📊 ${market}: ${ticks.length} ticks, ${digits.length} digits`);
+
       const signal = strategyEngine.generateSignal({
         market,
         tickHistory: ticks,
@@ -104,6 +119,13 @@ class SignalWorker {
         digit: signal.digit
       };
 
+      // Log signal result
+      if (signal.shouldTrade) {
+        console.log(`[SignalWorker] ✅ Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
+      } else {
+        console.log(`[SignalWorker] ⏳ No trade signal: ${signal.reason || 'confidence too low'}`);
+      }
+
       if (!signal.shouldTrade) continue;
 
       if (!best || signal.confidence > best.confidence) {
@@ -111,7 +133,15 @@ class SignalWorker {
       }
     }
 
-    if (!best || this.smartDelayTimers.has(best.market)) return;
+    if (!best) {
+      console.log('[SignalWorker] ⏳ No qualifying signal this tick');
+      return;
+    }
+
+    if (this.smartDelayTimers.has(best.market)) {
+      console.log(`[SignalWorker] ⏳ Smart delay active for ${best.market}, waiting...`);
+      return;
+    }
 
     const timer = setTimeout(async () => {
       this.smartDelayTimers.delete(best.market);
