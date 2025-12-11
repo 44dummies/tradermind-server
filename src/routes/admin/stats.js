@@ -46,7 +46,36 @@ router.get('/', async (req, res) => {
             }
         }
 
-        // Build query for trades from activity logs\n        let tradesQuery = supabase\n            .from('trading_activity_logs')\n            .select('*')\n            .in('action_type', ['trade_won', 'trade_lost', 'trade_closed']);\n\n        if (sessionId) {\n            tradesQuery = tradesQuery.eq('session_id', sessionId);\n        }\n        if (dateFilter || startDate) {\n            tradesQuery = tradesQuery.gte('created_at', dateFilter || startDate);\n        }\n        if (endDate) {\n            tradesQuery = tradesQuery.lte('created_at', endDate);\n        }\n\n        const { data: trades, error } = await tradesQuery.order('created_at', { ascending: true });\n\n        if (error) throw error;\n\n        // Calculate statistics\n        const wins = (trades || []).filter(t => t.action_type === 'trade_won');\n        const losses = (trades || []).filter(t => t.action_type === 'trade_lost');\n        const completedTrades = trades || [];\n\n        let totalProfit = 0;\n        completedTrades.forEach(t => {\n            if (t.action_details?.profit) totalProfit += parseFloat(t.action_details.profit) || 0;\n            else if (t.action_details?.pnl) totalProfit += parseFloat(t.action_details.pnl) || 0;\n        });
+        // Build query for trades from activity logs
+        let tradesQuery = supabase
+            .from('trading_activity_logs')
+            .select('*')
+            .in('action_type', ['trade_won', 'trade_lost', 'trade_closed']);
+
+        if (sessionId) {
+            tradesQuery = tradesQuery.eq('session_id', sessionId);
+        }
+        if (dateFilter || startDate) {
+            tradesQuery = tradesQuery.gte('created_at', dateFilter || startDate);
+        }
+        if (endDate) {
+            tradesQuery = tradesQuery.lte('created_at', endDate);
+        }
+
+        const { data: trades, error } = await tradesQuery.order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        // Calculate statistics
+        const wins = (trades || []).filter(t => t.action_type === 'trade_won');
+        const losses = (trades || []).filter(t => t.action_type === 'trade_lost');
+        const completedTrades = trades || [];
+
+        let totalProfit = 0;
+        completedTrades.forEach(t => {
+            if (t.action_details?.profit) totalProfit += parseFloat(t.action_details.profit) || 0;
+            else if (t.action_details?.pnl) totalProfit += parseFloat(t.action_details.pnl) || 0;
+        });
 
         const avgProfit = completedTrades.length > 0 ? totalProfit / completedTrades.length : 0;
 
