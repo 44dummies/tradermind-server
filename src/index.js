@@ -36,6 +36,11 @@ const isUser = require('./middleware/isUser');
 
 const { setupSocketHandlers } = require('./socket');
 
+// Event-driven architecture modules
+const { messageQueue } = require('./queue');
+const { startAllWorkers, stopAllWorkers, getWorkerStats } = require('./workers');
+const eventsRouter = require('./routes/events');
+
 const { initializeDefaultChatrooms } = require('./services/assignment');
 const { startCronJobs } = require('./cron');
 const schedulerService = require('./services/schedulerService');
@@ -117,6 +122,9 @@ app.use('/api/admin/recovery', authMiddleware, isAdmin, adminRecoveryRoutes);
 app.use('/api/user', authMiddleware, isUser, userTradingRoutes);
 app.use('/api/user/recovery', authMiddleware, isUser, userRecoveryRoutes);
 
+// SSE Events route for real-time dashboard
+app.use('/api/events', eventsRouter);
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -192,8 +200,17 @@ process.on('SIGTERM', () => {
   });
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully...');
+
+  // Stop workers and disconnect queue
+  try {
+    await stopAllWorkers();
+    await messageQueue.disconnect();
+  } catch (err) {
+    console.error('Error stopping workers:', err.message);
+  }
+
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
@@ -219,12 +236,30 @@ async function startServer() {
     const botManager = require('./services/botManager');
     botManager.initialize(io);
 
+    // Initialize Redis message queue
+    try {
+      await messageQueue.connect();
+      console.log('Message queue connected');
+
+      // Start background workers
+      await startAllWorkers(io);
+      console.log('Background workers started');
+
+      // Initialize SSE bridge
+      const { initSSEBridge } = require('./routes/events');
+      await initSSEBridge();
+    } catch (queueErr) {
+      console.warn('Message queue/workers not started (Redis may not be available):', queueErr.message);
+      console.log('Running in direct mode without queue');
+    }
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`TraderMind Real-time Server running on port ${PORT}`);
       console.log(`WebSocket ready for connections`);
       console.log(`Community System active`);
       console.log(`Trading System active`);
       console.log(`File storage initialized`);
+      console.log(`Event-Driven Architecture: ${messageQueue.isReady() ? 'ENABLED' : 'DISABLED (fallback mode)'}`);
       console.log(`CORS origins: ${corsOrigins.join(', ')}`);
     });
   } catch (err) {
