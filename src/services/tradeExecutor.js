@@ -462,11 +462,42 @@ class TradeExecutor {
           ? `❌ Stop Loss hit! Loss: $${finalPL.toFixed(2)}`
           : `Trade closed. P&L: $${finalPL.toFixed(2)}`;
 
+      // Get session trade history for this user
+      const { data: userTrades } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('session_id', session.id)
+        .eq('user_id', tradeResult.userId)
+        .order('created_at', { ascending: false });
+
+      const trades = userTrades || [];
+      const wins = trades.filter(t => t.profit_loss > 0).length;
+      const losses = trades.filter(t => t.profit_loss <= 0).length;
+      const totalPL = trades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
+
+      // Send session completion report
       await this.sendNotification(tradeResult.userId, {
-        type: reason,
-        message,
-        sessionId: session.id,
-        profitLoss: finalPL
+        type: 'session_completed',
+        message: reason === 'tp_hit'
+          ? `🎉 Congratulations! Your trading session ended in profit.`
+          : `📊 Your trading session has ended.`,
+        data: {
+          sessionId: session.id,
+          sessionName: session.name || session.session_name,
+          reason: reason,
+          summary: {
+            totalTrades: trades.length,
+            wins: wins,
+            losses: losses,
+            winRate: trades.length > 0 ? ((wins / trades.length) * 100).toFixed(1) + '%' : '0%',
+            totalProfitLoss: totalPL.toFixed(2),
+            finalPL: finalPL.toFixed(2),
+            result: totalPL >= 0 ? 'profit' : 'loss'
+          },
+          takeProfit: invitation.tp,
+          stopLoss: invitation.sl,
+          timestamp: new Date().toISOString()
+        }
       });
 
       // Safety: track loss streaks
