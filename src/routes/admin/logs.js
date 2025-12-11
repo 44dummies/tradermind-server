@@ -110,7 +110,7 @@ router.get('/errors', async (req, res) => {
         const { data, error } = await supabase
             .from('trading_activity_logs')
             .select('*')
-            .eq('level', 'error')
+            .eq('action_type', 'error')
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
