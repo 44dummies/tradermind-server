@@ -1,10 +1,12 @@
 const strategyEngine = require('./strategyEngine');
 const tickCollector = require('./tickCollector');
 const tradeExecutor = require('./tradeExecutor');
+const riskEngine = require('./trading-engine/risk/RiskEngine');
 const config = require('../config/strategyConfig');
 const { supabase } = require('../db/supabase');
 const { logSignal } = require('../routes/debug');
 const { captureError, trackEvent } = require('../utils/alert');
+
 
 /**
  * Signal Worker (initial version)
@@ -207,6 +209,48 @@ class SignalWorker {
       });
 
       try {
+        // Risk Engine Evaluation
+        const { data: todayTrades } = await supabase
+          .from('trades')
+          .select('profit_loss')
+          .eq('session_id', this.sessionId)
+          .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString());
+
+        const dailyLoss = Math.abs(
+          (todayTrades || [])
+            .filter(t => t.profit_loss < 0)
+            .reduce((sum, t) => sum + Math.abs(t.profit_loss), 0)
+        );
+
+        const riskContext = {
+          dailyLoss,
+          currentExposure: tradeExecutor.activeConnections?.size || 0,
+          signal: {
+            type: revalidated.side,
+            symbol: revalidated.market,
+            confidence: revalidated.confidence
+          }
+        };
+
+        const riskCheck = await riskEngine.evaluateRisk(riskContext);
+
+        if (!riskCheck.allowed) {
+          console.warn(`[SignalWorker] 🛡️ Risk Engine BLOCKED trade: ${riskCheck.reasons.join(', ')}`);
+          await supabase.from('trading_activity_logs').insert({
+            action_type: 'risk_block',
+            action_details: {
+              level: 'warning',
+              message: `Trade blocked by RiskEngine: ${riskCheck.reasons.join(', ')}`,
+              market: revalidated.market,
+              dailyLoss
+            },
+            session_id: this.sessionId,
+            created_at: new Date().toISOString()
+          });
+          return;
+        }
+
+        console.log('[SignalWorker] ✅ Risk check passed, executing trade...');
         await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
         trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
       } catch (error) {

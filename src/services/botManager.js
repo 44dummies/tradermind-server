@@ -14,6 +14,7 @@ class BotManager {
       tradesExecuted: 0,
       errors: []
     };
+    this.sessionTimer = null; // Auto-stop timer
   }
 
   initialize(io) {
@@ -142,6 +143,42 @@ class BotManager {
     // Start signal worker (pass sessionTable so worker knows where to check status)
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
+    // Session Auto-Stop Timer
+    if (session.duration_minutes && session.duration_minutes > 0) {
+      const durationMs = session.duration_minutes * 60 * 1000;
+      console.log(`[BotManager] ⏱️ Session auto-stop scheduled in ${session.duration_minutes} minutes`);
+
+      this.sessionTimer = setTimeout(async () => {
+        console.log(`[BotManager] ⏰ Session duration (${session.duration_minutes}min) reached. Auto-stopping...`);
+        try {
+          await this.stopBot();
+
+          // Log auto-stop event
+          await supabase.from('trading_activity_logs').insert({
+            action_type: 'session_auto_stop',
+            action_details: {
+              level: 'info',
+              message: `Session auto-stopped after ${session.duration_minutes} minutes`,
+              sessionId
+            },
+            session_id: sessionId,
+            created_at: new Date().toISOString()
+          });
+
+          // Emit event to connected clients
+          if (this.io) {
+            this.io.emit('session_ended', {
+              sessionId,
+              reason: 'duration_expired',
+              message: `Session completed after ${session.duration_minutes} minutes`
+            });
+          }
+        } catch (err) {
+          console.error('[BotManager] Auto-stop error:', err);
+        }
+      }, durationMs);
+    }
+
     console.log(`[BotManager] Bot started for session ${sessionId} (Table: ${sessionTable})`);
     return this.getState();
   }
@@ -157,6 +194,13 @@ class BotManager {
     // Stop components
     signalWorker.stop();
     tradeExecutor.disconnectAll();
+
+    // Clear auto-stop timer if running
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+      console.log('[BotManager] ⏱️ Session timer cleared');
+    }
 
     // Update state
     this.state.isRunning = false;
@@ -222,6 +266,12 @@ class BotManager {
     signalWorker.stop();
     tradeExecutor.disconnectAll();
     tradeExecutor.paused = true;
+
+    // Clear auto-stop timer
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+    }
 
     // Reset state
     this.state.isRunning = false;
