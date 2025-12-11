@@ -239,11 +239,16 @@ router.get('/constants', authMiddleware, async (req, res) => {
           { id: 'RSI_TREND', name: 'RSI + Trend Analysis', description: 'Combines RSI with trend regression' }
         ],
         markets: [
-          { id: 'R_100', name: 'Volatility 100 Index', tickInterval: 1 },
-          { id: 'R_75', name: 'Volatility 75 Index', tickInterval: 1 },
-          { id: 'R_50', name: 'Volatility 50 Index', tickInterval: 1 },
-          { id: 'R_25', name: 'Volatility 25 Index', tickInterval: 1 },
-          { id: 'R_10', name: 'Volatility 10 Index', tickInterval: 1 }
+          { id: '1HZ100V', name: 'Volatility 100 (1s) Index', tickInterval: 1 },
+          { id: '1HZ75V', name: 'Volatility 75 (1s) Index', tickInterval: 1 },
+          { id: '1HZ50V', name: 'Volatility 50 (1s) Index', tickInterval: 1 },
+          { id: '1HZ25V', name: 'Volatility 25 (1s) Index', tickInterval: 1 },
+          { id: '1HZ10V', name: 'Volatility 10 (1s) Index', tickInterval: 1 },
+          { id: 'JD100', name: 'Jump 100 Index', tickInterval: 1 },
+          { id: 'JD75', name: 'Jump 75 Index', tickInterval: 1 },
+          { id: 'JD50', name: 'Jump 50 Index', tickInterval: 1 },
+          { id: 'JD25', name: 'Jump 25 Index', tickInterval: 1 },
+          { id: 'JD10', name: 'Jump 10 Index', tickInterval: 1 }
         ],
         stakingModes: [
           { id: 'fixed', name: 'Fixed Stake', description: 'Same stake every trade' },
