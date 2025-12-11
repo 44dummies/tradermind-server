@@ -50,7 +50,7 @@ class TradeExecutor {
         throw new Error('Session not found or not active');
       }
 
-      // Get accepted accounts
+      // Get accepted accounts - join with trading_accounts to get deriv_token
       const { data: invitations, error: invError } = await supabase
         .from('session_participants')
         .select('*')
@@ -76,17 +76,31 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const participant of invitations) {
-        // Check if participant has a deriv token
-        if (!participant.deriv_token) {
+        // First, get the user's trading account to find the deriv_token
+        const { data: tradingAccount, error: accountErr } = await supabase
+          .from('trading_accounts')
+          .select('deriv_token, deriv_account_id, currency, is_active')
+          .eq('user_id', participant.user_id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        if (accountErr) {
+          console.error(`[TradeExecutor] Error fetching trading account for user ${participant.user_id}:`, accountErr);
+        }
+
+        // Check if we have a valid trading token
+        const derivToken = tradingAccount?.deriv_token;
+        if (!derivToken) {
           invalidAccounts.push({
             userId: participant.user_id,
-            reason: 'No trading token provided',
+            reason: 'No trading token provided - user has no active trading account',
             participantId: participant.id
           });
           continue;
         }
 
-        // Get user profile for deriv_id
+        // Get user profile for deriv_id (use account data if available)
         const { data: profile, error: profileErr } = await supabase
           .from('user_profiles')
           .select('deriv_id, currency')
@@ -102,6 +116,16 @@ class TradeExecutor {
           continue;
         }
 
+        // Use currency from trading account if profile doesn't have it
+        if (!profile.currency && tradingAccount?.currency) {
+          profile.currency = tradingAccount.currency;
+        }
+
+        // Use deriv_account_id from trading account if profile doesn't have deriv_id
+        if (!profile.deriv_id && tradingAccount?.deriv_account_id) {
+          profile.deriv_id = tradingAccount.deriv_account_id;
+        }
+
         // Check TP/SL are set
         if (!participant.tp || !participant.sl) {
           invalidAccounts.push({
@@ -112,8 +136,8 @@ class TradeExecutor {
           continue;
         }
 
-        const minTp = session.default_tp || strategyConfig.minTp;
-        const minSl = session.default_sl || strategyConfig.minSl;
+        const minTp = session.default_tp || session.profit_threshold || strategyConfig.minTp;
+        const minSl = session.default_sl || session.loss_threshold || strategyConfig.minSl;
         if (participant.tp < minTp || participant.sl < minSl) {
           invalidAccounts.push({
             userId: participant.user_id,
@@ -126,7 +150,7 @@ class TradeExecutor {
         validAccounts.push({
           participant,
           profile,
-          apiToken: participant.deriv_token // Use token directly from participant
+          apiToken: derivToken // Use token from trading_accounts table
         });
       }
 
