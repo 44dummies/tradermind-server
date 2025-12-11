@@ -159,7 +159,7 @@ class SessionManager {
    */
   async acceptSession(userId, sessionId, tpsl) {
     try {
-      const { takeProfit, stopLoss } = tpsl;
+      const { takeProfit, stopLoss, derivToken } = tpsl;
 
       // Get session first to know the mode
       const { data: session, error: sessionError } = await supabase
@@ -172,52 +172,74 @@ class SessionManager {
         throw new Error('Session not found');
       }
 
-      // Resolve account based on session mode (Dual Account System)
-      // If mode is set (v2), find specific account type. If null (v1), fallback to active.
-      let accountQuery = supabase
-        .from('trading_accounts')
-        .select('*')
-        .eq('user_id', userId);
+      // If derivToken is provided directly, use it (v2 flow)
+      // Otherwise, look up from trading_accounts (v1 flow)
+      let account = null;
+      let derivTokenToUse = derivToken;
 
-      if (session.mode) {
-        accountQuery = accountQuery.eq('account_type', session.mode);
-      } else {
-        accountQuery = accountQuery.eq('is_active', true);
+      if (!derivToken) {
+        // Resolve account based on session mode (Dual Account System)
+        let accountQuery = supabase
+          .from('trading_accounts')
+          .select('*')
+          .eq('user_id', userId);
+
+        if (session.mode) {
+          accountQuery = accountQuery.eq('account_type', session.mode);
+        } else {
+          accountQuery = accountQuery.eq('is_active', true);
+        }
+
+        const { data: foundAccount, error: accountError } = await accountQuery.maybeSingle();
+
+        if (accountError || !foundAccount) {
+          const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
+          throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
+        }
+
+        account = foundAccount;
+        derivTokenToUse = account.deriv_token;
+
+        // Check balance if we have account data
+        if (account.balance < session.minimum_balance) {
+          throw new Error(`Balance too low. Minimum required: $${session.minimum_balance}`);
+        }
       }
 
-      const { data: account, error: accountError } = await accountQuery.maybeSingle();
+      // Validate TP/SL (use defaults if not provided)
+      const finalTP = takeProfit || session.default_tp || 10;
+      const finalSL = stopLoss || session.default_sl || 5;
 
-      if (accountError || !account) {
-        const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
-        throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
-      }
-
-      // Check balance
-      if (account.balance < session.minimum_balance) {
-        throw new Error(`Balance too low. Minimum required: $${session.minimum_balance}`);
-      }
-
-      // Validate TP/SL
-      if (takeProfit < session.default_tp) {
+      if (finalTP < session.default_tp) {
         throw new Error(`Take Profit must be at least $${session.default_tp}`);
       }
 
-      if (stopLoss < session.default_sl) {
+      if (finalSL < session.default_sl) {
         throw new Error(`Stop Loss must be at least $${session.default_sl}`);
       }
 
-      // Update invitation
+      // Update invitation - use account info if available, otherwise just store token
+      const updateData = {
+        status: 'accepted',
+        take_profit: finalTP,
+        stop_loss: finalSL,
+        accepted_at: new Date().toISOString()
+      };
+
+      // Only add account fields if we looked up an account
+      if (account) {
+        updateData.account_id = account.id;
+        updateData.account_type = account.account_type;
+      }
+
+      // Store derivToken if provided (for v2 flow)
+      if (derivTokenToUse) {
+        updateData.deriv_token = derivTokenToUse;
+      }
+
       const { data: invitation, error: updateError } = await supabase
         .from('session_invitations')
-        .update({
-          status: 'accepted',
-          take_profit: takeProfit,
-          stop_loss: stopLoss,
-          // Store the resolved account info for specific binding
-          account_id: account.id,
-          account_type: account.account_type,
-          accepted_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('session_id', sessionId)
         .eq('user_id', userId)
         .select()

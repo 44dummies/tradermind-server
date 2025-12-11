@@ -202,13 +202,13 @@ router.put('/tpsl/:sessionId', isUser, async (req, res) => {
  */
 router.post('/sessions/:sessionId/accept', isUser, async (req, res) => {
   try {
-    const { takeProfit, stopLoss } = req.body;
+    const { takeProfit, stopLoss, tp, sl, derivToken } = req.body;
     const userId = req.user.userId;
 
     const result = await sessionManager.acceptSession(
       userId,
       req.params.sessionId,
-      { takeProfit, stopLoss }
+      { takeProfit: takeProfit || tp, stopLoss: stopLoss || sl, derivToken }
     );
 
     res.json(result);
