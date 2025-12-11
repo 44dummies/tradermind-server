@@ -86,7 +86,7 @@ router.get('/dashboard', isUser, async (req, res) => {
 
     // Get user settings
     const { data: settings, error: settingsError } = await supabase
-      .from('user_settings')
+      .from('user_trading_settings')
       .select('*')
       .eq('user_id', userId)
       .single();
@@ -149,7 +149,7 @@ router.put('/tpsl', isUser, async (req, res) => {
 
     // Upsert user settings
     const { data, error } = await supabase
-      .from('user_settings')
+      .from('user_trading_settings')
       .upsert({
         user_id: userId,
         default_tp: tp,
@@ -202,13 +202,13 @@ router.put('/tpsl/:sessionId', isUser, async (req, res) => {
  */
 router.post('/sessions/:sessionId/accept', isUser, async (req, res) => {
   try {
-    const { takeProfit, stopLoss } = req.body;
+    const { takeProfit, stopLoss, tp, sl, derivToken } = req.body;
     const userId = req.user.userId;
 
     const result = await sessionManager.acceptSession(
       userId,
       req.params.sessionId,
-      { takeProfit, stopLoss }
+      { takeProfit: takeProfit || tp, stopLoss: stopLoss || sl, derivToken }
     );
 
     res.json(result);

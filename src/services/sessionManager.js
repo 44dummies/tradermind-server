@@ -159,7 +159,7 @@ class SessionManager {
    */
   async acceptSession(userId, sessionId, tpsl) {
     try {
-      const { takeProfit, stopLoss } = tpsl;
+      const { takeProfit, stopLoss, derivToken } = tpsl;
 
       // Get session first to know the mode
       const { data: session, error: sessionError } = await supabase
@@ -172,59 +172,102 @@ class SessionManager {
         throw new Error('Session not found');
       }
 
-      // Resolve account based on session mode (Dual Account System)
-      // If mode is set (v2), find specific account type. If null (v1), fallback to active.
-      let accountQuery = supabase
-        .from('trading_accounts')
-        .select('*')
-        .eq('user_id', userId);
+      // If derivToken is provided directly, use it (v2 flow)
+      // Otherwise, look up from trading_accounts (v1 flow)
+      let account = null;
+      let derivTokenToUse = derivToken;
 
-      if (session.mode) {
-        accountQuery = accountQuery.eq('account_type', session.mode);
-      } else {
-        accountQuery = accountQuery.eq('is_active', true);
+      if (!derivToken) {
+        // Resolve account based on session mode (Dual Account System)
+        let accountQuery = supabase
+          .from('trading_accounts')
+          .select('*')
+          .eq('user_id', userId);
+
+        if (session.mode) {
+          accountQuery = accountQuery.eq('account_type', session.mode);
+        } else {
+          accountQuery = accountQuery.eq('is_active', true);
+        }
+
+        const { data: foundAccount, error: accountError } = await accountQuery.maybeSingle();
+
+        if (accountError || !foundAccount) {
+          const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
+          throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
+        }
+
+        account = foundAccount;
+        derivTokenToUse = account.deriv_token;
+
+        // Check balance if we have account data
+        if (account.balance < session.minimum_balance) {
+          throw new Error(`Balance too low. Minimum required: $${session.minimum_balance}`);
+        }
       }
 
-      const { data: account, error: accountError } = await accountQuery.maybeSingle();
+      // Validate TP/SL (use defaults if not provided)
+      const finalTP = takeProfit || session.default_tp || 10;
+      const finalSL = stopLoss || session.default_sl || 5;
 
-      if (accountError || !account) {
-        const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
-        throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
-      }
-
-      // Check balance
-      if (account.balance < session.minimum_balance) {
-        throw new Error(`Balance too low. Minimum required: $${session.minimum_balance}`);
-      }
-
-      // Validate TP/SL
-      if (takeProfit < session.default_tp) {
+      if (finalTP < session.default_tp) {
         throw new Error(`Take Profit must be at least $${session.default_tp}`);
       }
 
-      if (stopLoss < session.default_sl) {
+      if (finalSL < session.default_sl) {
         throw new Error(`Stop Loss must be at least $${session.default_sl}`);
       }
 
-      // Update invitation
-      const { data: invitation, error: updateError } = await supabase
+      // Update or Insert invitation
+      // Schema: id, session_id, user_id, account_id, status, invited_by, trades_count, profit, loss, responded_at, created_at, updated_at
+      const updateData = {
+        status: 'accepted',
+        responded_at: new Date().toISOString()
+      };
+
+      // Only add account fields if we looked up an account
+      if (account) {
+        updateData.account_id = account.id;
+      }
+
+      // Check if invitation exists
+      const { data: existingInvite } = await supabase
         .from('session_invitations')
-        .update({
-          status: 'accepted',
-          take_profit: takeProfit,
-          stop_loss: stopLoss,
-          // Store the resolved account info for specific binding
-          account_id: account.id,
-          account_type: account.account_type,
-          accepted_at: new Date().toISOString()
-        })
+        .select('id')
         .eq('session_id', sessionId)
         .eq('user_id', userId)
-        .select()
-        .single();
+        .maybeSingle();
 
-      if (updateError) {
-        throw new Error(`Failed to accept session: ${updateError.message}`);
+      let invitation;
+
+      if (existingInvite) {
+        // Update existing
+        const { data, error: updateError } = await supabase
+          .from('session_invitations')
+          .update(updateData)
+          .eq('session_id', sessionId)
+          .eq('user_id', userId)
+          .select()
+          .single();
+
+        if (updateError) throw new Error(`Failed to accept session: ${updateError.message}`);
+        invitation = data;
+      } else {
+        // Insert new (Public session join)
+        const { data, error: insertError } = await supabase
+          .from('session_invitations')
+          .insert({
+            session_id: sessionId,
+            user_id: userId,
+            invited_by: session.created_by || session.admin_id, // Support both column names
+            ...updateData,
+            status: 'accepted' // Ensure status is set
+          })
+          .select()
+          .single();
+
+        if (insertError) throw new Error(`Failed to join session: ${insertError.message}`);
+        invitation = data;
       }
 
       console.log(`[SessionManager] ✅ User ${userId} accepted session ${sessionId}`);
@@ -543,10 +586,13 @@ class SessionManager {
    */
   async logActivity(activity) {
     try {
+      const { action, details, ...rest } = activity;
       await supabase
         .from('trading_activity_logs')
         .insert({
-          ...activity,
+          action_type: action,
+          action_details: details,
+          ...rest,
           created_at: new Date().toISOString()
         });
     } catch (error) {

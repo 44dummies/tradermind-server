@@ -18,5 +18,6 @@ router.use('/notifications', notificationRoutes);
 router.use('/logs', logsRoutes);
 router.use('/recovery', recoveryRoutes);
 router.use('/users', usersRoutes);
+router.use('/migration', require('./migration'));
 
 module.exports = router;

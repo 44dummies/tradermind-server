@@ -23,16 +23,32 @@ class TradeExecutor {
     this.consecutiveLosses = 0;
     this.apiErrorCount = 0;
     this.paused = false;
+    this.io = null;
+    this.processingSignals = new Set(); // Lock for concurrent signals
+  }
+
+  setSocket(io) {
+    this.io = io;
   }
 
   /**
-   * Execute trade for multiple accounts
+   * Execute trade for multiple accounts with improved locking
    */
   async executeMultiAccountTrade(signal, sessionId) {
+    // Create a lock key based on session and signal details
+    const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
+
+    if (this.processingSignals.has(lockKey)) {
+      console.log(`[TradeExecutor] 🔒 Skipping concurrent signal: ${lockKey}`);
+      return { executed: 0, total: 0, reason: 'locked' };
+    }
+
+    this.processingSignals.add(lockKey);
+
     try {
       if (this.paused) {
-        console.warn('[TradeExecutor] Guardrail active: paused. Skipping execution.');
-        return { success: false, message: 'Bot paused by safety guard' };
+        console.log('[TradeExecutor] ⏸️ Trading paused, skipping signal');
+        return { executed: 0, total: 0 };
       }
 
       console.log(`[TradeExecutor] 🚀 Executing multi-account trade for session ${sessionId}`);
@@ -40,7 +56,7 @@ class TradeExecutor {
 
       // Get session details
       const { data: session, error: sessionError } = await supabase
-        .from('trading_sessions') // Use V1 table (matching trading.js)
+        .from(sessionTable) // Use correct table
         .select('*')
         .eq('id', sessionId)
         .eq('status', 'running')
@@ -50,7 +66,9 @@ class TradeExecutor {
         throw new Error('Session not found or not active');
       }
 
-      // Get accepted accounts
+      console.log(`[TradeExecutor] Session: ${session.name} (Table: ${sessionTable}, Type: ${session.type || 'N/A'}, MinBal: $${session.min_balance || 0}, TP: $${session.default_tp}, SL: $${session.default_sl})`);
+
+      // Get accepted accounts - join with trading_accounts to get deriv_token
       const { data: invitations, error: invError } = await supabase
         .from('session_participants')
         .select('*')
@@ -76,17 +94,40 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const participant of invitations) {
-        // Check if participant has a deriv token
-        if (!participant.deriv_token) {
+        let derivToken = participant.deriv_token;
+        let tradingAccount = null;
+
+        // If no token in participant record (V1 flow), look up trading account
+        if (!derivToken) {
+          const { data: account, error: accountErr } = await supabase
+            .from('trading_accounts')
+            .select('deriv_token, deriv_account_id, currency, is_active')
+            .eq('user_id', participant.user_id)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+
+          if (accountErr) {
+            console.error(`[TradeExecutor] Error fetching trading account for user ${participant.user_id}:`, accountErr);
+          }
+
+          if (account) {
+            tradingAccount = account;
+            derivToken = account.deriv_token;
+          }
+        }
+
+        // Check if we have a valid trading token
+        if (!derivToken) {
           invalidAccounts.push({
             userId: participant.user_id,
-            reason: 'No trading token provided',
+            reason: 'No trading token provided - user has no active trading account',
             participantId: participant.id
           });
           continue;
         }
 
-        // Get user profile for deriv_id
+        // Get user profile for deriv_id (use account data if available)
         const { data: profile, error: profileErr } = await supabase
           .from('user_profiles')
           .select('deriv_id, currency')
@@ -102,19 +143,35 @@ class TradeExecutor {
           continue;
         }
 
-        // Check TP/SL are set
-        if (!participant.tp || !participant.sl) {
+        // Use currency from trading account if profile doesn't have it
+        if (!profile.currency && tradingAccount?.currency) {
+          profile.currency = tradingAccount.currency;
+        }
+
+        // Use deriv_account_id from trading account if profile doesn't have deriv_id
+        if (!profile.deriv_id && tradingAccount?.deriv_account_id) {
+          profile.deriv_id = tradingAccount.deriv_account_id;
+        }
+
+        // Use session defaults if participant TP/SL not set (V2 schema requires them, but be defensive)
+        const effectiveTp = participant.tp || session.default_tp || 10;
+        const effectiveSl = participant.sl || session.default_sl || 5;
+
+        // V2: Check min_balance requirement
+        const minBalance = session.min_balance || 0;
+        if (participant.initial_balance && participant.initial_balance < minBalance) {
           invalidAccounts.push({
             userId: participant.user_id,
-            reason: 'TP/SL not set',
+            reason: `Balance ${participant.initial_balance} below minimum ${minBalance}`,
             participantId: participant.id
           });
           continue;
         }
 
-        const minTp = session.default_tp || strategyConfig.minTp;
-        const minSl = session.default_sl || strategyConfig.minSl;
-        if (participant.tp < minTp || participant.sl < minSl) {
+        // Validate TP/SL meet session minimums
+        const minTp = session.default_tp || session.profit_threshold || strategyConfig.minTp;
+        const minSl = session.default_sl || session.loss_threshold || strategyConfig.minSl;
+        if (effectiveTp < minTp || effectiveSl < minSl) {
           invalidAccounts.push({
             userId: participant.user_id,
             reason: `TP/SL below minimums (tp>=${minTp}, sl>=${minSl})`,
@@ -123,10 +180,14 @@ class TradeExecutor {
           continue;
         }
 
+        // Store effective values for trade execution
+        participant.effectiveTp = effectiveTp;
+        participant.effectiveSl = effectiveSl;
+
         validAccounts.push({
           participant,
           profile,
-          apiToken: participant.deriv_token // Use token directly from participant
+          apiToken: derivToken // Use token from trading_accounts table
         });
       }
 
@@ -222,6 +283,10 @@ class TradeExecutor {
         console.error('[TradeExecutor] Pausing bot due to API error threshold');
       }
       throw error;
+    } finally {
+      // Release lock
+      const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
+      this.processingSignals.delete(lockKey);
     }
   }
 
@@ -262,6 +327,21 @@ class TradeExecutor {
 
       console.log(`[TradeExecutor] ✅ Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
 
+      // Emit trade start event
+      if (this.io) {
+        this.io.emit('trade_update', {
+          type: 'open',
+          contractId: contract.contract_id,
+          market: session.markets ? session.markets[0] : 'R_100', // Assuming single market for now
+          signal: signal.side,
+          side: signal.side,
+          stake: stake,
+          price: contract.buy_price,
+          payout: contract.payout,
+          timestamp: new Date().toISOString()
+        });
+      }
+
       return {
         success: true,
         participantId: participant.id,
@@ -272,8 +352,8 @@ class TradeExecutor {
         payout: contract.payout,
         signal,
         stake,
-        takeProfit: participant.tp,
-        stopLoss: participant.sl,
+        takeProfit: participant.effectiveTp || participant.tp,
+        stopLoss: participant.effectiveSl || participant.sl,
         timestamp: new Date()
       };
 
@@ -512,6 +592,18 @@ class TradeExecutor {
       }
 
       console.log(`[TradeExecutor] ✅ Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
+
+      // Emit trade close event
+      if (this.io) {
+        this.io.emit('trade_update', {
+          type: 'close',
+          contractId: tradeResult.contractId,
+          result: finalPL > 0 ? 'win' : 'loss',
+          profit: finalPL,
+          reason: reason,
+          timestamp: new Date().toISOString()
+        });
+      }
 
     } catch (error) {
       console.error('[TradeExecutor] Close trade error:', error);

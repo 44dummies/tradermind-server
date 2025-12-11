@@ -3,6 +3,8 @@ const tickCollector = require('./tickCollector');
 const tradeExecutor = require('./tradeExecutor');
 const config = require('../config/strategyConfig');
 const { supabase } = require('../db/supabase');
+const { logSignal } = require('../routes/debug');
+const { captureError, trackEvent } = require('../utils/alert');
 
 /**
  * Signal Worker (initial version)
@@ -19,10 +21,16 @@ class SignalWorker {
     this.smartDelayTimers = new Map(); // market -> timeout id
     this.sessionId = null;
     this.latestStats = {}; // market -> stats object
+    this.lastSignal = null;
+    this.io = null; // Socket.IO instance
   }
 
   getLatestStats() {
     return this.latestStats;
+  }
+
+  setSocket(io) {
+    this.io = io;
   }
 
   async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions') {
@@ -102,12 +110,31 @@ class SignalWorker {
       // Log tick collection status
       console.log(`[SignalWorker] 📊 ${market}: ${ticks.length} ticks, ${digits.length} digits`);
 
+      // Emit tick update to market room
+      if (this.io && ticks.length > 0) {
+        const latestTick = ticks[ticks.length - 1];
+        this.io.to(`market_${market}`).emit('tick_update', {
+          market,
+          tick: latestTick.quote,
+          time: latestTick.epoch
+        });
+      }
+
       const signal = strategyEngine.generateSignal({
         market,
         tickHistory: ticks,
         digitHistory: digits,
         overrides: {} // Could load from session config
       });
+
+      // Emit signal analysis update to market room
+      if (this.io) {
+        this.io.to(`market_${market}`).emit('signal_update', {
+          market,
+          ...signal,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       // Store stats for analytics
       this.latestStats[market] = {
@@ -118,6 +145,18 @@ class SignalWorker {
         side: signal.side,
         digit: signal.digit
       };
+
+      // Log to debug buffer for /debug/signals endpoint
+      logSignal({
+        symbol: market,
+        price: ticks.length > 0 ? ticks[ticks.length - 1].quote : 0,
+        indicators: signal.parts || {},
+        conditionsPassed: signal.shouldTrade ? ['CONFIDENCE_OK'] : [],
+        conditionsFailed: signal.shouldTrade ? [] : ['CONFIDENCE_LOW'],
+        signalGenerated: signal.shouldTrade,
+        signalType: signal.side?.toLowerCase() === 'over' ? 'call' : 'put',
+        confidence: signal.confidence || 0
+      });
 
       // Log signal result
       if (signal.shouldTrade) {
@@ -155,19 +194,24 @@ class SignalWorker {
       }
 
       // Log strategy decision
-      await supabase.from('activity_logs_v2').insert({
-        type: 'signal',
-        level: 'info',
-        message: `Signal ${revalidated.side} digit ${revalidated.digit} conf ${revalidated.confidence.toFixed(2)}`,
-        metadata: { market: revalidated.market, parts: revalidated.parts },
+      await supabase.from('trading_activity_logs').insert({
+        action_type: 'signal',
+        action_details: {
+          level: 'info',
+          message: `Signal ${revalidated.side} digit ${revalidated.digit} conf ${revalidated.confidence.toFixed(2)}`,
+          market: revalidated.market,
+          parts: revalidated.parts
+        },
         session_id: this.sessionId,
         created_at: new Date().toISOString()
       });
 
       try {
         await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
+        trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
       } catch (error) {
         console.error('[SignalWorker] Trade execution error:', error);
+        captureError(error, { market: revalidated.market, sessionId: this.sessionId, phase: 'execution' });
       }
     }, config.smartDelayMs || 1500);
 

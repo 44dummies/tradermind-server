@@ -102,6 +102,28 @@ router.get('/sessions', authMiddleware, async (req, res) => {
   }
 });
 
+// Endpoint to get session tick history (for chart warmup)
+router.get('/sessions/:id/ticks', authMiddleware, async (req, res) => {
+  try {
+    const session = await trading.getSession(req.params.id);
+    if (!session) return res.status(404).json({ success: false, error: 'Session not found' });
+
+    // Get tick history from collector for each market in the session
+    const tickCollector = require('../services/tickCollector');
+    const markets = session.markets || ['R_100'];
+    const ticks = {};
+
+    markets.forEach(market => {
+      ticks[market] = tickCollector.getTickHistory(market);
+    });
+
+    res.json({ success: true, data: ticks });
+  } catch (error) {
+    console.error('Error fetching session ticks:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/sessions/:id', authMiddleware, async (req, res) => {
   try {
     const session = await trading.getSession(req.params.id);

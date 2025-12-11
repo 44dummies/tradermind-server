@@ -404,13 +404,22 @@ async function getTradeStats(sessionId, accountId = null) {
 // ==================== Activity Log Operations ====================
 
 async function logActivity(type, message, metadata = {}) {
+  // Extract user_id/session_id for top-level columns
+  const { user_id, session_id, ...otherMeta } = metadata;
+
+  const details = {
+    message,
+    ...otherMeta
+  };
+
   const { error } = await supabase
     .from('activity_logs_v2')
     .insert({
       id: uuidv4(),
-      type,
-      message,
-      metadata,
+      action_type: type,
+      action_details: details,
+      user_id: user_id || null,
+      session_id: session_id || null,
       created_at: new Date().toISOString()
     });
 
@@ -423,7 +432,7 @@ async function getActivityLogs(options = {}) {
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (options.type) query = query.eq('type', options.type);
+  if (options.type) query = query.eq('action_type', options.type);
   if (options.limit) query = query.limit(options.limit);
 
   const { data, error } = await query;
@@ -449,7 +458,7 @@ async function startBot() {
   let { data: session, error } = await supabase
     .from('trading_sessions')
     .select('*')
-    .eq('status', 'running')
+    .eq('status', 'active')
     .order('created_at', { ascending: false })
     .limit(1)
     .single();
@@ -468,7 +477,7 @@ async function startBot() {
       // Auto-promote to running
       await supabase
         .from('trading_sessions')
-        .update({ status: 'running', started_at: new Date().toISOString() })
+        .update({ status: 'active', started_at: new Date().toISOString() })
         .eq('id', pendingSession.id);
 
       session = pendingSession;

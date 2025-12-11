@@ -112,12 +112,27 @@ router.get('/status', async (req, res) => {
 
 /**
  * POST /user/sessions/accept
- * Accept/join a trading session
+ * Accept/join a trading session (sessionId in body)
  */
 router.post('/accept', async (req, res) => {
+    return handleAcceptSession(req, res, req.body.sessionId);
+});
+
+/**
+ * POST /user/sessions/:sessionId/accept
+ * Accept/join a trading session (sessionId in URL)
+ */
+router.post('/:sessionId/accept', async (req, res) => {
+    return handleAcceptSession(req, res, req.params.sessionId);
+});
+
+/**
+ * Common handler for accepting sessions
+ */
+async function handleAcceptSession(req, res, sessionId) {
     try {
         const userId = req.user.id;
-        const { sessionId, tp, sl } = req.body;
+        const { tp, sl } = req.body;
 
         if (!sessionId) {
             return res.status(400).json({ error: 'Session ID is required' });
@@ -239,7 +254,7 @@ router.post('/accept', async (req, res) => {
         console.error('Accept session error:', error);
         res.status(500).json({ error: 'Failed to join session' });
     }
-});
+}
 
 /**
  * POST /user/sessions/leave

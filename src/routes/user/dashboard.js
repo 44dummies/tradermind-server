@@ -39,10 +39,12 @@ router.get('/', async (req, res) => {
             .limit(1)
             .maybeSingle();
 
+        console.log('[Dashboard] Participation query result:', JSON.stringify(participation, null, 2));
+
         // Get available sessions to join
         const { data: availableSessions } = await supabase
             .from('trading_sessions_v2')
-            .select('id, name, type, mode, min_balance, default_tp, default_sl, status')
+            .select('id, name, type, min_balance, default_tp, default_sl, status, staking_mode')
             .in('status', ['pending', 'running'])
             .order('created_at', { ascending: false });
 
@@ -53,6 +55,37 @@ router.get('/', async (req, res) => {
             .or(`user_id.eq.${userId},user_id.is.null`)
             .eq('read', false);
 
+        // Helper to get session details if join failed or implies V1
+        let sessionDetails = participation?.trading_sessions_v2;
+        let sessionTableName = 'trading_sessions_v2';
+
+        if (participation && !sessionDetails) {
+            console.log('[Dashboard] Join failed, fetching session explicitly...');
+
+            // Try V2 first
+            let { data: v2Session } = await supabase
+                .from('trading_sessions_v2')
+                .select('*')
+                .eq('id', participation.session_id)
+                .single();
+
+            if (v2Session) {
+                sessionDetails = v2Session;
+            } else {
+                // Try V1
+                console.log('[Dashboard] Fetching from V1 table...');
+                const { data: v1Session } = await supabase
+                    .from('trading_sessions')
+                    .select('*')
+                    .eq('id', participation.session_id)
+                    .single();
+                if (v1Session) {
+                    sessionDetails = v1Session;
+                    sessionTableName = 'trading_sessions';
+                }
+            }
+        }
+
         res.json({
             user: profile,
             settings: settings || {
@@ -60,17 +93,19 @@ router.get('/', async (req, res) => {
                 default_sl: 5.00,
                 can_join_recovery: false
             },
-            currentSession: participation ? {
+            currentSession: participation && sessionDetails ? {
                 participantId: participation.id,
                 sessionId: participation.session_id,
-                sessionName: participation.trading_sessions_v2?.name,
-                sessionType: participation.trading_sessions_v2?.type,
-                sessionStatus: participation.trading_sessions_v2?.status,
+                sessionName: sessionDetails.name,
+                sessionType: sessionDetails.type || sessionDetails.mode || 'standard',
+                sessionStatus: sessionDetails.status,
                 userStatus: participation.status,
                 tp: participation.tp,
                 sl: participation.sl,
                 currentPnl: participation.current_pnl,
-                acceptedAt: participation.accepted_at
+                acceptedAt: participation.accepted_at,
+                // Add debug info
+                _sourceTable: sessionTableName
             } : null,
             availableSessions: availableSessions || [],
             unreadNotifications: unreadCount || 0
