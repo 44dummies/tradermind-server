@@ -71,8 +71,8 @@ class SignalWorker {
       return;
     }
 
-    if (session.status !== 'running') {
-      console.log(`[SignalWorker] ⏸️ Session status is "${session.status}", not running. Skipping.`);
+    if (session.status !== 'running' && session.status !== 'active') {
+      console.log(`[SignalWorker] ⏸️ Session status is "${session.status}", not running/active. Skipping.`);
       return;
     }
 

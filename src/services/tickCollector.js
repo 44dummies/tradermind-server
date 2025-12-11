@@ -148,7 +148,11 @@ class TickCollector extends EventEmitter {
   handleMessage(message) {
     // Handle tick data
     if (message.msg_type === 'tick') {
-      this.handleTick(message);
+      if (message.tick) {
+        this.handleTick(message);
+      } else {
+        console.warn('[TickCollector] ⚠️ Received tick message without tick data:', message);
+      }
     }
 
     // Handle subscription confirmation
