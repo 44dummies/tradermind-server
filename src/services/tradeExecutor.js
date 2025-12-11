@@ -50,6 +50,8 @@ class TradeExecutor {
         throw new Error('Session not found or not active');
       }
 
+      console.log(`[TradeExecutor] Session: ${session.name} (Table: ${sessionTable}, Type: ${session.type || 'N/A'}, MinBal: $${session.min_balance || 0}, TP: $${session.default_tp}, SL: $${session.default_sl})`);
+
       // Get accepted accounts - join with trading_accounts to get deriv_token
       const { data: invitations, error: invError } = await supabase
         .from('session_participants')
@@ -135,19 +137,25 @@ class TradeExecutor {
           profile.deriv_id = tradingAccount.deriv_account_id;
         }
 
-        // Check TP/SL are set
-        if (!participant.tp || !participant.sl) {
+        // Use session defaults if participant TP/SL not set (V2 schema requires them, but be defensive)
+        const effectiveTp = participant.tp || session.default_tp || 10;
+        const effectiveSl = participant.sl || session.default_sl || 5;
+
+        // V2: Check min_balance requirement
+        const minBalance = session.min_balance || 0;
+        if (participant.initial_balance && participant.initial_balance < minBalance) {
           invalidAccounts.push({
             userId: participant.user_id,
-            reason: 'TP/SL not set',
+            reason: `Balance ${participant.initial_balance} below minimum ${minBalance}`,
             participantId: participant.id
           });
           continue;
         }
 
+        // Validate TP/SL meet session minimums
         const minTp = session.default_tp || session.profit_threshold || strategyConfig.minTp;
         const minSl = session.default_sl || session.loss_threshold || strategyConfig.minSl;
-        if (participant.tp < minTp || participant.sl < minSl) {
+        if (effectiveTp < minTp || effectiveSl < minSl) {
           invalidAccounts.push({
             userId: participant.user_id,
             reason: `TP/SL below minimums (tp>=${minTp}, sl>=${minSl})`,
@@ -155,6 +163,10 @@ class TradeExecutor {
           });
           continue;
         }
+
+        // Store effective values for trade execution
+        participant.effectiveTp = effectiveTp;
+        participant.effectiveSl = effectiveSl;
 
         validAccounts.push({
           participant,
@@ -305,8 +317,8 @@ class TradeExecutor {
         payout: contract.payout,
         signal,
         stake,
-        takeProfit: participant.tp,
-        stopLoss: participant.sl,
+        takeProfit: participant.effectiveTp || participant.tp,
+        stopLoss: participant.effectiveSl || participant.sl,
         timestamp: new Date()
       };
 
