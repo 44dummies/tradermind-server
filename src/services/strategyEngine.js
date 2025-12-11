@@ -62,6 +62,102 @@ function confidenceIndex(weights, parts) {
   );
 }
 
+// ==================== Advanced Math Models ====================
+
+/**
+ * Markov Chain Analysis
+ * Calculates the probability of the *next* digit given the *current* digit.
+ * Returns probability score (0-1) for the momentum direction.
+ */
+function computeMarkovProbability(digitHistory) {
+  if (digitHistory.length < 50) return { probability: 0.5, prediction: null };
+
+  const matrix = Array(10).fill(0).map(() => Array(10).fill(0));
+  const counts = Array(10).fill(0);
+
+  // Build Transition Matrix
+  for (let i = 0; i < digitHistory.length - 1; i++) {
+    const current = digitHistory[i];
+    const next = digitHistory[i + 1];
+    matrix[current][next]++;
+    counts[current]++;
+  }
+
+  const lastDigit = digitHistory[digitHistory.length - 1];
+  const transitions = matrix[lastDigit];
+  const totalObserved = counts[lastDigit];
+
+  if (totalObserved < 3) return { probability: 0.5, prediction: null }; // Not enough data for this specific digit
+
+  // Find most probable next digit
+  let maxCount = -1;
+  let predictedDigit = -1;
+
+  transitions.forEach((count, digit) => {
+    if (count > maxCount) {
+      maxCount = count;
+      predictedDigit = digit;
+    }
+  });
+
+  const probability = maxCount / totalObserved;
+  return { probability, predictedDigit };
+}
+
+/**
+ * Relative Strength Index (RSI)
+ * Standard 14-period RSI to detect overbought/oversold conditions.
+ * Returns RSI value (0-100).
+ */
+function computeRSI(ticks, period = 14) {
+  if (ticks.length < period + 1) return 50;
+
+  let gains = 0;
+  let losses = 0;
+
+  // Calculate initial average
+  for (let i = ticks.length - period; i < ticks.length; i++) {
+    const diff = ticks[i].quote - ticks[i - 1].quote;
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+/**
+ * Linear Regression Slope
+ * Calculates the slope of the trend line for the last N ticks.
+ * Returns slope value (steepness and direction).
+ */
+function computeLinearRegressionSlope(ticks, length = 10) {
+  if (ticks.length < length) return 0;
+
+  const n = length;
+  const recent = ticks.slice(-n);
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+
+  recent.forEach((tick, i) => {
+    const x = i;
+    const y = tick.quote;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  });
+
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  return slope;
+}
+
 function pickDirection(digit) {
   // Over if digit is high, under if low
   return digit >= 5 ? 'OVER' : 'UNDER';
@@ -69,45 +165,88 @@ function pickDirection(digit) {
 
 function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const cfg = { ...config, ...overrides, weighting: { ...config.weighting, ...(overrides.weighting || {}) } };
-  if (!tickHistory || tickHistory.length < 10) {
-    return { shouldTrade: false, reason: 'Insufficient ticks' };
+
+  if (!tickHistory || tickHistory.length < 20) {
+    return { shouldTrade: false, reason: 'Insufficient ticks (Warmup)', isWarmup: true };
   }
 
+  // 1. Math Analysis
+  const markov = computeMarkovProbability(digitHistory);
+  const rsi = computeRSI(tickHistory, 14);
+  const slope = computeLinearRegressionSlope(tickHistory, 10);
+
+  // 2. Frequency Analysis (Legacy but useful for confirmation)
   const freq = computeDigitFrequency(digitHistory, cfg.digitFrequencyDepth);
   const dfpmScore = Math.max(...freq);
-  const derInfo = digitExhaustionRule(freq);
-  const dpbInfo = digitProbabilityBias(freq);
-  const tpcInfo = trendProbability(freq);
-  const volatility = computeVolatility(tickHistory);
 
-  // Normalize volatility confidence (rough heuristic)
-  const vcsScore = Math.min(1, volatility / 1.0);
+  // 3. Signal Logic
+  let side = null;
+  let confidence = 0;
+  let reasonParts = [];
 
-  // Digit Trend Prediction: blend exhaustion and bias
-  const dtpScore = (derInfo.score + dpbInfo.score) / 2;
-  const chosenDigit = dpbInfo.score >= derInfo.score ? dpbInfo.digit : derInfo.digit;
-  const side = pickDirection(chosenDigit);
+  // STRATEGY: Markov + RSI Reversal + Trend Confirmation
 
-  const parts = {
-    dfpm: dfpmScore,
-    vcs: vcsScore,
-    der: derInfo.score,
-    tpc: tpcInfo.score,
-    dtp: dtpScore,
-    dpb: dpbInfo.score
-  };
+  // Case A: Strong Markov Prediction
+  if (markov.probability > 0.4 && markov.predictedDigit !== null) {
+    // If Markov predicts a high digit (>=5), we expect OVER? 
+    // Actually, distinct digit markets are chaotic. 
+    // Let's use Markov to predict direction.
+    const predictedSide = pickDirection(markov.predictedDigit);
+    confidence += markov.probability * 0.4; // 40% weight
+    reasonParts.push(`MKV:${markov.probability.toFixed(2)}`);
+    side = predictedSide;
+  }
 
-  const confidence = confidenceIndex(cfg.weighting, parts);
+  // Case B: RSI Reversal (Overbought/Oversold)
+  if (rsi > 70) {
+    // Overbought -> Expect Drop -> Sell/Under/Put
+    // For digit markets, "Put" usually aligns with "Under" or predicting low digits.
+    // Let's assume we want to bet UNDER if RSI is high.
+    if (side === 'UNDER' || !side) {
+      side = 'UNDER';
+      confidence += 0.3; // 30% weight
+      reasonParts.push(`RSI_High:${rsi.toFixed(0)}`);
+    } else {
+      confidence -= 0.1; // Conflict
+    }
+  } else if (rsi < 30) {
+    // Oversold -> Expect Rise -> Buy/Over/Call
+    if (side === 'OVER' || !side) {
+      side = 'OVER';
+      confidence += 0.3; // 30% weight
+      reasonParts.push(`RSI_Low:${rsi.toFixed(0)}`);
+    } else {
+      confidence -= 0.1; // Conflict
+    }
+  }
+
+  // Case C: Trend Slope Confirmation
+  // If we are betting OVER (Up), we want positive slope.
+  // If we are betting UNDER (Down), we want negative slope.
+  const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
+  if (isTrendAligned) {
+    confidence += 0.2; // 20% weight
+    reasonParts.push(`Trend:${slope > 0 ? 'Up' : 'Down'}`);
+  }
+
+  // Legacy Freq confirm
+  if (side === 'OVER' && dfpmScore > 0.15) confidence += 0.1;
+  if (side === 'UNDER' && dfpmScore > 0.15) confidence += 0.1;
+
+  // Final Decision
+  // Default to UNDER if no clear signal but we need a side for the object structure
+  const finalSide = side || 'UNDER';
+  const finalDigit = side === 'OVER' ? 7 : 2; // Arbitrary safe digits for directional bets
 
   return {
-    shouldTrade: confidence >= cfg.minConfidence,
-    side,
-    digit: chosenDigit,
+    shouldTrade: confidence >= 0.65, // Require 65% composite confidence
+    side: finalSide, // 'OVER' or 'UNDER' (mapped to Call/Put in executor)
+    digit: finalDigit,
     confidence,
-    reason: `dfpm:${dfpmScore.toFixed(2)} der:${derInfo.score.toFixed(2)} dpb:${dpbInfo.score.toFixed(2)} tpc:${tpcInfo.score.toFixed(2)} vcs:${vcsScore.toFixed(2)}`,
+    reason: reasonParts.join(' '),
     market,
-    parts,
-    freq // Return digit frequency array for analytics
+    parts: { markov: markov.probability, rsi, slope },
+    freq
   };
 }
 

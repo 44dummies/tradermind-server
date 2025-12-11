@@ -52,10 +52,22 @@ class TickCollector extends EventEmitter {
 
         this.ws.on('message', (data) => {
           try {
-            const message = JSON.parse(data.toString());
+            const messageStr = data.toString();
+            // Ignore pong messages or empty data
+            if (!messageStr || messageStr === 'pong') return;
+
+            const message = JSON.parse(messageStr);
+
+            // Handle AlreadySubscribed gracefully
+            if (message.error && message.error.code === 'AlreadySubscribed') {
+              // console.log(`[TickCollector] ℹ️ Already subscribed to ${message.echo_req.ticks}`);
+              return;
+            }
+
             this.handleMessage(message);
           } catch (error) {
-            console.error('[TickCollector] Message parse error:', error);
+            console.error('[TickCollector] Message processing error:', error);
+            // Don't rethrow, just log and continue
           }
         });
 

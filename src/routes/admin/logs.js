@@ -25,17 +25,18 @@ router.get('/', async (req, res) => {
         } = req.query;
 
         let query = supabase
-            .from('activity_logs_v2')
+            .from('trading_activity_logs')
             .select('*')
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
         if (type) {
-            query = query.eq('type', type);
+            query = query.eq('action_type', type);
         }
-        if (level) {
-            query = query.eq('level', level);
-        }
+        // Level support removed as column does not exist in new schema
+        // if (level) {
+        //     query = query.eq('action_details->>level', level); 
+        // }
         if (userId) {
             query = query.eq('user_id', userId);
         }
@@ -107,7 +108,7 @@ router.get('/errors', async (req, res) => {
         const { limit = 100, offset = 0 } = req.query;
 
         const { data, error } = await supabase
-            .from('activity_logs_v2')
+            .from('trading_activity_logs')
             .select('*')
             .eq('level', 'error')
             .order('created_at', { ascending: false })
@@ -131,9 +132,9 @@ router.get('/signals', async (req, res) => {
         const { limit = 100, offset = 0 } = req.query;
 
         const { data, error } = await supabase
-            .from('activity_logs_v2')
+            .from('trading_activity_logs')
             .select('*')
-            .eq('type', 'signal')
+            .eq('action_type', 'signal')
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
@@ -155,9 +156,9 @@ router.get('/bot', async (req, res) => {
         const { limit = 100, offset = 0 } = req.query;
 
         const { data, error } = await supabase
-            .from('activity_logs_v2')
+            .from('trading_activity_logs')
             .select('*')
-            .in('type', ['bot_start', 'bot_stop', 'bot_pause', 'bot_resume', 'bot_emergency_stop'])
+            .in('action_type', ['bot_start', 'bot_stop', 'bot_pause', 'bot_resume', 'bot_emergency_stop'])
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 

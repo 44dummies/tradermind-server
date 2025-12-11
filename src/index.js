@@ -104,6 +104,12 @@ app.use('/api/achievements', achievementsRoutes);
 
 app.use('/api/files', filesRoutes);
 app.use('/api/trading', tradingRoutes);
+const tradingV2Routes = require('./routes/trading_v2');
+app.use('/api/trading-v2', tradingV2Routes);
+
+// Debug & Monitoring routes
+const debugRoutes = require('./routes/debug');
+app.use('/debug', debugRoutes);
 
 // Role-protected routes (with auth + role middleware)
 app.use('/api/admin', authMiddleware, isAdmin, adminRoutes);
@@ -143,6 +149,18 @@ app.get('/', (req, res) => {
 });
 
 app.set('io', io);
+
+io.on('connection', (socket) => {
+  // Join market room
+  socket.on('subscribe_market', (market) => {
+    socket.join(`market_${market}`);
+  });
+
+  // Leave market room
+  socket.on('unsubscribe_market', (market) => {
+    socket.leave(`market_${market}`);
+  });
+});
 
 setupSocketHandlers(io);
 
@@ -197,6 +215,9 @@ async function startServer() {
 
     startCronJobs();
     schedulerService.start();
+
+    const botManager = require('./services/botManager');
+    botManager.initialize(io);
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);

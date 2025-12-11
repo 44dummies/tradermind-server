@@ -16,6 +16,50 @@ class BotManager {
     };
   }
 
+  initialize(io) {
+    this.io = io;
+    signalWorker.setSocket(io);
+    tradeExecutor.setSocket(io);
+    console.log('[BotManager] Socket.IO initialized for real-time updates');
+
+    // Attempt to resume any active session from DB
+    this.resumeActiveSession();
+  }
+
+  async resumeActiveSession() {
+    try {
+      console.log('[BotManager] 🔄 Checking for active sessions to resume...');
+
+      // Check for 'running' sessions in v2 table
+      const { data: v2Session } = await supabase
+        .from('trading_sessions_v2')
+        .select('*')
+        .eq('status', 'running')
+        .single();
+
+      if (v2Session) {
+        console.log(`[BotManager] ♻️ Found active V2 session: ${v2Session.id}. Resuming...`);
+        return this.startBot(v2Session.id);
+      }
+
+      // Check for 'active' sessions in v1 table
+      const { data: v1Session } = await supabase
+        .from('trading_sessions')
+        .select('*')
+        .eq('status', 'active')
+        .single();
+
+      if (v1Session) {
+        console.log(`[BotManager] ♻️ Found active V1 session: ${v1Session.id}. Resuming...`);
+        return this.startBot(v1Session.id);
+      }
+
+      console.log('[BotManager] No active sessions found.');
+    } catch (error) {
+      console.error('[BotManager] ⚠️ Failed to auto-resume session:', error);
+    }
+  }
+
   getState() {
     return {
       ...this.state,

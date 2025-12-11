@@ -586,10 +586,13 @@ class SessionManager {
    */
   async logActivity(activity) {
     try {
+      const { action, details, ...rest } = activity;
       await supabase
         .from('trading_activity_logs')
         .insert({
-          ...activity,
+          action_type: action,
+          action_details: details,
+          ...rest,
           created_at: new Date().toISOString()
         });
     } catch (error) {

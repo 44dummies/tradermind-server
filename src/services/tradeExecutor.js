@@ -23,16 +23,32 @@ class TradeExecutor {
     this.consecutiveLosses = 0;
     this.apiErrorCount = 0;
     this.paused = false;
+    this.io = null;
+    this.processingSignals = new Set(); // Lock for concurrent signals
+  }
+
+  setSocket(io) {
+    this.io = io;
   }
 
   /**
-   * Execute trade for multiple accounts
+   * Execute trade for multiple accounts with improved locking
    */
-  async executeMultiAccountTrade(signal, sessionId, sessionTable = 'trading_sessions') {
+  async executeMultiAccountTrade(signal, sessionId) {
+    // Create a lock key based on session and signal details
+    const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
+
+    if (this.processingSignals.has(lockKey)) {
+      console.log(`[TradeExecutor] 🔒 Skipping concurrent signal: ${lockKey}`);
+      return { executed: 0, total: 0, reason: 'locked' };
+    }
+
+    this.processingSignals.add(lockKey);
+
     try {
       if (this.paused) {
-        console.warn('[TradeExecutor] Guardrail active: paused. Skipping execution.');
-        return { success: false, message: 'Bot paused by safety guard' };
+        console.log('[TradeExecutor] ⏸️ Trading paused, skipping signal');
+        return { executed: 0, total: 0 };
       }
 
       console.log(`[TradeExecutor] 🚀 Executing multi-account trade for session ${sessionId}`);
@@ -267,6 +283,10 @@ class TradeExecutor {
         console.error('[TradeExecutor] Pausing bot due to API error threshold');
       }
       throw error;
+    } finally {
+      // Release lock
+      const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
+      this.processingSignals.delete(lockKey);
     }
   }
 
@@ -306,6 +326,21 @@ class TradeExecutor {
       const contract = buyResponse.buy;
 
       console.log(`[TradeExecutor] ✅ Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
+
+      // Emit trade start event
+      if (this.io) {
+        this.io.emit('trade_update', {
+          type: 'open',
+          contractId: contract.contract_id,
+          market: session.markets ? session.markets[0] : 'R_100', // Assuming single market for now
+          signal: signal.side,
+          side: signal.side,
+          stake: stake,
+          price: contract.buy_price,
+          payout: contract.payout,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       return {
         success: true,
@@ -557,6 +592,18 @@ class TradeExecutor {
       }
 
       console.log(`[TradeExecutor] ✅ Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
+
+      // Emit trade close event
+      if (this.io) {
+        this.io.emit('trade_update', {
+          type: 'close',
+          contractId: tradeResult.contractId,
+          result: finalPL > 0 ? 'win' : 'loss',
+          profit: finalPL,
+          reason: reason,
+          timestamp: new Date().toISOString()
+        });
+      }
 
     } catch (error) {
       console.error('[TradeExecutor] Close trade error:', error);
