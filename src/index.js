@@ -19,6 +19,7 @@ const sharedRoutes = require('./routes/shared');
 const leaderboardRoutes = require('./routes/leaderboard');
 const mentorRoutes = require('./routes/mentor');
 const achievementsRoutes = require('./routes/achievements');
+const notificationsRoutes = require('./routes/notifications');
 
 const filesRoutes = require('./routes/files');
 const tradingRoutes = require('./routes/trading');
@@ -106,6 +107,7 @@ app.use('/api/shared', sharedRoutes);
 app.use('/api/leaderboard', leaderboardRoutes);
 app.use('/api/mentor', mentorRoutes);
 app.use('/api/achievements', achievementsRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 app.use('/api/files', filesRoutes);
 app.use('/api/trading', tradingRoutes);
