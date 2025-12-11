@@ -1,5 +1,4 @@
 
-
 const express = require('express');
 const { prisma } = require('../services/database');
 const { generateTokens, verifyToken, verifyRefreshToken } = require('../services/auth');
@@ -8,6 +7,16 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
+
+// Cookie configuration for refresh token
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  path: '/'
+};
+
 
 router.post('/register', async (req, res) => {
   try {
@@ -66,14 +75,17 @@ router.post('/register', async (req, res) => {
       data: { refreshToken }
     });
 
+    // Set refresh token as HttpOnly cookie
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+
     res.status(201).json({
       user: {
         id: user.id,
         username: user.username,
         email: user.email
       },
-      accessToken,
-      refreshToken
+      accessToken
+      // refreshToken moved to HttpOnly cookie
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -120,6 +132,9 @@ router.post('/login', async (req, res) => {
       }
     });
 
+    // Set refresh token as HttpOnly cookie
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+
     res.json({
       user: {
         id: user.id,
@@ -128,8 +143,8 @@ router.post('/login', async (req, res) => {
         displayName: user.displayName,
         avatarUrl: user.avatarUrl
       },
-      accessToken,
-      refreshToken
+      accessToken
+      // refreshToken moved to HttpOnly cookie
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -212,6 +227,9 @@ router.post('/deriv', async (req, res) => {
       }
     });
 
+    // Set refresh token as HttpOnly cookie
+    res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
+
     res.json({
       user: {
         id: user.id,
@@ -223,8 +241,8 @@ router.post('/deriv', async (req, res) => {
         role: userRole,
         is_admin: user.isAdmin || false
       },
-      accessToken,
-      refreshToken
+      accessToken
+      // refreshToken moved to HttpOnly cookie
     });
   } catch (error) {
     console.error('Deriv login error:', error);
@@ -238,7 +256,8 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    // Get refresh token from cookie instead of body
+    const refreshToken = req.cookies?.refreshToken;
 
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
@@ -267,7 +286,11 @@ router.post('/refresh', async (req, res) => {
       data: { refreshToken: tokens.refreshToken }
     });
 
-    res.json(tokens);
+    // Set new refresh token as HttpOnly cookie
+    res.cookie('refreshToken', tokens.refreshToken, COOKIE_OPTIONS);
+
+    // Only return access token in body
+    res.json({ accessToken: tokens.accessToken });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({ error: 'Token refresh failed' });
@@ -277,26 +300,28 @@ router.post('/refresh', async (req, res) => {
 router.post('/logout', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(200).json({ success: true });
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const decoded = verifyToken(token);
+
+      if (decoded) {
+        await prisma.user.update({
+          where: { id: decoded.userId },
+          data: {
+            refreshToken: null,
+            isOnline: false,
+            lastSeenAt: new Date()
+          }
+        });
+      }
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = verifyToken(token);
-
-    if (decoded) {
-      await prisma.user.update({
-        where: { id: decoded.userId },
-        data: {
-          refreshToken: null,
-          isOnline: false,
-          lastSeenAt: new Date()
-        }
-      });
-    }
-
+    // Clear the refresh token cookie
+    res.clearCookie('refreshToken', { path: '/' });
     res.json({ success: true });
   } catch (error) {
+    // Clear cookie even on error
+    res.clearCookie('refreshToken', { path: '/' });
     res.json({ success: true });
   }
 });

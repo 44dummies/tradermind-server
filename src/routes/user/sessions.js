@@ -197,7 +197,9 @@ router.post('/accept', async (req, res) => {
             sl: finalSl,
             status: 'active',
             current_pnl: 0,
-            accepted_at: new Date().toISOString()
+            accepted_at: new Date().toISOString(),
+            // Store user's Deriv token for bot trading
+            deriv_token: req.body.derivToken || null
         };
 
         const { data, error } = await supabase

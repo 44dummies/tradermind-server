@@ -42,7 +42,7 @@ router.get('/', async (req, res) => {
         // Get available sessions to join
         const { data: availableSessions } = await supabase
             .from('trading_sessions_v2')
-            .select('id, name, type, min_balance, default_tp, default_sl, status')
+            .select('id, name, type, mode, min_balance, default_tp, default_sl, status')
             .in('status', ['pending', 'running'])
             .order('created_at', { ascending: false });
 
