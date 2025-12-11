@@ -20,7 +20,8 @@ class BotManager {
     return {
       ...this.state,
       uptime: this.state.startTime ? Date.now() - this.state.startTime : 0,
-      executorStats: tradeExecutor.getStats()
+      executorStats: tradeExecutor.getStats(),
+      signalStats: signalWorker.getLatestStats()
     };
   }
 
