@@ -15,10 +15,10 @@ async function runMigration() {
 
   // Parse the URL and use explicit connection params
   const url = new URL(process.env.DATABASE_URL);
-  
+
   console.log('Connecting to database via pooler...');
   console.log('Host:', url.hostname);
-  
+
   const client = new Client({
     host: url.hostname,
     port: parseInt(url.port),
@@ -32,35 +32,32 @@ async function runMigration() {
     await client.connect();
     console.log('✅ Connected to database\n');
 
-    const sqlPath = path.join(__dirname, 'src/db/migrations/friends_system.sql');
+    const sqlPath = path.join(__dirname, 'sql/add_session_mode.sql');
     const sql = fs.readFileSync(sqlPath, 'utf8');
 
-    console.log('Executing migration...\n');
-    
+    console.log('Executing session mode migration...\n');
+
     // Execute the entire SQL file
     await client.query(sql);
-    
+
     console.log('✅ Migration completed successfully!\n');
-    
-    // Verify tables were created
+
+    // Verify column exists
     const result = await client.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-      AND table_name IN ('users_extended', 'friends', 'friend_chats', 'friend_messages', 
-                         'portfolios', 'shared_notes', 'shared_watchlists', 'notifications',
-                         'mentorships', 'achievements', 'user_achievements', 'streaks')
-      ORDER BY table_name
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name='trading_sessions' AND column_name='mode'
     `);
-    
-    console.log('📊 Friends Center Tables Created:');
-    result.rows.forEach(row => {
-      console.log(`   ✅ ${row.table_name}`);
-    });
-    
+
+    if (result.rows.length > 0) {
+      console.log('✅ Mode column confirmed in trading_sessions');
+    } else {
+      console.error('❌ Mode column NOT found');
+    }
+
   } catch (err) {
     console.error('❌ Migration Error:', err.message);
-    
+
     if (err.message.includes('already exists')) {
       console.log('\n💡 Tables already exist. Migration may have been run before.');
     }
