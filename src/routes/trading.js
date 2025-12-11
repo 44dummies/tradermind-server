@@ -6,6 +6,7 @@ const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth');
 const trading = require('../services/trading');
+const { supabase } = require('../db/supabase');
 
 // ==================== Account Routes ====================
 
@@ -189,8 +190,7 @@ router.put('/sessions/:id/tpsl', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'takeProfit and stopLoss are required' });
     }
 
-    // Import supabase
-    const { supabase } = require('../db/supabase');
+    // Import supabase (now global)
 
     // Update the user's TP/SL in session_participants
     const { data, error } = await supabase
@@ -515,21 +515,6 @@ router.get('/logs', authMiddleware, async (req, res) => {
   }
 });
 
-// ==================== Constants Route ====================
-
-router.get('/constants', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      sessionTypes: trading.SESSION_TYPE,
-      sessionStatuses: trading.SESSION_STATUS,
-      accountStatuses: trading.ACCOUNT_STATUS,
-      contractTypes: ['DIGITEVEN', 'DIGITODD', 'DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF', 'CALL', 'PUT'],
-      strategies: ['DFPM', 'VCS', 'DER', 'TPC', 'DTP', 'DPB', 'MTD', 'RDS'],
-      volatilityIndices: ['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'],
-      stakingModes: ['fixed', 'martingale', 'compounding']
-    }
-  });
-});
+// Duplicate constants route removed
 
 module.exports = router;
