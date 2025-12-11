@@ -455,48 +455,43 @@ class TradeExecutor {
           });
       }
 
-      // Send notification
-      const message = reason === 'tp_hit'
-        ? `✅ Take Profit hit! Profit: $${finalPL.toFixed(2)}`
+      // Send comprehensive session report notification
+      const reportMessage = reason === 'tp_hit'
+        ? `🎉 Take Profit Reached! Session Complete`
         : reason === 'sl_hit'
-          ? `❌ Stop Loss hit! Loss: $${finalPL.toFixed(2)}`
-          : `Trade closed. P&L: $${finalPL.toFixed(2)}`;
+          ? `⚠️ Stop Loss Reached. Session Ended`
+          : `ℹ️ Session Ended`;
 
-      // Get session trade history for this user
-      const { data: userTrades } = await supabase
+      // Get trade history for this user in this session
+      const { data: tradeHistory } = await supabase
         .from('trades')
         .select('*')
         .eq('session_id', session.id)
         .eq('user_id', tradeResult.userId)
         .order('created_at', { ascending: false });
 
-      const trades = userTrades || [];
-      const wins = trades.filter(t => t.profit_loss > 0).length;
-      const losses = trades.filter(t => t.profit_loss <= 0).length;
-      const totalPL = trades.reduce((sum, t) => sum + (t.profit_loss || 0), 0);
+      const totalTrades = tradeHistory?.length || 0;
+      const wins = tradeHistory?.filter(t => t.result === 'win').length || 0;
+      const losses = tradeHistory?.filter(t => t.result === 'loss').length || 0;
+      const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
 
-      // Send session completion report
       await this.sendNotification(tradeResult.userId, {
-        type: 'session_completed',
-        message: reason === 'tp_hit'
-          ? `🎉 Congratulations! Your trading session ended in profit.`
-          : `📊 Your trading session has ended.`,
+        type: 'session_report',
+        message: reportMessage,
+        sessionId: session.id,
         data: {
-          sessionId: session.id,
-          sessionName: session.name || session.session_name,
           reason: reason,
-          summary: {
-            totalTrades: trades.length,
-            wins: wins,
-            losses: losses,
-            winRate: trades.length > 0 ? ((wins / trades.length) * 100).toFixed(1) + '%' : '0%',
-            totalProfitLoss: totalPL.toFixed(2),
-            finalPL: finalPL.toFixed(2),
-            result: totalPL >= 0 ? 'profit' : 'loss'
-          },
+          sessionName: session.name || session.session_name,
+          finalPnL: finalPL.toFixed(2),
+          result: finalPL >= 0 ? 'profit' : 'loss',
+          totalTrades: totalTrades,
+          wins: wins,
+          losses: losses,
+          winRate: `${winRate}%`,
           takeProfit: invitation.tp,
           stopLoss: invitation.sl,
-          timestamp: new Date().toISOString()
+          sessionMode: session.mode || 'real',
+          closedAt: new Date().toISOString()
         }
       });
 
