@@ -52,7 +52,7 @@ const isAdmin = async (req, res, next) => {
 
     // Check only database flag
     if (profile.is_admin !== true) {
-      console.log(`[isAdmin] ❌ Access denied for user ${decoded.userId} (deriv_id: ${profile.deriv_id}) - not admin`);
+      console.log(`[isAdmin]  Access denied for user ${decoded.userId} (deriv_id: ${profile.deriv_id}) - not admin`);
       return res.status(403).json({
         success: false,
         error: 'Forbidden - Admin access required'
@@ -66,7 +66,7 @@ const isAdmin = async (req, res, next) => {
       derivAccountId: profile.deriv_id
     };
 
-    console.log(`[isAdmin] ✅ Admin access granted for ${decoded.userId}`);
+    console.log(`[isAdmin]  Admin access granted for ${decoded.userId}`);
     next();
 
   } catch (error) {

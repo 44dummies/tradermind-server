@@ -9,7 +9,7 @@ const { supabase } = require('../../db/supabase');
  */
 router.post('/v1-to-v2', async (req, res) => {
     try {
-        console.log('🚀 Starting V1 -> V2 Migration Triggered by Admin...');
+        console.log(' Starting V1 -> V2 Migration Triggered by Admin...');
         const results = {
             sessionsMigrated: 0,
             sessionsSkipped: 0,

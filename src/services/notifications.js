@@ -160,7 +160,7 @@ const NotificationsService = {
         
         await this.create(friendship.user_id, {
           type: 'anniversary',
-          title: `🎉 Friend Anniversary!`,
+          title: ` Friend Anniversary!`,
           message: `You've been friends with ${friendship.friend?.username} for ${daysText}!`,
           related_user_id: friendship.friend_id,
           payload: { days, friendship_id: friendship.id }
@@ -184,7 +184,7 @@ const NotificationsService = {
     for (const friendship of (friendships || [])) {
       await this.create(friendship.friend_id, {
         type: 'trading_started',
-        title: '📊 Friend is Trading',
+        title: ' Friend is Trading',
         message: `${friendship.user?.username} started trading!`,
         related_user_id: userId
       });
@@ -205,7 +205,7 @@ const NotificationsService = {
   async notifyBadge(userId, badge) {
     await this.create(userId, {
       type: 'badge',
-      title: '🎖️ New Badge!',
+      title: ' New Badge!',
       message: `You earned the ${badge.name} badge!`,
       payload: { badge }
     });

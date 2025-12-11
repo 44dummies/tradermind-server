@@ -57,7 +57,7 @@ const isUser = async (req, res, next) => {
             email: profile.email
         };
 
-        console.log(`[isUser] ✅ User access granted for ${decoded.userId}`);
+        console.log(`[isUser]  User access granted for ${decoded.userId}`);
         next();
 
     } catch (error) {

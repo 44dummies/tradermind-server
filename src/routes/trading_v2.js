@@ -69,13 +69,24 @@ router.get('/metrics', requireAuth, async (req, res) => {
             });
         }
 
+        // Calculate gross profit and gross loss for profit factor
+        const grossProfit = tradeList
+            .filter(t => t.profit_loss > 0)
+            .reduce((sum, t) => sum + t.profit_loss, 0);
+        const grossLoss = Math.abs(tradeList
+            .filter(t => t.profit_loss < 0)
+            .reduce((sum, t) => sum + t.profit_loss, 0));
+        const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? 'Infinity' : '0.00';
+
         res.json({
             metrics: hourlyData,
             summary: {
                 totalTrades,
                 winRate: parseFloat(winRate),
                 netPnL: parseFloat(netPnL.toFixed(2)),
-                profitFactor: wins > 0 ? (netPnL / Math.max(1, totalTrades - wins)).toFixed(2) : 0
+                profitFactor: profitFactor === 'Infinity' ? '∞' : parseFloat(profitFactor),
+                grossProfit: parseFloat(grossProfit.toFixed(2)),
+                grossLoss: parseFloat(grossLoss.toFixed(2))
             }
         });
     } catch (err) {

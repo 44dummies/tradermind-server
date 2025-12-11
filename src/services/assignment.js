@@ -6,7 +6,7 @@ const DEFAULT_CHATROOMS = [
   
   { name: 'Pro Traders Room', type: 'personal', category: 'performance', level: 3, icon: '👑', 
     rules: { minWinRate: 55, minTrades: 50 } },
-  { name: 'Improvement Squad', type: 'personal', category: 'performance', level: 1, icon: '📈',
+  { name: 'Improvement Squad', type: 'personal', category: 'performance', level: 1, icon: '',
     rules: { maxWinRate: 50 } },
   { name: 'Recovery Motivation', type: 'personal', category: 'performance', level: 1, icon: '💪',
     rules: { hasLossStreak: true } },
@@ -16,7 +16,7 @@ const DEFAULT_CHATROOMS = [
   
   { name: 'FOMO Rehab', type: 'personal', category: 'behavior', level: 1, icon: '😰',
     rules: { minFomoScore: 60 } },
-  { name: 'Discipline Dojo', type: 'personal', category: 'behavior', level: 2, icon: '🎯',
+  { name: 'Discipline Dojo', type: 'personal', category: 'behavior', level: 2, icon: '',
     rules: { minRevengeScore: 50 } },
   { name: 'Slow & Steady Room', type: 'personal', category: 'behavior', level: 1, icon: '🐢',
     rules: { minOvertradingScore: 60 } },
@@ -24,11 +24,11 @@ const DEFAULT_CHATROOMS = [
     rules: { maxEmotionalScore: 40 } },
   
   
-  { name: 'Multipliers Lab', type: 'personal', category: 'strategy', level: 2, icon: '📈',
+  { name: 'Multipliers Lab', type: 'personal', category: 'strategy', level: 2, icon: '',
     rules: { preferredContract: 'multipliers' } },
   { name: 'Binary Lounge', type: 'personal', category: 'strategy', level: 1, icon: '⬆️',
     rules: { preferredContract: 'rise_fall' } },
-  { name: 'Volatility Gang', type: 'personal', category: 'strategy', level: 2, icon: '📊',
+  { name: 'Volatility Gang', type: 'personal', category: 'strategy', level: 2, icon: '',
     rules: { preferredContract: 'volatility' } },
   { name: 'Digit Masters', type: 'personal', category: 'strategy', level: 2, icon: '🔢',
     rules: { preferredContract: 'digits' } },
@@ -38,11 +38,11 @@ const DEFAULT_CHATROOMS = [
     rules: { riskLevel: 'high' } },
   { name: 'Smart Risk Traders', type: 'personal', category: 'strategy', level: 2, icon: '🧠',
     rules: { riskLevel: 'moderate' } },
-  { name: 'Conservative Traders', type: 'personal', category: 'strategy', level: 1, icon: '🛡️',
+  { name: 'Conservative Traders', type: 'personal', category: 'strategy', level: 1, icon: '',
     rules: { riskLevel: 'low' } },
   
   
-  { name: 'Scalpers Den', type: 'personal', category: 'strategy', level: 2, icon: '⚡',
+  { name: 'Scalpers Den', type: 'personal', category: 'strategy', level: 2, icon: '',
     rules: { tradingStyle: 'scalper' } },
   { name: 'Swing Traders Hub', type: 'personal', category: 'strategy', level: 2, icon: '🌊',
     rules: { tradingStyle: 'swing' } },
@@ -58,7 +58,7 @@ const DEFAULT_CHATROOMS = [
     description: 'Share and discuss your daily trades.' },
   { name: 'Market Updates', type: 'public', category: 'general', level: 1, icon: '�',
     description: 'Real-time market news and updates.' },
-  { name: 'General Discussion', type: 'public', category: 'general', level: 1, icon: '💬',
+  { name: 'General Discussion', type: 'public', category: 'general', level: 1, icon: '',
     description: 'Chat about anything trading-related.' },
   
   
@@ -66,7 +66,7 @@ const DEFAULT_CHATROOMS = [
     description: 'Get AI-powered market analysis and insights.' },
   { name: 'AI Emotional Coach', type: 'ai', category: 'behavior', level: 1, icon: '🧠',
     description: 'AI-driven emotional support and trading psychology.' },
-  { name: 'AI Market Summary', type: 'ai', category: 'general', level: 1, icon: '📊',
+  { name: 'AI Market Summary', type: 'ai', category: 'general', level: 1, icon: '',
     description: 'Daily AI-generated market summaries.' }
 ];
 
@@ -74,7 +74,7 @@ async function initializeDefaultChatrooms() {
   
   const existingCount = await prisma.chatroom.count({});
   if (existingCount > 0) {
-    console.log(`✅ ${existingCount} chatrooms already exist in database`);
+    console.log(` ${existingCount} chatrooms already exist in database`);
     return;
   }
 
@@ -98,7 +98,7 @@ async function initializeDefaultChatrooms() {
       console.error(`Failed to create room ${room.id}:`, err.message);
     }
   }
-  console.log('✅ Default chatrooms initialized');
+  console.log(' Default chatrooms initialized');
 }
 
 function calculateFitScore(user, chatroom) {

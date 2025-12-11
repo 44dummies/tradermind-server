@@ -1,10 +1,16 @@
 const strategyEngine = require('./strategyEngine');
 const tickCollector = require('./tickCollector');
 const tradeExecutor = require('./tradeExecutor');
+const riskEngine = require('./trading-engine/risk/RiskEngine');
 const config = require('../config/strategyConfig');
 const { supabase } = require('../db/supabase');
 const { logSignal } = require('../routes/debug');
 const { captureError, trackEvent } = require('../utils/alert');
+
+// Event-driven architecture imports
+const { messageQueue, TOPICS } = require('../queue');
+const { createSignalEvent, EVENT_TYPES } = require('../trading-engine/eventContract');
+
 
 /**
  * Signal Worker (initial version)
@@ -45,7 +51,7 @@ class SignalWorker {
 
     // Run every 3 seconds
     this.interval = setInterval(() => this.tick(markets), 3000);
-    console.log('[SignalWorker] ✅ started');
+    console.log('[SignalWorker]  started');
   }
 
   stop() {
@@ -58,7 +64,7 @@ class SignalWorker {
       clearTimeout(timer);
     }
     this.smartDelayTimers.clear();
-    console.log('[SignalWorker] ⏹ stopped');
+    console.log('[SignalWorker]  stopped');
   }
 
   async tick(markets) {
@@ -70,17 +76,17 @@ class SignalWorker {
       .single();
 
     if (error) {
-      console.error('[SignalWorker] ❌ Session query error:', error.message);
+      console.error('[SignalWorker]  Session query error:', error.message);
       return;
     }
 
     if (!session) {
-      console.error('[SignalWorker] ❌ Session not found:', this.sessionId);
+      console.error('[SignalWorker]  Session not found:', this.sessionId);
       return;
     }
 
     if (session.status !== 'running' && session.status !== 'active') {
-      console.log(`[SignalWorker] ⏸️ Session status is "${session.status}", not running/active. Skipping.`);
+      console.log(`[SignalWorker]  Session status is "${session.status}", not running/active. Skipping.`);
       return;
     }
 
@@ -108,7 +114,7 @@ class SignalWorker {
       const digits = tickCollector.getDigitHistory(market);
 
       // Log tick collection status
-      console.log(`[SignalWorker] 📊 ${market}: ${ticks.length} ticks, ${digits.length} digits`);
+      console.log(`[SignalWorker]  ${market}: ${ticks.length} ticks, ${digits.length} digits`);
 
       // Emit tick update to market room
       if (this.io && ticks.length > 0) {
@@ -160,9 +166,9 @@ class SignalWorker {
 
       // Log signal result
       if (signal.shouldTrade) {
-        console.log(`[SignalWorker] ✅ Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
+        console.log(`[SignalWorker]  Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
       } else {
-        console.log(`[SignalWorker] ⏳ No trade signal: ${signal.reason || 'confidence too low'}`);
+        console.log(`[SignalWorker]  No trade signal: ${signal.reason || 'confidence too low'}`);
       }
 
       if (!signal.shouldTrade) continue;
@@ -173,12 +179,12 @@ class SignalWorker {
     }
 
     if (!best) {
-      console.log('[SignalWorker] ⏳ No qualifying signal this tick');
+      console.log('[SignalWorker]  No qualifying signal this tick');
       return;
     }
 
     if (this.smartDelayTimers.has(best.market)) {
-      console.log(`[SignalWorker] ⏳ Smart delay active for ${best.market}, waiting...`);
+      console.log(`[SignalWorker]  Smart delay active for ${best.market}, waiting...`);
       return;
     }
 
@@ -207,8 +213,70 @@ class SignalWorker {
       });
 
       try {
-        await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
-        trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
+        // Risk Engine Evaluation
+        const { data: todayTrades } = await supabase
+          .from('trades')
+          .select('profit_loss')
+          .eq('session_id', this.sessionId)
+          .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString());
+
+        const dailyLoss = Math.abs(
+          (todayTrades || [])
+            .filter(t => t.profit_loss < 0)
+            .reduce((sum, t) => sum + Math.abs(t.profit_loss), 0)
+        );
+
+        const riskContext = {
+          dailyLoss,
+          currentExposure: tradeExecutor.activeConnections?.size || 0,
+          signal: {
+            type: revalidated.side,
+            symbol: revalidated.market,
+            confidence: revalidated.confidence
+          }
+        };
+
+        const riskCheck = await riskEngine.evaluateRisk(riskContext);
+
+        if (!riskCheck.allowed) {
+          console.warn(`[SignalWorker]  Risk Engine BLOCKED trade: ${riskCheck.reasons.join(', ')}`);
+          await supabase.from('trading_activity_logs').insert({
+            action_type: 'risk_block',
+            action_details: {
+              level: 'warning',
+              message: `Trade blocked by RiskEngine: ${riskCheck.reasons.join(', ')}`,
+              market: revalidated.market,
+              dailyLoss
+            },
+            session_id: this.sessionId,
+            created_at: new Date().toISOString()
+          });
+          return;
+        }
+
+        console.log('[SignalWorker]  Risk check passed, executing trade...');
+
+        // Event-driven mode: Publish signal to queue if available
+        if (messageQueue.isReady()) {
+          const signalEvent = createSignalEvent(revalidated, this.sessionId);
+          signalEvent.payload.dailyLoss = dailyLoss;
+          signalEvent.payload.riskCheckPassed = true;
+          signalEvent.sessionTable = this.sessionTable;
+
+          await messageQueue.publish(TOPICS.TRADE_SIGNALS, signalEvent);
+          console.log(`[SignalWorker] Signal published to queue: ${signalEvent.id}`);
+
+          // Also emit to SSE clients
+          if (this.io) {
+            this.io.emit('signal_queued', signalEvent);
+          }
+
+          trackEvent('SIGNAL_QUEUED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
+        } else {
+          // Fallback: Direct execution when queue not available
+          await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
+          trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
+        }
       } catch (error) {
         console.error('[SignalWorker] Trade execution error:', error);
         captureError(error, { market: revalidated.market, sessionId: this.sessionId, phase: 'execution' });

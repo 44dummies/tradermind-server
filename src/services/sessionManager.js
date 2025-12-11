@@ -82,7 +82,7 @@ class SessionManager {
         throw new Error(`Failed to create session: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ Created ${type} session: ${session.id}`);
+      console.log(`[SessionManager]  Created ${type} session: ${session.id}`);
 
       // Log activity
       await this.logActivity({
@@ -124,7 +124,7 @@ class SessionManager {
         throw new Error(`Failed to send invitations: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ Invited ${userIds.length} users to session ${sessionId}`);
+      console.log(`[SessionManager]  Invited ${userIds.length} users to session ${sessionId}`);
 
       // Send notifications
       for (const userId of userIds) {
@@ -270,7 +270,7 @@ class SessionManager {
         invitation = data;
       }
 
-      console.log(`[SessionManager] ✅ User ${userId} accepted session ${sessionId}`);
+      console.log(`[SessionManager]  User ${userId} accepted session ${sessionId}`);
 
       // Send notification
       await this.sendNotification(userId, {
@@ -318,7 +318,7 @@ class SessionManager {
         throw new Error(`Failed to start session: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ Started session ${sessionId}`);
+      console.log(`[SessionManager]  Started session ${sessionId}`);
 
       // Notify all accepted users
       const { data: invitations } = await supabase
@@ -372,7 +372,7 @@ class SessionManager {
         throw new Error(`Failed to stop session: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ Stopped session ${sessionId}`);
+      console.log(`[SessionManager]  Stopped session ${sessionId}`);
 
       // Log activity
       await this.logActivity({
@@ -434,7 +434,7 @@ class SessionManager {
         })
         .in('user_id', userIds);
 
-      console.log(`[SessionManager] ✅ Created recovery session for ${userIds.length} users`);
+      console.log(`[SessionManager]  Created recovery session for ${userIds.length} users`);
 
       return {
         success: true,
@@ -549,7 +549,7 @@ class SessionManager {
         throw new Error(`Failed to update TP/SL: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ Updated TP/SL for user ${userId} in session ${sessionId}`);
+      console.log(`[SessionManager]  Updated TP/SL for user ${userId} in session ${sessionId}`);
 
       return {
         success: true,
@@ -619,7 +619,7 @@ class SessionManager {
         throw new Error(`Failed to leave session: ${error.message}`);
       }
 
-      console.log(`[SessionManager] ✅ User ${userId} left session ${sessionId}`);
+      console.log(`[SessionManager]  User ${userId} left session ${sessionId}`);
 
       // Log activity
       await this.logActivity({

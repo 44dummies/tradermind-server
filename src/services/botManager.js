@@ -14,6 +14,7 @@ class BotManager {
       tradesExecuted: 0,
       errors: []
     };
+    this.sessionTimer = null; // Auto-stop timer
   }
 
   initialize(io) {
@@ -28,7 +29,7 @@ class BotManager {
 
   async resumeActiveSession() {
     try {
-      console.log('[BotManager] 🔄 Checking for active sessions to resume...');
+      console.log('[BotManager]  Checking for active sessions to resume...');
 
       // Check for 'running' sessions in v2 table
       const { data: v2Session } = await supabase
@@ -38,7 +39,7 @@ class BotManager {
         .single();
 
       if (v2Session) {
-        console.log(`[BotManager] ♻️ Found active V2 session: ${v2Session.id}. Resuming...`);
+        console.log(`[BotManager]  Found active V2 session: ${v2Session.id}. Resuming...`);
         return this.startBot(v2Session.id);
       }
 
@@ -50,13 +51,13 @@ class BotManager {
         .single();
 
       if (v1Session) {
-        console.log(`[BotManager] ♻️ Found active V1 session: ${v1Session.id}. Resuming...`);
+        console.log(`[BotManager]  Found active V1 session: ${v1Session.id}. Resuming...`);
         return this.startBot(v1Session.id);
       }
 
       console.log('[BotManager] No active sessions found.');
     } catch (error) {
-      console.error('[BotManager] ⚠️ Failed to auto-resume session:', error);
+      console.error('[BotManager]  Failed to auto-resume session:', error);
     }
   }
 
@@ -113,7 +114,7 @@ class BotManager {
       .eq('id', sessionId);
 
     if (updateError) {
-      console.error('[BotManager] ❌ Failed to update session status:', updateError);
+      console.error('[BotManager]  Failed to update session status:', updateError);
       throw new Error(`Failed to start session: ${updateError.message}`);
     }
 
@@ -124,7 +125,7 @@ class BotManager {
       .eq('id', sessionId)
       .single();
 
-    console.log(`[BotManager] ✅ Session status after update: ${verifySession?.status}`);
+    console.log(`[BotManager]  Session status after update: ${verifySession?.status}`);
 
     // Start components
     this.state.isRunning = true;
@@ -142,6 +143,42 @@ class BotManager {
     // Start signal worker (pass sessionTable so worker knows where to check status)
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
+    // Session Auto-Stop Timer
+    if (session.duration_minutes && session.duration_minutes > 0) {
+      const durationMs = session.duration_minutes * 60 * 1000;
+      console.log(`[BotManager]  Session auto-stop scheduled in ${session.duration_minutes} minutes`);
+
+      this.sessionTimer = setTimeout(async () => {
+        console.log(`[BotManager]  Session duration (${session.duration_minutes}min) reached. Auto-stopping...`);
+        try {
+          await this.stopBot();
+
+          // Log auto-stop event
+          await supabase.from('trading_activity_logs').insert({
+            action_type: 'session_auto_stop',
+            action_details: {
+              level: 'info',
+              message: `Session auto-stopped after ${session.duration_minutes} minutes`,
+              sessionId
+            },
+            session_id: sessionId,
+            created_at: new Date().toISOString()
+          });
+
+          // Emit event to connected clients
+          if (this.io) {
+            this.io.emit('session_ended', {
+              sessionId,
+              reason: 'duration_expired',
+              message: `Session completed after ${session.duration_minutes} minutes`
+            });
+          }
+        } catch (err) {
+          console.error('[BotManager] Auto-stop error:', err);
+        }
+      }, durationMs);
+    }
+
     console.log(`[BotManager] Bot started for session ${sessionId} (Table: ${sessionTable})`);
     return this.getState();
   }
@@ -157,6 +194,13 @@ class BotManager {
     // Stop components
     signalWorker.stop();
     tradeExecutor.disconnectAll();
+
+    // Clear auto-stop timer if running
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+      console.log('[BotManager]  Session timer cleared');
+    }
 
     // Update state
     this.state.isRunning = false;
@@ -222,6 +266,12 @@ class BotManager {
     signalWorker.stop();
     tradeExecutor.disconnectAll();
     tradeExecutor.paused = true;
+
+    // Clear auto-stop timer
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer);
+      this.sessionTimer = null;
+    }
 
     // Reset state
     this.state.isRunning = false;

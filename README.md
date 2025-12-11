@@ -8,17 +8,31 @@ Real-time backend server for the TraderMind trading community platform.
 - Socket.IO for real-time communication
 - Supabase PostgreSQL database
 - JWT authentication
+- PM2 for production process management
 
 ## Features
 
 - User authentication via Deriv OAuth
 - Real-time WebSocket messaging
+- Multi-account automated trading bot
 - Tier-based community chatrooms
 - Trading analytics and portfolio tracking
 - Leaderboard system
 - AI mentor integration
 - File sharing and storage
 - Achievement system
+
+## Core Services
+
+| Service | File | Purpose |
+|---------|------|---------|
+| Bot Manager | `services/botManager.js` | Orchestrates bot lifecycle, session auto-stop timer |
+| Trade Executor | `services/tradeExecutor.js` | Multi-account trade execution, TP/SL monitoring |
+| Signal Worker | `services/signalWorker.js` | Market analysis, signal generation, risk checks |
+| Session Manager | `services/sessionManager.js` | Session creation, user participation |
+| Strategy Engine | `services/strategyEngine.js` | Markov, RSI, Linear Regression signals |
+| Tick Collector | `services/tickCollector.js` | WebSocket market data collection |
+| Risk Engine | `services/trading-engine/risk/RiskEngine.js` | Daily loss limits, exposure control |
 
 ## API Endpoints
 
@@ -38,19 +52,19 @@ Real-time backend server for the TraderMind trading community platform.
 - GET /api/community/tier-chatroom/:id/messages - Get chatroom messages
 - POST /api/community/tier-chatroom/:id/message - Send message
 
+### Trading
+- GET /api/trading-v2/status - Bot status and connection info
+- GET /api/trading-v2/metrics - Real-time trading metrics
+- GET /api/trading-v2/logs - Activity logs
+- GET /api/trading-v2/signals - Latest signal analysis
+
+### Debug
+- GET /debug/health - System health check
+- GET /debug/signals - Signal buffer history
+
 ### Settings
 - GET /api/settings - Get user settings
 - PUT /api/settings - Update settings
-
-### Portfolio
-- GET /api/portfolio - Get portfolio data
-- POST /api/portfolio/sync - Sync with Deriv
-
-### Leaderboard
-- GET /api/leaderboard - Get leaderboard
-
-### Achievements
-- GET /api/achievements - Get achievements
 
 ## Environment Variables
 
@@ -60,7 +74,9 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_KEY=your_service_key
 JWT_SECRET=your_jwt_secret
 DERIV_APP_ID=your_deriv_app_id
+DERIV_MASTER_TOKEN=your_master_token
 CORS_ORIGIN=https://tradermind.site
+SENTRY_DSN=optional_sentry_dsn
 ```
 
 ## Installation
@@ -75,27 +91,29 @@ npm install
 npm run dev
 ```
 
-## Production
+## Production (PM2)
 
 ```bash
-npm start
+pm2 start ecosystem.config.js
+pm2 logs tradermind-server
 ```
 
 ## Deployment
 
 Deployed on Railway with automatic deployments from the main branch.
 
-## Database
+## Database Tables
 
-Uses Supabase PostgreSQL with the following main tables:
 - user_profiles
+- trading_sessions_v2
+- session_participants
+- trades
+- trading_activity_logs
 - tier_chatrooms
 - chatroom_members
 - chatroom_messages
 - community_posts
-- community_comments
 - achievements
-- user_achievements
 
 ## WebSocket Events
 
@@ -105,6 +123,8 @@ Uses Supabase PostgreSQL with the following main tables:
 - typing:stop - Stop typing indicator
 - room:join - Join a chatroom
 - room:leave - Leave a chatroom
+- subscribe_market - Subscribe to market ticks
+- unsubscribe_market - Unsubscribe from market
 
 ### Server to Client
 - message:new - New message received
@@ -113,4 +133,7 @@ Uses Supabase PostgreSQL with the following main tables:
 - member:joined - New member joined
 - member:left - Member left
 - typing - Typing indicator update
-# Trading system deployed Sat Dec  6 12:37:48 AM EAT 2025
+- tick_update - Market tick data
+- signal_update - Signal analysis
+- trade_update - Trade execution status
+- session_ended - Session auto-stopped
