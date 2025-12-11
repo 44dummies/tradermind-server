@@ -28,7 +28,7 @@ class TradeExecutor {
   /**
    * Execute trade for multiple accounts
    */
-  async executeMultiAccountTrade(signal, sessionId) {
+  async executeMultiAccountTrade(signal, sessionId, sessionTable = 'trading_sessions') {
     try {
       if (this.paused) {
         console.warn('[TradeExecutor] Guardrail active: paused. Skipping execution.');
@@ -40,7 +40,7 @@ class TradeExecutor {
 
       // Get session details
       const { data: session, error: sessionError } = await supabase
-        .from('trading_sessions') // Use V1 table (matching trading.js)
+        .from(sessionTable) // Use correct table
         .select('*')
         .eq('id', sessionId)
         .eq('status', 'running')

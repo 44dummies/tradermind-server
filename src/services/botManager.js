@@ -9,6 +9,7 @@ class BotManager {
       isPaused: false,
       startTime: null,
       activeSessionId: null,
+      activeSessionTable: null, // 'trading_sessions' or 'trading_sessions_v2'
       lastSignal: null,
       tradesExecuted: 0,
       errors: []
@@ -28,12 +29,25 @@ class BotManager {
       throw new Error('Bot is already running');
     }
 
-    // Verify session
-    const { data: session, error } = await supabase
-      .from('trading_sessions')
+    // Try V2 first
+    let sessionTable = 'trading_sessions_v2';
+    let { data: session, error } = await supabase
+      .from(sessionTable)
       .select('*')
       .eq('id', sessionId)
       .single();
+
+    // If not found, try V1
+    if (!session) {
+      sessionTable = 'trading_sessions';
+      const v1Result = await supabase
+        .from(sessionTable)
+        .select('*')
+        .eq('id', sessionId)
+        .single();
+      session = v1Result.data;
+      error = v1Result.error;
+    }
 
     if (error || !session) {
       throw new Error('Session not found');
@@ -41,7 +55,7 @@ class BotManager {
 
     // Update session status
     await supabase
-      .from('trading_sessions')
+      .from(sessionTable)
       .update({
         status: 'running',
         started_at: new Date().toISOString()
@@ -53,6 +67,7 @@ class BotManager {
     this.state.isPaused = false;
     this.state.startTime = Date.now();
     this.state.activeSessionId = sessionId;
+    this.state.activeSessionTable = sessionTable;
     this.state.sessionDuration = session.duration_minutes; // Store duration
     this.state.tradesExecuted = 0;
     this.state.errors = [];
@@ -60,10 +75,10 @@ class BotManager {
     tradeExecutor.paused = false;
     tradeExecutor.consecutiveLosses = 0;
 
-    // Start signal worker
-    await signalWorker.start(sessionId, session.markets || ['R_100']);
+    // Start signal worker (pass sessionTable so worker knows where to check status)
+    await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
-    console.log(`[BotManager] Bot started for session ${sessionId}`);
+    console.log(`[BotManager] Bot started for session ${sessionId} (Table: ${sessionTable})`);
     return this.getState();
   }
 
@@ -73,6 +88,7 @@ class BotManager {
     }
 
     const sessionId = this.state.activeSessionId;
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
 
     // Stop components
     signalWorker.stop();
@@ -83,11 +99,12 @@ class BotManager {
     this.state.isPaused = false;
     this.state.startTime = null;
     this.state.activeSessionId = null;
+    this.state.activeSessionTable = null;
 
     // Update session status
     if (sessionId) {
       await supabase
-        .from('trading_sessions')
+        .from(sessionTable)
         .update({
           status: 'completed',
           ended_at: new Date().toISOString()
@@ -103,10 +120,13 @@ class BotManager {
     if (!this.state.isRunning) return;
     this.state.isPaused = true;
     tradeExecutor.paused = true;
+
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+
     // Update session status
     if (this.state.activeSessionId) {
       await supabase
-        .from('trading_sessions')
+        .from(sessionTable)
         .update({ status: 'paused', paused_at: new Date().toISOString() })
         .eq('id', this.state.activeSessionId);
     }
@@ -117,10 +137,13 @@ class BotManager {
     if (!this.state.isRunning) return;
     this.state.isPaused = false;
     tradeExecutor.paused = false;
+
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+
     // Update session status
     if (this.state.activeSessionId) {
       await supabase
-        .from('trading_sessions')
+        .from(sessionTable)
         .update({ status: 'running' })
         .eq('id', this.state.activeSessionId);
     }
@@ -129,6 +152,7 @@ class BotManager {
 
   async emergencyStop(reason = 'Manual override') {
     const sessionId = this.state.activeSessionId;
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
 
     // Immediately stop all components
     signalWorker.stop();
@@ -140,11 +164,12 @@ class BotManager {
     this.state.isPaused = false;
     this.state.startTime = null;
     this.state.activeSessionId = null;
+    this.state.activeSessionTable = null;
 
     // Update session status to cancelled
     if (sessionId) {
       await supabase
-        .from('trading_sessions')
+        .from(sessionTable)
         .update({
           status: 'cancelled',
           ended_at: new Date().toISOString()

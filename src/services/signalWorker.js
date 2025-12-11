@@ -25,8 +25,9 @@ class SignalWorker {
     return this.latestStats;
   }
 
-  async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN) {
+  async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions') {
     this.sessionId = sessionId;
+    this.sessionTable = sessionTable;
     // Ensure connection
     if (!tickCollector.isConnected()) {
       await tickCollector.connect(apiToken);
@@ -55,7 +56,7 @@ class SignalWorker {
   async tick(markets) {
     // Ensure session is still running
     const { data: session, error } = await supabase
-      .from('trading_sessions')
+      .from(this.sessionTable || 'trading_sessions')
       .select('*')
       .eq('id', this.sessionId)
       .single();
@@ -134,7 +135,7 @@ class SignalWorker {
       });
 
       try {
-        await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId);
+        await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
       } catch (error) {
         console.error('[SignalWorker] Trade execution error:', error);
       }
