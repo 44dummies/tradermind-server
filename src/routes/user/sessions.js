@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { supabase } = require('../../db/supabase');
+const { encryptToken, isEncrypted } = require('../../utils/encryption');
 
 /**
  * GET /user/sessions/available
@@ -188,6 +189,18 @@ router.post('/accept', async (req, res) => {
             });
         }
 
+        // Encrypt and store user's Deriv token for bot trading
+        let encryptedToken = null;
+        if (req.body.derivToken) {
+            try {
+                encryptedToken = encryptToken(req.body.derivToken);
+            } catch (encErr) {
+                console.error('[Sessions] Token encryption error:', encErr);
+                // Store unencrypted if encryption fails (fallback)
+                encryptedToken = req.body.derivToken;
+            }
+        }
+
         // Create participation
         const participation = {
             id: uuidv4(),
@@ -198,8 +211,7 @@ router.post('/accept', async (req, res) => {
             status: 'active',
             current_pnl: 0,
             accepted_at: new Date().toISOString(),
-            // Store user's Deriv token for bot trading
-            deriv_token: req.body.derivToken || null
+            deriv_token: encryptedToken
         };
 
         const { data, error } = await supabase
