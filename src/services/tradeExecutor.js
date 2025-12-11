@@ -3,6 +3,8 @@ const WebSocket = require('ws');
 const crypto = require('crypto');
 const strategyConfig = require('../config/strategyConfig');
 const { decryptToken } = require('../utils/encryption');
+const { messageQueue, TOPICS } = require('../queue');
+const { createTradeClosedEvent } = require('../trading-engine/eventContract');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -602,6 +604,29 @@ class TradeExecutor {
           profit: finalPL,
           reason: reason,
           timestamp: new Date().toISOString()
+        });
+      }
+
+      // Event-Driven: Publish to Redis for SSE
+      if (messageQueue.isReady()) {
+        const closedEvent = createTradeClosedEvent(
+          {
+            contract_id: tradeResult.contractId,
+            symbol: session.markets ? session.markets[0] : 'R_100', // Best effort symbol
+            direction: tradeResult.signal ? tradeResult.signal.side : 'UNKNOWN',
+            stake: tradeResult.stake,
+            participant_id: invitation.id
+          },
+          reason,
+          finalPL,
+          {
+            sessionId: session.id,
+            userId: tradeResult.userId,
+            correlationId: `close-${tradeResult.contractId}`
+          }
+        );
+        messageQueue.publish(TOPICS.TRADE_CLOSED, closedEvent).catch(err => {
+          console.error('[TradeExecutor] Failed to publish close event:', err.message);
         });
       }
 

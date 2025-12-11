@@ -182,8 +182,14 @@ router.get('/status', authMiddleware, (req, res) => {
  * Initialize SSE bridge - Subscribe to message queue and broadcast
  */
 async function initSSEBridge() {
+    // Register fallback handler for when Redis is unavailable
+    messageQueue.setFallbackHandler((topic, event) => {
+        // Direct broadcast when queue is down
+        broadcastEvent(event);
+    });
+
     if (!messageQueue.isReady()) {
-        console.log('[SSE] Message queue not ready, SSE bridge not initialized');
+        console.log('[SSE] Message queue not ready, utilizing local fallback implementation');
         return;
     }
 
