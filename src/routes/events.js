@@ -14,11 +14,26 @@ const MAX_BUFFER_SIZE = 100;
 
 /**
  * SSE endpoint - Stream events to connected clients
- * GET /api/events/stream?topics=trades,sessions,notifications
+ * GET /api/events/stream?topics=trades,sessions,notifications&token=JWT
+ * Note: EventSource can't send headers, so we accept token via query param
  */
-router.get('/stream', authMiddleware, (req, res) => {
-    const userId = req.userId;
-    const requestedTopics = (req.query.topics || 'all').split(',');
+router.get('/stream', async (req, res) => {
+    // Try to get token from query param (EventSource doesn't support headers)
+    const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+    let userId = 'anonymous';
+
+    if (token) {
+        try {
+            const jwt = require('jsonwebtoken');
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            userId = decoded.userId || decoded.sub || 'authenticated';
+        } catch (err) {
+            // Token invalid, but allow connection for public events
+            console.log('[SSE] Invalid token, allowing anonymous connection');
+        }
+    }
+
+    const requestedTopics = (req.query.topics || 'all').split(',').filter(Boolean);
 
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -31,10 +46,11 @@ router.get('/stream', authMiddleware, (req, res) => {
     res.write(`event: connected\ndata: ${JSON.stringify({ userId, topics: requestedTopics })}\n\n`);
 
     // Store client connection
-    const clientInfo = { res, topics: requestedTopics, userId, connectedAt: Date.now() };
-    clients.set(userId, clientInfo);
+    const clientId = `${userId}-${Date.now()}`;
+    const clientInfo = { res, topics: requestedTopics, userId, clientId, connectedAt: Date.now() };
+    clients.set(clientId, clientInfo);
 
-    console.log(`[SSE] Client connected: ${userId}, topics: ${requestedTopics}`);
+    console.log(`[SSE] Client connected: ${clientId}, topics: ${requestedTopics}`);
 
     // Send buffered recent events on reconnect
     const lastEventId = req.headers['last-event-id'];
@@ -50,40 +66,58 @@ router.get('/stream', authMiddleware, (req, res) => {
 
     // Cleanup on disconnect
     req.on('close', () => {
-        clients.delete(userId);
+        clients.delete(clientId);
         clearInterval(heartbeat);
-        console.log(`[SSE] Client disconnected: ${userId}`);
+        console.log(`[SSE] Client disconnected: ${clientId}`);
     });
 });
 
 /**
  * Admin SSE endpoint - All events for admin dashboard
- * GET /api/events/admin-stream
+ * GET /api/events/admin-stream?token=JWT
  */
-router.get('/admin-stream', authMiddleware, (req, res) => {
-    // Check admin role
-    if (req.userRole !== 'admin' && req.userRole !== 'staff') {
+router.get('/admin-stream', async (req, res) => {
+    // Try to get token from query param (EventSource doesn't support headers)
+    const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+    let userId = 'anonymous';
+    let isAdmin = false;
+
+    if (token) {
+        try {
+            const jwt = require('jsonwebtoken');
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            userId = decoded.userId || decoded.sub || 'authenticated';
+            isAdmin = decoded.role === 'admin' || decoded.role === 'staff';
+        } catch (err) {
+            console.log('[SSE Admin] Invalid token');
+            return res.status(401).json({ error: 'Invalid token' });
+        }
+    } else {
+        return res.status(401).json({ error: 'Token required' });
+    }
+
+    if (!isAdmin) {
         return res.status(403).json({ error: 'Admin access required' });
     }
 
-    const userId = `admin-${req.userId}`;
+    const clientId = `admin-${userId}-${Date.now()}`;
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
 
-    res.write(`event: connected\ndata: ${JSON.stringify({ userId, admin: true })}\n\n`);
+    res.write(`event: connected\ndata: ${JSON.stringify({ userId: clientId, admin: true })}\n\n`);
 
-    const clientInfo = { res, topics: ['all'], userId, isAdmin: true, connectedAt: Date.now() };
-    clients.set(userId, clientInfo);
+    const clientInfo = { res, topics: ['all'], userId, clientId, isAdmin: true, connectedAt: Date.now() };
+    clients.set(clientId, clientInfo);
 
     const heartbeat = setInterval(() => {
         res.write(`:heartbeat\n\n`);
     }, 30000);
 
     req.on('close', () => {
-        clients.delete(userId);
+        clients.delete(clientId);
         clearInterval(heartbeat);
     });
 });
