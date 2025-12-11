@@ -99,8 +99,8 @@ router.get('/:userId', async (req, res) => {
 
         // Get recent activity
         const { data: activity } = await supabase
-            .from('activity_logs_v2')
-            .select('type, message, created_at')
+            .from('trading_activity_logs')
+            .select('action, metadata, created_at')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .limit(10);
@@ -109,8 +109,8 @@ router.get('/:userId', async (req, res) => {
             ...user,
             stats: tradingStats,
             recentActivity: (activity || []).map(a => ({
-                type: a.type,
-                description: a.message,
+                type: a.action_type,
+                description: a.action_details?.message || a.action_type,
                 timestamp: a.created_at
             }))
         });

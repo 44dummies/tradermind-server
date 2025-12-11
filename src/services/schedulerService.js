@@ -28,7 +28,7 @@ class SchedulerService {
     const elapsedMinutes = (Date.now() - state.startTime) / 60000;
     
     if (elapsedMinutes >= state.sessionDuration) {
-      console.log(`[SchedulerService] ⏰ Session ${state.activeSessionId} duration exceeded (${state.sessionDuration}m). Stopping bot.`);
+      console.log(`[SchedulerService]  Session ${state.activeSessionId} duration exceeded (${state.sessionDuration}m). Stopping bot.`);
       try {
         await botManager.stopBot();
       } catch (error) {

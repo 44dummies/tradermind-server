@@ -220,12 +220,12 @@ async function startServer() {
     botManager.initialize(io);
 
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 TraderMind Real-time Server running on port ${PORT}`);
-      console.log(`📡 WebSocket ready for connections`);
-      console.log(`💬 Community System active`);
-      console.log(`📈 Trading System active`);
-      console.log(`📁 File storage initialized`);
-      console.log(`🔗 CORS origins: ${corsOrigins.join(', ')}`);
+      console.log(`TraderMind Real-time Server running on port ${PORT}`);
+      console.log(`WebSocket ready for connections`);
+      console.log(`Community System active`);
+      console.log(`Trading System active`);
+      console.log(`File storage initialized`);
+      console.log(`CORS origins: ${corsOrigins.join(', ')}`);
     });
   } catch (err) {
     console.error('Failed to start server:', err);

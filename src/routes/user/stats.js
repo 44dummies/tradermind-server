@@ -16,11 +16,12 @@ router.get('/', async (req, res) => {
         const userId = req.user.id;
         const { sessionId } = req.query;
 
-        // Build query for user's trades
+        // Build query for user's trades from activity logs
         let query = supabase
-            .from('trade_logs')
+            .from('trading_activity_logs')
             .select('*')
-            .eq('user_id', userId);
+            .eq('user_id', userId)
+            .in('action_type', ['trade_won', 'trade_lost']);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -30,13 +31,17 @@ router.get('/', async (req, res) => {
 
         if (error) throw error;
 
-        // Calculate statistics
-        const completedTrades = (trades || []).filter(t => t.result !== 'pending');
-        const wins = completedTrades.filter(t => t.result === 'won');
-        const losses = completedTrades.filter(t => t.result === 'lost');
+        // Calculate statistics from activity logs
+        const wins = (trades || []).filter(t => t.action_type === 'trade_won');
+        const losses = (trades || []).filter(t => t.action_type === 'trade_lost');
+        const completedTrades = trades || [];
 
-        const totalProfit = completedTrades.reduce((sum, t) => sum + (t.profit || 0), 0);
-        const totalStake = completedTrades.reduce((sum, t) => sum + (t.stake || 0), 0);
+        let totalProfit = 0;
+        let totalStake = 0;
+        completedTrades.forEach(t => {
+            totalProfit += parseFloat(t.action_details?.profit) || 0;
+            totalStake += parseFloat(t.action_details?.stake) || 0;
+        });
 
         // Get session participation history
         const { data: sessions } = await supabase
@@ -47,7 +52,7 @@ router.get('/', async (req, res) => {
             .limit(10);
 
         res.json({
-            totalTrades: trades?.length || 0,
+            totalTrades: completedTrades.length,
             completedTrades: completedTrades.length,
             wins: wins.length,
             losses: losses.length,
@@ -84,9 +89,10 @@ router.get('/trades', async (req, res) => {
         const { limit = 50, offset = 0, sessionId } = req.query;
 
         let query = supabase
-            .from('trade_logs')
+            .from('trading_activity_logs')
             .select('*')
             .eq('user_id', userId)
+            .in('action_type', ['trade_won', 'trade_lost', 'trade_opened', 'trade_closed'])
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 

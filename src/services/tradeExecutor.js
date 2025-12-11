@@ -39,7 +39,7 @@ class TradeExecutor {
     const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
 
     if (this.processingSignals.has(lockKey)) {
-      console.log(`[TradeExecutor] 🔒 Skipping concurrent signal: ${lockKey}`);
+      console.log(`[TradeExecutor]  Skipping concurrent signal: ${lockKey}`);
       return { executed: 0, total: 0, reason: 'locked' };
     }
 
@@ -47,11 +47,11 @@ class TradeExecutor {
 
     try {
       if (this.paused) {
-        console.log('[TradeExecutor] ⏸️ Trading paused, skipping signal');
+        console.log('[TradeExecutor]  Trading paused, skipping signal');
         return { executed: 0, total: 0 };
       }
 
-      console.log(`[TradeExecutor] 🚀 Executing multi-account trade for session ${sessionId}`);
+      console.log(`[TradeExecutor]  Executing multi-account trade for session ${sessionId}`);
       console.log(`[TradeExecutor] Signal: ${signal.side} ${signal.digit} (${(signal.confidence * 100).toFixed(1)}%)`);
 
       // Get session details
@@ -80,7 +80,7 @@ class TradeExecutor {
       }
 
       if (!invitations || invitations.length === 0) {
-        console.log('[TradeExecutor] ⚠️ No accepted accounts for this session');
+        console.log('[TradeExecutor]  No accepted accounts for this session');
         return {
           success: false,
           message: 'No accepted accounts'
@@ -226,7 +226,7 @@ class TradeExecutor {
           if (tradeResult.success) {
             await this.sendNotification(participant.user_id, {
               type: 'trade_executed',
-              message: `📊 Trade Executed: ${tradeResult.signal.side} ${tradeResult.signal.digit}`,
+              message: ` Trade Executed: ${tradeResult.signal.side} ${tradeResult.signal.digit}`,
               data: {
                 contractId: tradeResult.contractId,
                 signal: tradeResult.signal.side,
@@ -265,7 +265,7 @@ class TradeExecutor {
       }
 
       const successCount = tradeResults.filter(r => r.success).length;
-      console.log(`[TradeExecutor] ✅ Executed ${successCount}/${validAccounts.length} trades successfully`);
+      console.log(`[TradeExecutor]  Executed ${successCount}/${validAccounts.length} trades successfully`);
 
       return {
         success: true,
@@ -325,7 +325,7 @@ class TradeExecutor {
 
       const contract = buyResponse.buy;
 
-      console.log(`[TradeExecutor] ✅ Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
+      console.log(`[TradeExecutor]  Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
 
       // Emit trade start event
       if (this.io) {
@@ -374,7 +374,7 @@ class TradeExecutor {
       return;
     }
 
-    console.log(`[TradeExecutor] ⚡ Starting Real-Time WS Monitor for contract ${tradeResult.contractId}`);
+    console.log(`[TradeExecutor]  Starting Real-Time WS Monitor for contract ${tradeResult.contractId}`);
 
     const ws = this.activeConnections.get(tradeResult.derivAccountId);
     if (!ws) {
@@ -399,7 +399,7 @@ class TradeExecutor {
 
               // Check TP
               if (currentPL >= invitation.take_profit) {
-                console.log(`[TradeExecutor] 🎯 TP HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                console.log(`[TradeExecutor]  TP HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
                 // Remove listener immediately to prevent double firing
                 ws.removeListener('message', updateHandler);
                 await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session);
@@ -408,7 +408,7 @@ class TradeExecutor {
 
               // Check SL
               if (currentPL <= -Math.abs(invitation.stop_loss)) {
-                console.log(`[TradeExecutor] 🛑 SL HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                console.log(`[TradeExecutor]  SL HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
                 ws.removeListener('message', updateHandler);
                 await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session);
                 return;
@@ -538,10 +538,10 @@ class TradeExecutor {
 
       // Send comprehensive session report notification
       const reportMessage = reason === 'tp_hit'
-        ? `🎉 Take Profit Reached! Session Complete`
+        ? ` Take Profit Reached! Session Complete`
         : reason === 'sl_hit'
-          ? `⚠️ Stop Loss Reached. Session Ended`
-          : `ℹ️ Session Ended`;
+          ? ` Stop Loss Reached. Session Ended`
+          : ` Session Ended`;
 
       // Get trade history for this user in this session
       const { data: tradeHistory } = await supabase
@@ -591,7 +591,7 @@ class TradeExecutor {
         this.consecutiveLosses = 0;
       }
 
-      console.log(`[TradeExecutor] ✅ Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
+      console.log(`[TradeExecutor]  Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
 
       // Emit trade close event
       if (this.io) {
@@ -640,7 +640,7 @@ class TradeExecutor {
           updates.completed_at = new Date().toISOString();
           updates.recovery_progress = 100;
 
-          console.log(`[TradeExecutor] 🏁 Recovery session ${session.id} COMPLETED! Target reached.`);
+          console.log(`[TradeExecutor]  Recovery session ${session.id} COMPLETED! Target reached.`);
 
           // Also mark session as completed
           await supabase
@@ -673,7 +673,7 @@ class TradeExecutor {
         const martingaleMult = parseFloat(session.martingale_multiplier) || 2.0;
         updates.current_multiplier = (parseFloat(recoveryState.current_multiplier) || 1.0) * martingaleMult;
 
-        console.log(`[TradeExecutor] 📉 Recovery loss. New multiplier: ${updates.current_multiplier}x`);
+        console.log(`[TradeExecutor]  Recovery loss. New multiplier: ${updates.current_multiplier}x`);
       }
 
       // Save updates
@@ -717,7 +717,7 @@ class TradeExecutor {
         const message = JSON.parse(data.toString());
 
         if (message.msg_type === 'authorize') {
-          console.log(`[TradeExecutor] ✅ Connected & authorized for ${derivAccountId}`);
+          console.log(`[TradeExecutor]  Connected & authorized for ${derivAccountId}`);
           this.activeConnections.set(derivAccountId, ws);
           resolve(ws);
         } else if (message.msg_type === 'error') {

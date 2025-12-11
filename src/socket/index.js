@@ -532,7 +532,7 @@ function setupSocketHandlers(io) {
     });
   });
 
-  console.log('📡 Socket.IO handlers initialized');
+  console.log(' Socket.IO handlers initialized');
 }
 
 module.exports = { setupSocketHandlers };

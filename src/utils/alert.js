@@ -12,9 +12,9 @@ if (process.env.SENTRY_DSN) {
         environment: process.env.NODE_ENV || 'development',
         tracesSampleRate: 1.0,
     });
-    console.log('[Alert] ✅ Sentry initialized');
+    console.log('[Alert]  Sentry initialized');
 } else {
-    console.log('[Alert] ⚠️ SENTRY_DSN not set, error tracking disabled');
+    console.log('[Alert]  SENTRY_DSN not set, error tracking disabled');
 }
 
 /**
@@ -23,7 +23,7 @@ if (process.env.SENTRY_DSN) {
  * @param {Object} context - Additional context (symbol, price, etc.)
  */
 function captureError(err, context = {}) {
-    console.error('[Alert] ❌ Error:', err.message);
+    console.error('[Alert]  Error:', err.message);
 
     if (process.env.SENTRY_DSN) {
         Sentry.withScope((scope) => {
@@ -41,7 +41,7 @@ function captureError(err, context = {}) {
  * @param {Object} context - Additional context
  */
 function captureWarning(message, context = {}) {
-    console.warn('[Alert] ⚠️ Warning:', message);
+    console.warn('[Alert]  Warning:', message);
 
     if (process.env.SENTRY_DSN) {
         Sentry.captureMessage(message, {
@@ -72,7 +72,7 @@ function checkFailureThreshold(conditionName, failureCount, threshold = 5) {
  * @param {Object} data - Event data
  */
 function trackEvent(eventType, data = {}) {
-    console.log(`[Alert] 📊 Event: ${eventType}`, data);
+    console.log(`[Alert]  Event: ${eventType}`, data);
 
     if (process.env.SENTRY_DSN) {
         Sentry.addBreadcrumb({

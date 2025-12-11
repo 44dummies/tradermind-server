@@ -34,7 +34,7 @@ class TickCollector extends EventEmitter {
         this.ws = new WebSocket(WS_URL);
 
         this.ws.on('open', () => {
-          console.log('[TickCollector] ✅ Connected to Deriv WebSocket');
+          console.log('[TickCollector]  Connected to Deriv WebSocket');
           this.connected = true;
           this.reconnectAttempts = 0;
 
@@ -60,7 +60,7 @@ class TickCollector extends EventEmitter {
 
             // Handle AlreadySubscribed gracefully
             if (message.error && message.error.code === 'AlreadySubscribed') {
-              // console.log(`[TickCollector] ℹ️ Already subscribed to ${message.echo_req.ticks}`);
+              // console.log(`[TickCollector]  Already subscribed to ${message.echo_req.ticks}`);
               return;
             }
 
@@ -72,7 +72,7 @@ class TickCollector extends EventEmitter {
         });
 
         this.ws.on('close', () => {
-          console.log('[TickCollector] ❌ WebSocket closed');
+          console.log('[TickCollector]  WebSocket closed');
           this.connected = false;
           this.stopPing();
           this.emit('disconnected');
@@ -122,7 +122,7 @@ class TickCollector extends EventEmitter {
       return true;
     }
 
-    console.log(`[TickCollector] 📊 Subscribing to ${market} ticks`);
+    console.log(`[TickCollector]  Subscribing to ${market} ticks`);
 
     this.send({
       ticks: market,
@@ -163,7 +163,7 @@ class TickCollector extends EventEmitter {
       if (message.tick) {
         this.handleTick(message);
       } else {
-        console.warn('[TickCollector] ⚠️ Received tick message without tick data:', message);
+        console.warn('[TickCollector]  Received tick message without tick data:', message);
       }
     }
 
@@ -171,12 +171,12 @@ class TickCollector extends EventEmitter {
     else if (message.msg_type === 'tick' && message.subscription) {
       const market = message.echo_req.ticks;
       this.subscriptions.set(market, message.subscription.id);
-      console.log(`[TickCollector] ✅ Subscribed to ${market} (ID: ${message.subscription.id})`);
+      console.log(`[TickCollector]  Subscribed to ${market} (ID: ${message.subscription.id})`);
     }
 
     // Handle authorization
     else if (message.msg_type === 'authorize') {
-      console.log('[TickCollector] ✅ Authorized');
+      console.log('[TickCollector]  Authorized');
       this.emit('authorized', message.authorize);
     }
 
@@ -308,7 +308,7 @@ class TickCollector extends EventEmitter {
    */
   async reconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('[TickCollector] ❌ Max reconnect attempts reached');
+      console.error('[TickCollector]  Max reconnect attempts reached');
       this.emit('maxReconnectReached');
       return;
     }
@@ -316,7 +316,7 @@ class TickCollector extends EventEmitter {
     this.reconnectAttempts++;
 
     const delay = this.reconnectDelay * this.reconnectAttempts;
-    console.log(`[TickCollector] 🔄 Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    console.log(`[TickCollector]  Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
 
     setTimeout(async () => {
       try {

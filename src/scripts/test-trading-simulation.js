@@ -204,7 +204,7 @@ mockSupabase.from = (table) => {
 
 
 async function runSimulation() {
-    console.log('🚀 Starting Trading System Simulation (Mocked DB)');
+    console.log(' Starting Trading System Simulation (Mocked DB)');
     console.log('-----------------------------------');
 
     try {
@@ -214,7 +214,7 @@ async function runSimulation() {
         // We'll manually inject state since startBot does DB checks that are hard to mock perfectly in chain
         botManager.state.isRunning = true;
         botManager.state.activeSessionId = TEST_SESSION_ID;
-        console.log('✅ Bot started (State injected)');
+        console.log(' Bot started (State injected)');
 
         // 5. Trigger Tick/Signal Manually
         console.log('2. Triggering manual trade execution...');
@@ -224,21 +224,21 @@ async function runSimulation() {
         const result = await tradeExecutor.executeMultiAccountTrade(signal, TEST_SESSION_ID);
 
         console.log('-----------------------------------');
-        console.log('📊 Trade Execution Result:', result.success ? 'SUCCESS' : 'FAILED');
+        console.log(' Trade Execution Result:', result.success ? 'SUCCESS' : 'FAILED');
 
         if (result.success) {
             console.log(`Executed: ${result.executed}/${result.total}`);
             console.log('Contract ID:', result.results[0].contractId);
-            console.log('✅ Trade logic verified: Signal -> Executor -> DB Insert');
+            console.log(' Trade logic verified: Signal -> Executor -> DB Insert');
         } else {
             console.error('Err:', result.message);
             if (result.invalidAccounts) console.log('Invalid Accounts:', result.invalidAccounts);
         }
 
     } catch (error) {
-        console.error('❌ Simulation Error:', error);
+        console.error(' Simulation Error:', error);
     } finally {
-        console.log('✅ Simulation complete');
+        console.log(' Simulation complete');
         process.exit(0);
     }
 }

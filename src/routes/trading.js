@@ -124,6 +124,154 @@ router.get('/sessions/:id/ticks', authMiddleware, async (req, res) => {
   }
 });
 
+// Endpoint to get session statistics (P/L, Win Rate, etc.)
+router.get('/sessions/:id/stats', authMiddleware, async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+
+    // Get trades for this session from activity logs
+    const { data: trades, error: tradesErr } = await supabase
+      .from('trading_activity_logs')
+      .select('*')
+      .eq('session_id', sessionId)
+      .in('action_type', ['trade_opened', 'trade_closed', 'trade_won', 'trade_lost']);
+
+    if (tradesErr) throw tradesErr;
+
+    // Calculate stats
+    const closedTrades = trades?.filter(t =>
+      t.action_type === 'trade_won' || t.action_type === 'trade_lost' || t.action_type === 'trade_closed'
+    ) || [];
+
+    const wins = trades?.filter(t => t.action_type === 'trade_won').length || 0;
+    const losses = trades?.filter(t => t.action_type === 'trade_lost').length || 0;
+    const totalClosed = wins + losses;
+
+    // Sum up profits from metadata
+    let totalProfit = 0;
+    closedTrades.forEach(t => {
+      if (t.action_details?.profit) {
+        totalProfit += parseFloat(t.action_details?.profit) || 0;
+      } else if (t.action_details?.pnl) {
+        totalProfit += parseFloat(t.action_details?.pnl) || 0;
+      }
+    });
+
+    const winRate = totalClosed > 0 ? (wins / totalClosed) * 100 : 0;
+    const openTrades = trades?.filter(t => t.action_type === 'trade_opened').length || 0;
+
+    res.json({
+      success: true,
+      data: {
+        totalTrades: totalClosed,
+        openTrades,
+        wins,
+        losses,
+        winRate: winRate.toFixed(1),
+        totalProfit: totalProfit.toFixed(2),
+        avgProfit: totalClosed > 0 ? (totalProfit / totalClosed).toFixed(2) : '0.00'
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching session stats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update user's TP/SL for a session
+router.put('/sessions/:id/tpsl', authMiddleware, async (req, res) => {
+  try {
+    const sessionId = req.params.id;
+    const userId = req.userId;
+    const { takeProfit, stopLoss } = req.body;
+
+    if (takeProfit === undefined || stopLoss === undefined) {
+      return res.status(400).json({ success: false, error: 'takeProfit and stopLoss are required' });
+    }
+
+    // Import supabase
+    const { supabase } = require('../db/supabase');
+
+    // Update the user's TP/SL in session_participants
+    const { data, error } = await supabase
+      .from('session_participants')
+      .update({
+        tp: parseFloat(takeProfit),
+        sl: parseFloat(stopLoss),
+        updated_at: new Date().toISOString()
+      })
+      .eq('session_id', sessionId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error updating TP/SL:', error);
+      return res.status(500).json({ success: false, error: 'Failed to update TP/SL' });
+    }
+
+    if (!data) {
+      return res.status(404).json({ success: false, error: 'Participation not found' });
+    }
+
+    await trading.logActivity('tpsl_updated', `User updated TP: $${takeProfit}, SL: $${stopLoss}`, {
+      user_id: userId,
+      session_id: sessionId
+    });
+
+    res.json({ success: true, data: { takeProfit: data.tp, stopLoss: data.sl } });
+  } catch (error) {
+    console.error('Error updating TP/SL:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get trading constants (strategies, markets, staking modes)
+router.get('/constants', authMiddleware, async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: {
+        strategies: [
+          { id: 'DFPM', name: 'Digit Frequency Pattern Matching', description: 'Analyzes digit patterns for predictions' },
+          { id: 'VCS', name: 'Volatility Correlation Strategy', description: 'Uses volatility analysis for entries' },
+          { id: 'MARKOV', name: 'Markov Chain Predictor', description: 'Probability-based digit prediction' },
+          { id: 'RSI_TREND', name: 'RSI + Trend Analysis', description: 'Combines RSI with trend regression' }
+        ],
+        markets: [
+          { id: 'R_100', name: 'Volatility 100 Index', tickInterval: 1 },
+          { id: 'R_75', name: 'Volatility 75 Index', tickInterval: 1 },
+          { id: 'R_50', name: 'Volatility 50 Index', tickInterval: 1 },
+          { id: 'R_25', name: 'Volatility 25 Index', tickInterval: 1 },
+          { id: 'R_10', name: 'Volatility 10 Index', tickInterval: 1 }
+        ],
+        stakingModes: [
+          { id: 'fixed', name: 'Fixed Stake', description: 'Same stake every trade' },
+          { id: 'martingale', name: 'Martingale', description: 'Double on loss, reset on win' },
+          { id: 'compounding', name: 'Compounding', description: 'Percentage of current balance' }
+        ],
+        contractTypes: [
+          { id: 'DIGITOVER', name: 'Digit Over' },
+          { id: 'DIGITUNDER', name: 'Digit Under' },
+          { id: 'DIGITDIFF', name: 'Digit Differs' },
+          { id: 'DIGITMATCH', name: 'Digit Matches' },
+          { id: 'DIGITEVEN', name: 'Digit Even' },
+          { id: 'DIGITODD', name: 'Digit Odd' }
+        ],
+        riskLimits: {
+          maxDailyLoss: 100,
+          maxExposure: 50,
+          maxConsecutiveLosses: 5,
+          defaultStake: 0.35
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching constants:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/sessions/:id', authMiddleware, async (req, res) => {
   try {
     const session = await trading.getSession(req.params.id);

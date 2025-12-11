@@ -20,7 +20,7 @@ class NotificationService {
    */
   setSocketIO(io) {
     this.io = io;
-    console.log('[NotificationService] ✅ Socket.IO connected');
+    console.log('[NotificationService]  Socket.IO connected');
   }
 
   /**
@@ -56,7 +56,7 @@ class NotificationService {
         });
       }
 
-      console.log(`[NotificationService] ✅ Sent notification to user ${userId}`);
+      console.log(`[NotificationService]  Sent notification to user ${userId}`);
 
       return {
         success: true,
@@ -121,7 +121,7 @@ class NotificationService {
         });
       }
 
-      console.log(`[NotificationService] ✅ Broadcast sent to ${users.length} users`);
+      console.log(`[NotificationService]  Broadcast sent to ${users.length} users`);
 
       return {
         success: true,
@@ -172,7 +172,7 @@ class NotificationService {
       }
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`[NotificationService] ✅ Sent to ${successCount}/${invitations.length} session participants`);
+      console.log(`[NotificationService]  Sent to ${successCount}/${invitations.length} session participants`);
 
       return {
         success: true,
@@ -220,7 +220,7 @@ class NotificationService {
       }
 
       const successCount = results.filter(r => r.success).length;
-      console.log(`[NotificationService] ✅ Sent to ${successCount}/${recoveryStates.length} recovery users`);
+      console.log(`[NotificationService]  Sent to ${successCount}/${recoveryStates.length} recovery users`);
 
       return {
         success: true,
@@ -403,7 +403,7 @@ class NotificationService {
   async sendTPHit(userId, profitLoss, sessionId) {
     return this.sendToUser(userId, {
       type: 'tp_hit',
-      title: 'Take Profit Hit! 🎯',
+      title: 'Take Profit Hit! ',
       message: `Congratulations! Your take profit was reached. Profit: $${profitLoss.toFixed(2)}`,
       data: { profitLoss, sessionId }
     });
@@ -415,7 +415,7 @@ class NotificationService {
   async sendSLHit(userId, profitLoss, sessionId) {
     return this.sendToUser(userId, {
       type: 'sl_hit',
-      title: 'Stop Loss Hit ⚠️',
+      title: 'Stop Loss Hit ',
       message: `Your stop loss was reached. Loss: $${Math.abs(profitLoss).toFixed(2)}. You're eligible for recovery session.`,
       data: { profitLoss, sessionId }
     });
@@ -427,7 +427,7 @@ class NotificationService {
   async sendTradeExecuted(userId, tradeDetails) {
     return this.sendToUser(userId, {
       type: 'trade_executed',
-      title: 'Trade Executed ✅',
+      title: 'Trade Executed ',
       message: `New trade executed: ${tradeDetails.side} ${tradeDetails.digit}`,
       data: tradeDetails
     });

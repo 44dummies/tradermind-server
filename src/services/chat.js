@@ -475,7 +475,7 @@ const ChatService = {
           .insert({
             user_id: userId,
             type: 'streak_milestone',
-            title: 'New Streak Badge! 🎉',
+            title: 'New Streak Badge! ',
             message: `You earned ${badgeNames[badge]}`,
             related_chat_id: chatId,
             payload: { streak: newStreak, badge }

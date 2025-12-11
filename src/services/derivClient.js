@@ -49,7 +49,7 @@ class DerivClient {
             const api = new DerivAPIBasic({ connection });
 
             connection.on('open', async () => {
-                console.log(`[DerivClient] ✅ Connected for account ${accountId}`);
+                console.log(`[DerivClient]  Connected for account ${accountId}`);
 
                 try {
                     // Authorize the connection
@@ -59,7 +59,7 @@ class DerivClient {
                         throw new Error(authResponse.error.message);
                     }
 
-                    console.log(`[DerivClient] ✅ Authorized account ${authResponse.authorize.loginid}`);
+                    console.log(`[DerivClient]  Authorized account ${authResponse.authorize.loginid}`);
 
                     this.connections.set(accountId, {
                         api,
@@ -74,7 +74,7 @@ class DerivClient {
                     resolve(api);
 
                 } catch (authError) {
-                    console.error(`[DerivClient] ❌ Authorization failed for ${accountId}:`, authError);
+                    console.error(`[DerivClient]  Authorization failed for ${accountId}:`, authError);
                     connection.close();
                     reject(authError);
                 }
@@ -88,13 +88,13 @@ class DerivClient {
                 const attempts = this.reconnectAttempts.get(accountId) || 0;
                 if (attempts < this.maxReconnectAttempts) {
                     this.reconnectAttempts.set(accountId, attempts + 1);
-                    console.log(`[DerivClient] 🔄 Reconnecting (${attempts + 1}/${this.maxReconnectAttempts})...`);
+                    console.log(`[DerivClient]  Reconnecting (${attempts + 1}/${this.maxReconnectAttempts})...`);
                     // Note: Actual reconnection would need the token stored somewhere
                 }
             });
 
             connection.on('error', (error) => {
-                console.error(`[DerivClient] ❌ WebSocket error for ${accountId}:`, error.message);
+                console.error(`[DerivClient]  WebSocket error for ${accountId}:`, error.message);
                 reject(error);
             });
         });
@@ -106,7 +106,7 @@ class DerivClient {
     async buy(accountId, apiToken, contractParams) {
         const api = await this.getConnection(accountId, apiToken);
 
-        console.log(`[DerivClient] 📊 Executing trade for ${accountId}:`, contractParams);
+        console.log(`[DerivClient]  Executing trade for ${accountId}:`, contractParams);
 
         const response = await api.buy(contractParams);
 
@@ -114,7 +114,7 @@ class DerivClient {
             throw new Error(response.error.message);
         }
 
-        console.log(`[DerivClient] ✅ Trade executed: Contract ${response.buy.contract_id}`);
+        console.log(`[DerivClient]  Trade executed: Contract ${response.buy.contract_id}`);
 
         return {
             success: true,
@@ -167,11 +167,11 @@ class DerivClient {
                         }
                     });
 
-                    console.log(`[DerivClient] 📊 Subscribed to ${symbol} ticks`);
+                    console.log(`[DerivClient]  Subscribed to ${symbol} ticks`);
                     resolve(tickStream);
 
                 } catch (err) {
-                    console.error(`[DerivClient] ❌ Failed to subscribe to ${symbol}:`, err);
+                    console.error(`[DerivClient]  Failed to subscribe to ${symbol}:`, err);
                     reject(err);
                 }
             });
@@ -237,7 +237,7 @@ class DerivClient {
         // Request contract updates
         await api.send({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
 
-        console.log(`[DerivClient] 👁️ Monitoring contract ${contractId}`);
+        console.log(`[DerivClient]  Monitoring contract ${contractId}`);
     }
 
     /**

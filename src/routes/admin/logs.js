@@ -70,8 +70,9 @@ router.get('/trades', async (req, res) => {
         const { sessionId, userId, accountId, result, limit = 100, offset = 0 } = req.query;
 
         let query = supabase
-            .from('trade_logs')
+            .from('trading_activity_logs')
             .select('*')
+            .in('action_type', ['trade_won', 'trade_lost', 'trade_opened', 'trade_closed'])
             .order('created_at', { ascending: false })
             .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
 
@@ -81,11 +82,10 @@ router.get('/trades', async (req, res) => {
         if (userId) {
             query = query.eq('user_id', userId);
         }
-        if (accountId) {
-            query = query.eq('account_id', accountId);
-        }
+        // Note: accountId filtering now needs to check metadata
         if (result) {
-            query = query.eq('result', result);
+            if (result === 'won') query = query.eq('action', 'trade_won');
+            else if (result === 'lost') query = query.eq('action', 'trade_lost');
         }
 
         const { data, error } = await query;
