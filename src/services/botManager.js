@@ -53,12 +53,16 @@ class BotManager {
       throw new Error('Session not found');
     }
 
-    // Update session status to 'running'
-    console.log(`[BotManager] Updating session ${sessionId} status to 'running' in ${sessionTable}...`);
+    // Determine valid status based on table (V1 uses 'active', V2 uses 'running')
+    // TODO: Ideally check schema, but for now map based on table name
+    const statusToSet = sessionTable === 'trading_sessions' ? 'active' : 'running';
+
+    // Update session status
+    console.log(`[BotManager] Updating session ${sessionId} status to '${statusToSet}' in ${sessionTable}...`);
     const { error: updateError } = await supabase
       .from(sessionTable)
       .update({
-        status: 'running',
+        status: statusToSet,
         started_at: new Date().toISOString()
       })
       .eq('id', sessionId);
