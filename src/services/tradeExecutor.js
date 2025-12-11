@@ -76,21 +76,30 @@ class TradeExecutor {
       const invalidAccounts = [];
 
       for (const participant of invitations) {
-        // First, get the user's trading account to find the deriv_token
-        const { data: tradingAccount, error: accountErr } = await supabase
-          .from('trading_accounts')
-          .select('deriv_token, deriv_account_id, currency, is_active')
-          .eq('user_id', participant.user_id)
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
+        let derivToken = participant.deriv_token;
+        let tradingAccount = null;
 
-        if (accountErr) {
-          console.error(`[TradeExecutor] Error fetching trading account for user ${participant.user_id}:`, accountErr);
+        // If no token in participant record (V1 flow), look up trading account
+        if (!derivToken) {
+          const { data: account, error: accountErr } = await supabase
+            .from('trading_accounts')
+            .select('deriv_token, deriv_account_id, currency, is_active')
+            .eq('user_id', participant.user_id)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+
+          if (accountErr) {
+            console.error(`[TradeExecutor] Error fetching trading account for user ${participant.user_id}:`, accountErr);
+          }
+
+          if (account) {
+            tradingAccount = account;
+            derivToken = account.deriv_token;
+          }
         }
 
         // Check if we have a valid trading token
-        const derivToken = tradingAccount?.deriv_token;
         if (!derivToken) {
           invalidAccounts.push({
             userId: participant.user_id,
