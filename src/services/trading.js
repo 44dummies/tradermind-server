@@ -405,7 +405,7 @@ async function getTradeStats(sessionId, accountId = null) {
 
 async function logActivity(type, message, metadata = {}) {
   const { error } = await supabase
-    .from('activity_logs')
+    .from('activity_logs_v2')
     .insert({
       id: uuidv4(),
       type,
@@ -419,7 +419,7 @@ async function logActivity(type, message, metadata = {}) {
 
 async function getActivityLogs(options = {}) {
   let query = supabase
-    .from('activity_logs')
+    .from('activity_logs_v2')
     .select('*')
     .order('created_at', { ascending: false });
 
