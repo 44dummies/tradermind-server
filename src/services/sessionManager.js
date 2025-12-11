@@ -218,23 +218,16 @@ class SessionManager {
         throw new Error(`Stop Loss must be at least $${session.default_sl}`);
       }
 
-      // Update invitation - use account info if available, otherwise just store token
+      // Update invitation - use only columns that exist in session_invitations table
+      // Schema: id, session_id, user_id, account_id, status, invited_by, trades_count, profit, loss, responded_at, created_at, updated_at
       const updateData = {
         status: 'accepted',
-        take_profit: finalTP,
-        stop_loss: finalSL,
-        accepted_at: new Date().toISOString()
+        responded_at: new Date().toISOString()
       };
 
       // Only add account fields if we looked up an account
       if (account) {
         updateData.account_id = account.id;
-        updateData.account_type = account.account_type;
-      }
-
-      // Store derivToken if provided (for v2 flow)
-      if (derivTokenToUse) {
-        updateData.deriv_token = derivTokenToUse;
       }
 
       const { data: invitation, error: updateError } = await supabase
