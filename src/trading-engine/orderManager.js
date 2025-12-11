@@ -67,8 +67,8 @@ class OrderManager {
             this.processedSignals++;
 
             // Publish trade executed events for each successful trade
-            if (result && result.trades) {
-                for (const trade of result.trades) {
+            if (result && result.results) {
+                for (const trade of result.results) {
                     const tradeEvent = createTradeExecutedEvent(trade, {
                         sessionId,
                         userId: trade.user_id,

@@ -77,7 +77,15 @@ class MessageQueue {
      */
     async publish(topic, event) {
         if (!this.isConnected) {
-            console.warn('[MessageQueue] Not connected, event not queued:', topic);
+            console.warn('[MessageQueue] Not connected, using fallback if available:', topic);
+            if (this.fallbackHandler) {
+                try {
+                    await this.fallbackHandler(topic, event);
+                    return 'fallback-' + Date.now();
+                } catch (err) {
+                    console.error('[MessageQueue] Fallback error:', err);
+                }
+            }
             return null;
         }
 
@@ -92,8 +100,22 @@ class MessageQueue {
             return messageId;
         } catch (error) {
             console.error(`[MessageQueue] Publish error on ${topic}:`, error.message);
+            // Try fallback on error too
+            if (this.fallbackHandler) {
+                try {
+                    await this.fallbackHandler(topic, event);
+                } catch (err) { console.error('[MessageQueue] Fallback error:', err); }
+            }
             return null;
         }
+    }
+
+    /**
+     * Set fallback handler for when Redis is disconnected
+     * @param {function} handler - (topic, event) => Promise<void>
+     */
+    setFallbackHandler(handler) {
+        this.fallbackHandler = handler;
     }
 
     /**
