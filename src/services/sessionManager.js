@@ -218,7 +218,7 @@ class SessionManager {
         throw new Error(`Stop Loss must be at least $${session.default_sl}`);
       }
 
-      // Update invitation - use only columns that exist in session_invitations table
+      // Update or Insert invitation
       // Schema: id, session_id, user_id, account_id, status, invited_by, trades_count, profit, loss, responded_at, created_at, updated_at
       const updateData = {
         status: 'accepted',
@@ -230,16 +230,44 @@ class SessionManager {
         updateData.account_id = account.id;
       }
 
-      const { data: invitation, error: updateError } = await supabase
+      // Check if invitation exists
+      const { data: existingInvite } = await supabase
         .from('session_invitations')
-        .update(updateData)
+        .select('id')
         .eq('session_id', sessionId)
         .eq('user_id', userId)
-        .select()
-        .single();
+        .maybeSingle();
 
-      if (updateError) {
-        throw new Error(`Failed to accept session: ${updateError.message}`);
+      let invitation;
+
+      if (existingInvite) {
+        // Update existing
+        const { data, error: updateError } = await supabase
+          .from('session_invitations')
+          .update(updateData)
+          .eq('session_id', sessionId)
+          .eq('user_id', userId)
+          .select()
+          .single();
+
+        if (updateError) throw new Error(`Failed to accept session: ${updateError.message}`);
+        invitation = data;
+      } else {
+        // Insert new (Public session join)
+        const { data, error: insertError } = await supabase
+          .from('session_invitations')
+          .insert({
+            session_id: sessionId,
+            user_id: userId,
+            invited_by: session.created_by || session.admin_id, // Support both column names
+            ...updateData,
+            status: 'accepted' // Ensure status is set
+          })
+          .select()
+          .single();
+
+        if (insertError) throw new Error(`Failed to join session: ${insertError.message}`);
+        invitation = data;
       }
 
       console.log(`[SessionManager] ✅ User ${userId} accepted session ${sessionId}`);
