@@ -11,8 +11,8 @@ const router = express.Router();
 // Cookie configuration for refresh token
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+  secure: true, // Always secure for None
+  sameSite: 'none', // Allow cross-site usage
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   path: '/'
 };
