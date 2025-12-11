@@ -39,6 +39,8 @@ router.get('/', async (req, res) => {
             .limit(1)
             .maybeSingle();
 
+        console.log('[Dashboard] Participation query result:', JSON.stringify(participation, null, 2));
+
         // Get available sessions to join
         const { data: availableSessions } = await supabase
             .from('trading_sessions_v2')
