@@ -39,7 +39,10 @@ router.get('/stream', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Use actual origin for CORS with credentials
+    const origin = req.headers.origin || 'https://www.tradermind.site';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
     // Send initial connection event
@@ -105,6 +108,10 @@ router.get('/admin-stream', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    // Use actual origin for CORS with credentials
+    const origin = req.headers.origin || 'https://www.tradermind.site';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('X-Accel-Buffering', 'no');
 
     res.write(`event: connected\ndata: ${JSON.stringify({ userId: clientId, admin: true })}\n\n`);
