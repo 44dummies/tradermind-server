@@ -53,14 +53,29 @@ class BotManager {
       throw new Error('Session not found');
     }
 
-    // Update session status
-    await supabase
+    // Update session status to 'running'
+    console.log(`[BotManager] Updating session ${sessionId} status to 'running' in ${sessionTable}...`);
+    const { error: updateError } = await supabase
       .from(sessionTable)
       .update({
         status: 'running',
         started_at: new Date().toISOString()
       })
       .eq('id', sessionId);
+
+    if (updateError) {
+      console.error('[BotManager] ❌ Failed to update session status:', updateError);
+      throw new Error(`Failed to start session: ${updateError.message}`);
+    }
+
+    // Verify the update worked
+    const { data: verifySession } = await supabase
+      .from(sessionTable)
+      .select('status')
+      .eq('id', sessionId)
+      .single();
+
+    console.log(`[BotManager] ✅ Session status after update: ${verifySession?.status}`);
 
     // Start components
     this.state.isRunning = true;
