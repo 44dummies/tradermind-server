@@ -86,7 +86,7 @@ router.get('/dashboard', isUser, async (req, res) => {
 
     // Get user settings
     const { data: settings, error: settingsError } = await supabase
-      .from('user_settings')
+      .from('user_trading_settings')
       .select('*')
       .eq('user_id', userId)
       .single();
@@ -149,7 +149,7 @@ router.put('/tpsl', isUser, async (req, res) => {
 
     // Upsert user settings
     const { data, error } = await supabase
-      .from('user_settings')
+      .from('user_trading_settings')
       .upsert({
         user_id: userId,
         default_tp: tp,
