@@ -1,18 +1,11 @@
 /**
- * Quant Engine v2 - Full Quantitative Trading Engine
+ * Quant Engine v3 - Full Quantitative Trading Engine
  * 
- * Features:
- * 1. Memory Layer (persistent learning)
- * 2. Learning Loop (reinforce/weaken indicators)
- * 3. Market Regime Classifier (stable/transition/chaos)
- * 4. Bayesian Digit Predictor
- * 5. Final Decision Layer combining all
- * 
- * This is the main orchestrator that brings together:
- * - strategyEngine (digit analysis)
- * - quantMemory (persistent state)
- * - Regime classification
- * - Bayesian inference
+ * Fixes applied:
+ * 1. Uses quantConfig for all thresholds
+ * 2. Proper totalWeight tracking
+ * 3. Decision log for observability
+ * 4. Bayesian digit selection
  */
 
 const {
@@ -21,27 +14,21 @@ const {
     computeMarkovPrediction,
     detectDigitDeltaStreak,
     computeDigitExhaustion,
-    detectRecentBias
+    detectRecentBias,
+    selectOptimalDigit
 } = require('./strategyEngine');
 
 const quantMemory = require('./quantMemory');
+const quantConfig = require('../config/quantConfig');
 
 // ==================== MARKET REGIME CLASSIFIER ====================
 
 /**
- * Detect current market regime based on entropy and patterns
- * @param {number} entropy - Current entropy value
- * @param {Object} memory - Quant memory
- * @returns {string} 'stable' | 'transition' | 'chaos'
+ * Detect current market regime based on entropy
  */
-function detectRegime(entropy, transitionVariance = 0) {
-    // Chaos: Very high entropy, unpredictable
-    if (entropy > 2.9) return 'chaos';
-
-    // Transition: Moderate entropy or high variance in patterns
-    if (entropy > 2.5 || transitionVariance > 0.3) return 'transition';
-
-    // Stable: Low entropy, predictable patterns
+function detectRegime(entropy) {
+    if (entropy > quantConfig.entropy.chaosThreshold) return 'chaos';
+    if (entropy > quantConfig.entropy.transitionThreshold) return 'transition';
     return 'stable';
 }
 
@@ -53,20 +40,20 @@ function getRegimeConfig(regime) {
         case 'chaos':
             return {
                 shouldTrade: false,
-                minConfidence: 1.0, // Impossible to reach = don't trade
+                minConfidence: 1.0,
                 message: 'Market chaos - Skip trading'
             };
         case 'transition':
             return {
                 shouldTrade: true,
-                minConfidence: 0.40, // Higher bar
+                minConfidence: quantConfig.confidence.transitionMin,
                 message: 'Transition - Trade cautiously'
             };
         case 'stable':
         default:
             return {
                 shouldTrade: true,
-                minConfidence: 0.25, // Normal trading
+                minConfidence: quantConfig.confidence.stableMin,
                 message: 'Stable - Normal trading'
             };
     }
@@ -258,16 +245,18 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
 
     const totalScore = scoreOver + scoreUnder;
     const scoreDiff = Math.abs(scoreOver - scoreUnder);
+    const voteRatio = totalScore > 0 ? scoreDiff / totalScore : 0;
 
     // If scores are too close, it's a contradiction
-    if (totalScore > 0 && (scoreDiff / totalScore) < 0.15 && indicatorsUsed.length >= 2) {
+    if (totalScore > 0 && voteRatio < quantConfig.confidence.contradictionRatio && indicatorsUsed.length >= 2) {
         return {
             shouldTrade: false,
             reason: `Contradiction: O=${scoreOver.toFixed(2)} vs U=${scoreUnder.toFixed(2)}`,
             confidence: 0,
             regime,
-            entropy: entropyData.entropy,
-            contradiction: true
+            entropy: entropyData.value,
+            contradiction: true,
+            decisionLog: { voteRatio, totalScore, indicatorsUsed }
         };
     }
 
@@ -276,26 +265,37 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
     const finalSide = scoreOver > scoreUnder ? 'OVER' : 'UNDER';
     const winningScore = Math.max(scoreOver, scoreUnder);
 
-    // Normalize confidence (max theoretical score ~3.0)
-    const normalizedConfidence = Math.min(winningScore / 2.0, 1.0);
+    // Normalize confidence using voteRatio (how much winner beats loser)
+    const normalizedConfidence = Math.min(voteRatio, 1.0);
 
     // Regime-adjusted minimum confidence
     const meetsConfidence = normalizedConfidence >= regimeConfig.minConfidence;
-    const meetsFactors = indicatorsUsed.length >= 2;
+    const meetsFactors = indicatorsUsed.length >= quantConfig.confidence.minFactors;
 
     const shouldTrade = meetsConfidence && meetsFactors;
 
-    // Select digit based on Bayesian posterior
-    let selectedDigit;
-    if (finalSide === 'OVER') {
-        // Best high digit
-        const highDigits = bayesian.posterior.slice(5, 10);
-        selectedDigit = 5 + highDigits.indexOf(Math.max(...highDigits));
-    } else {
-        // Best low digit
-        const lowDigits = bayesian.posterior.slice(0, 5);
-        selectedDigit = lowDigits.indexOf(Math.max(...lowDigits));
-    }
+    // Select digit using Bayesian posterior + frequency blend
+    const { digit: selectedDigit, score: digitScore } = selectOptimalDigit(
+        finalSide,
+        bayesian.posterior,
+        freq
+    );
+
+    // Decision log for observability/debugging
+    const decisionLog = {
+        timestamp: new Date().toISOString(),
+        entropy: entropyData.value,
+        regime,
+        votes: { over: scoreOver, under: scoreUnder },
+        totalScore,
+        voteRatio,
+        finalSide,
+        normalizedConfidence,
+        digitScore,
+        indicatorsUsed,
+        meetsConfidence,
+        meetsFactors
+    };
 
     return {
         shouldTrade,
@@ -306,10 +306,11 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
         reason: factors.join(' '),
         indicatorsUsed,
         market,
+        decisionLog,
 
         // Detailed analysis for logging
         analysis: {
-            entropy: entropyData.entropy,
+            entropy: entropyData.value,
             regime: regimeConfig.message,
             scores: { over: scoreOver.toFixed(2), under: scoreUnder.toFixed(2) },
             weights: {
