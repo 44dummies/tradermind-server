@@ -50,13 +50,23 @@ class SignalWorker {
     // Ensure connection
     if (!tickCollector.isConnected()) {
       await tickCollector.connect(apiToken);
+      // Wait for connection to stabilize before subscribing
+      await this.sleep(1000);
     }
 
-    markets.forEach(m => tickCollector.subscribeTicks(m));
+    // Subscribe to ticks with small delay between each
+    for (const m of markets) {
+      tickCollector.subscribeTicks(m);
+      await this.sleep(200); // Small delay between subscriptions
+    }
 
     // Run every 2 seconds for fast execution
     this.interval = setInterval(() => this.tick(markets), 2000);
     console.log('[SignalWorker] 🧠 Quant Engine started (2s interval, with learning)');
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   stop() {

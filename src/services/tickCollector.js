@@ -162,27 +162,56 @@ class TickCollector extends EventEmitter {
     if (message.msg_type === 'tick') {
       if (message.tick) {
         this.handleTick(message);
+      } else if (message.error) {
+        // Subscription error - log and retry
+        const market = message.echo_req?.ticks;
+        console.error(`[TickCollector] ❌ Tick subscription error for ${market}:`, message.error);
+
+        // Remove failed subscription and retry after delay
+        if (market) {
+          this.subscriptions.delete(market);
+
+          // Retry after 3 seconds
+          setTimeout(() => {
+            if (this.connected && !this.subscriptions.has(market)) {
+              console.log(`[TickCollector] 🔄 Retrying subscription to ${market}...`);
+              this.subscribeTicks(market);
+            }
+          }, 3000);
+        }
       } else {
-        console.warn('[TickCollector]  Received tick message without tick data:', message);
+        console.warn('[TickCollector] ⚠ Received tick message without tick data:', message);
       }
     }
 
     // Handle subscription confirmation
-    else if (message.msg_type === 'tick' && message.subscription) {
-      const market = message.echo_req.ticks;
-      this.subscriptions.set(market, message.subscription.id);
-      console.log(`[TickCollector]  Subscribed to ${market} (ID: ${message.subscription.id})`);
+    else if (message.subscription) {
+      const market = message.echo_req?.ticks;
+      if (market) {
+        this.subscriptions.set(market, message.subscription.id);
+        console.log(`[TickCollector] ✅ Subscribed to ${market} (ID: ${message.subscription.id})`);
+      }
     }
 
     // Handle authorization
     else if (message.msg_type === 'authorize') {
-      console.log('[TickCollector]  Authorized');
-      this.emit('authorized', message.authorize);
+      if (message.error) {
+        console.error('[TickCollector] ❌ Authorization failed:', message.error);
+        this.emit('authError', message.error);
+      } else {
+        console.log('[TickCollector] ✅ Authorized');
+        this.emit('authorized', message.authorize);
+      }
     }
 
-    // Handle errors
-    else if (message.msg_type === 'error') {
-      console.error('[TickCollector] API Error:', message.error);
+    // Handle pong
+    else if (message.msg_type === 'ping' || message.msg_type === 'pong') {
+      // Ignore ping/pong
+    }
+
+    // Handle generic errors
+    else if (message.error) {
+      console.error('[TickCollector] ❌ API Error:', message.error);
       this.emit('apiError', message.error);
     }
   }
