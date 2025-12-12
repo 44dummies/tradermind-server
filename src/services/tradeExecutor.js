@@ -99,23 +99,37 @@ class TradeExecutor {
         let derivToken = participant.deriv_token;
         let tradingAccount = null;
 
-        // If no token in participant record (V1 flow), look up trading account
+        // Get session mode (real or demo)
+        const sessionMode = session.mode || 'demo';
+        const accountType = sessionMode === 'real' ? 'real' : 'demo';
+
+        // If no token in participant record (V1 flow), look up trading account matching session mode
         if (!derivToken) {
           const { data: account, error: accountErr } = await supabase
             .from('trading_accounts')
-            .select('deriv_token, deriv_account_id, currency, is_active')
+            .select('deriv_token, deriv_account_id, currency, is_active, account_type')
             .eq('user_id', participant.user_id)
             .eq('is_active', true)
+            .eq('account_type', accountType) // Match session mode to account type!
             .limit(1)
             .maybeSingle();
 
           if (accountErr) {
-            console.error(`[TradeExecutor] Error fetching trading account for user ${participant.user_id}:`, accountErr);
+            console.error(`[TradeExecutor] Error fetching ${accountType} account for user ${participant.user_id}:`, accountErr);
           }
 
           if (account) {
             tradingAccount = account;
             derivToken = account.deriv_token;
+            console.log(`[TradeExecutor] Found ${accountType} account for user ${participant.user_id}: ${account.deriv_account_id}`);
+          } else {
+            // No matching account type found
+            invalidAccounts.push({
+              userId: participant.user_id,
+              reason: `No ${accountType.toUpperCase()} account found - session requires ${accountType} account`,
+              participantId: participant.id
+            });
+            continue;
           }
         }
 
