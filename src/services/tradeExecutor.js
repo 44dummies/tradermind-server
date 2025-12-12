@@ -155,12 +155,17 @@ class TradeExecutor {
           profile.deriv_id = tradingAccount.deriv_account_id;
         }
 
-        // Use session defaults if participant TP/SL not set (V2 schema requires them, but be defensive)
-        const effectiveTp = participant.tp || session.default_tp || 10;
-        const effectiveSl = participant.sl || session.default_sl || 5;
+        // Calculate stake for this participant to determine default TP/SL
+        const baseStake = session.initial_stake || session.base_stake || 0.35;
+
+        // Default TP/SL is 50% of stake if not set by user or session
+        // Priority: 1) User's custom TP/SL, 2) Session defaults, 3) 50% of stake
+        const defaultTPSL = baseStake * 0.5; // 50% of stake
+        const effectiveTp = participant.tp || session.default_tp || session.profit_threshold || Math.max(defaultTPSL, 0.35);
+        const effectiveSl = participant.sl || session.default_sl || session.loss_threshold || Math.max(defaultTPSL, 0.35);
 
         // V2: Check min_balance requirement
-        const minBalance = session.min_balance || 0;
+        const minBalance = session.min_balance || session.minimum_balance || 0;
         if (participant.initial_balance && participant.initial_balance < minBalance) {
           invalidAccounts.push({
             userId: participant.user_id,
@@ -170,13 +175,21 @@ class TradeExecutor {
           continue;
         }
 
-        // Validate TP/SL meet session minimums
-        const minTp = session.default_tp || session.profit_threshold || strategyConfig.minTp;
-        const minSl = session.default_sl || session.loss_threshold || strategyConfig.minSl;
-        if (effectiveTp < minTp || effectiveSl < minSl) {
+        // Validate TP/SL meet session minimums (if session has minimums set)
+        const minTp = session.default_tp || session.profit_threshold || 0;
+        const minSl = session.default_sl || session.loss_threshold || 0;
+        if (minTp > 0 && effectiveTp < minTp) {
           invalidAccounts.push({
             userId: participant.user_id,
-            reason: `TP/SL below minimums (tp>=${minTp}, sl>=${minSl})`,
+            reason: `Take Profit ($${effectiveTp}) below session minimum ($${minTp})`,
+            participantId: participant.id
+          });
+          continue;
+        }
+        if (minSl > 0 && effectiveSl < minSl) {
+          invalidAccounts.push({
+            userId: participant.user_id,
+            reason: `Stop Loss ($${effectiveSl}) below session minimum ($${minSl})`,
             participantId: participant.id
           });
           continue;
