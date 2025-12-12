@@ -5,6 +5,7 @@ const strategyConfig = require('../config/strategyConfig');
 const { decryptToken } = require('../utils/encryption');
 const { messageQueue, TOPICS } = require('../queue');
 const { createTradeClosedEvent } = require('../trading-engine/eventContract');
+const quantEngine = require('./quantEngine');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -621,6 +622,22 @@ class TradeExecutor {
       }
 
       console.log(`[TradeExecutor]  Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
+
+      // === QUANT ENGINE LEARNING: Record trade outcome ===
+      try {
+        const tradeDataForLearning = {
+          side: tradeResult.signal?.side || 'UNDER',
+          won: finalPL > 0,
+          digit: tradeResult.signal?.digit,
+          confidence: tradeResult.signal?.confidence,
+          regime: tradeResult.signal?.regime || 'unknown',
+          indicators: tradeResult.signal?.indicatorsUsed || []
+        };
+        quantEngine.recordTradeOutcome(tradeDataForLearning);
+        console.log(`[TradeExecutor] 🧠 Learning updated: ${finalPL > 0 ? 'WIN' : 'LOSS'} recorded`);
+      } catch (learningErr) {
+        console.error('[TradeExecutor] Learning callback error:', learningErr.message);
+      }
 
       // Emit trade close event
       if (this.io) {

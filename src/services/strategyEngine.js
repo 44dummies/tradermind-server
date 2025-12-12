@@ -1,257 +1,472 @@
-const config = require('../config/strategyConfig');
+/**
+ * Strategy Engine v3 - CONFIGURABLE PURE DIGIT-BASED ANALYSIS
+ * 
+ * Fixes applied from code review:
+ * 1. All thresholds moved to quantConfig.js
+ * 2. Circular delta option for streak detection
+ * 3. Defensive checks for invalid digits
+ * 4. Consistent property naming (entropy.value, entropy.str)
+ * 5. Bayesian-enhanced digit selection
+ */
+
+const quantConfig = require('../config/quantConfig');
+
+// ==================== DIGIT-BASED INDICATORS ====================
 
 /**
- * Strategy Engine (initial implementation)
- * Computes digit probabilities from recent ticks and returns trade signal.
- * This is a first cut: DFPM/DER/DPB + simple volatility and trend components.
+ * Compute digit frequency distribution
+ * Returns probability array for digits 0-9
  */
-function computeDigitFrequency(digitHistory, depth = config.digitFrequencyDepth) {
-  const recent = digitHistory.slice(-depth);
+function computeDigitFrequency(digitHistory, depth = quantConfig.entropy.window) {
+  // Defensive: filter invalid digits first
+  const validHistory = digitHistory.filter(d => Number.isInteger(d) && d >= 0 && d <= 9);
+
+  if (validHistory.length < depth) depth = validHistory.length;
+  if (depth === 0) return Array(10).fill(0.1);
+
+  const recent = validHistory.slice(-depth);
   const counts = Array(10).fill(0);
+
   for (const d of recent) {
-    if (Number.isInteger(d) && d >= 0 && d <= 9) counts[d] += 1;
+    counts[d]++;
   }
-  const total = recent.length || 1;
-  return counts.map(c => c / total);
-}
 
-function computeVolatility(ticks) {
-  const recent = ticks.slice(-20);
-  if (recent.length < 2) return 0;
-  const diffs = [];
-  for (let i = 1; i < recent.length; i++) {
-    diffs.push(Math.abs(recent[i].quote - recent[i - 1].quote));
-  }
-  const avg = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-  return avg;
+  return counts.map(c => c / depth);
 }
-
-function digitExhaustionRule(freq) {
-  // Prefer digits that recently appeared less (mean-reversion)
-  const min = Math.min(...freq);
-  const digit = freq.findIndex(v => v === min);
-  return { digit, score: 1 - min };
-}
-
-function digitProbabilityBias(freq) {
-  // Bias towards most frequent digit (momentum)
-  const max = Math.max(...freq);
-  const digit = freq.findIndex(v => v === max);
-  return { digit, score: max };
-}
-
-function trendProbability(freq) {
-  // Simple spread between top and median frequency
-  const sorted = [...freq].sort((a, b) => b - a);
-  const top = sorted[0];
-  const median = sorted[Math.min(sorted.length - 1, 4)];
-  const score = Math.max(0, top - median);
-  const digit = freq.indexOf(top);
-  return { digit, score };
-}
-
-function confidenceIndex(weights, parts) {
-  const { dfpm, vcs, der, tpc, dtp, dpb } = weights;
-  return (
-    parts.dfpm * dfpm +
-    parts.vcs * vcs +
-    parts.der * der +
-    parts.tpc * tpc +
-    parts.dtp * dtp +
-    parts.dpb * dpb
-  );
-}
-
-// ==================== Advanced Math Models ====================
 
 /**
- * Markov Chain Analysis
- * Calculates the probability of the *next* digit given the *current* digit.
- * Returns probability score (0-1) for the momentum direction.
+ * Markov Chain Transition Matrix for Digits
+ * Predicts next digit based on transition probabilities from current digit.
+ * Returns prediction only if sufficient observations exist.
  */
-function computeMarkovProbability(digitHistory) {
-  if (digitHistory.length < 50) return { probability: 0.5, prediction: null };
+function computeMarkovPrediction(digitHistory, minObservations = quantConfig.markov.minObservations) {
+  // Defensive: filter invalid
+  const validHistory = digitHistory.filter(d => Number.isInteger(d) && d >= 0 && d <= 9);
 
+  if (validHistory.length < 30) return { valid: false, reason: 'Insufficient history' };
+
+  // Build transition matrix: matrix[from][to] = count
   const matrix = Array(10).fill(0).map(() => Array(10).fill(0));
-  const counts = Array(10).fill(0);
+  const fromCounts = Array(10).fill(0);
 
-  // Build Transition Matrix
-  for (let i = 0; i < digitHistory.length - 1; i++) {
-    const current = digitHistory[i];
-    const next = digitHistory[i + 1];
-    matrix[current][next]++;
-    counts[current]++;
+  for (let i = 0; i < validHistory.length - 1; i++) {
+    const from = validHistory[i];
+    const to = validHistory[i + 1];
+    matrix[from][to]++;
+    fromCounts[from]++;
   }
 
-  const lastDigit = digitHistory[digitHistory.length - 1];
-  const transitions = matrix[lastDigit];
-  const totalObserved = counts[lastDigit];
+  const currentDigit = validHistory[validHistory.length - 1];
+  const observationsFromCurrent = fromCounts[currentDigit];
 
-  if (totalObserved < 3) return { probability: 0.5, prediction: null }; // Not enough data for this specific digit
+  // Require minimum observations for current digit
+  if (observationsFromCurrent < minObservations) {
+    return { valid: false, reason: `Only ${observationsFromCurrent} observations for digit ${currentDigit}` };
+  }
 
-  // Find most probable next digit
-  let maxCount = -1;
+  // Calculate transition probabilities from current digit
+  const transitions = matrix[currentDigit];
+  const probabilities = transitions.map(t => t / observationsFromCurrent);
+
+  // Find most likely next digit
+  let maxProb = 0;
   let predictedDigit = -1;
-
-  transitions.forEach((count, digit) => {
-    if (count > maxCount) {
-      maxCount = count;
+  probabilities.forEach((p, digit) => {
+    if (p > maxProb) {
+      maxProb = p;
       predictedDigit = digit;
     }
   });
 
-  const probability = maxCount / totalObserved;
-  return { probability, predictedDigit };
-}
-
-/**
- * Relative Strength Index (RSI)
- * Standard 14-period RSI to detect overbought/oversold conditions.
- * Returns RSI value (0-100).
- */
-function computeRSI(ticks, period = 14) {
-  if (ticks.length < period + 1) return 50;
-
-  let gains = 0;
-  let losses = 0;
-
-  // Calculate initial average
-  for (let i = ticks.length - period; i < ticks.length; i++) {
-    const diff = ticks[i].quote - ticks[i - 1].quote;
-    if (diff >= 0) gains += diff;
-    else losses += Math.abs(diff);
-  }
-
-  let avgGain = gains / period;
-  let avgLoss = losses / period;
-
-  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
-}
-
-/**
- * Linear Regression Slope
- * Calculates the slope of the trend line for the last N ticks.
- * Returns slope value (steepness and direction).
- */
-function computeLinearRegressionSlope(ticks, length = 10) {
-  if (ticks.length < length) return 0;
-
-  const n = length;
-  const recent = ticks.slice(-n);
-
-  let sumX = 0;
-  let sumY = 0;
-  let sumXY = 0;
-  let sumXX = 0;
-
-  recent.forEach((tick, i) => {
-    const x = i;
-    const y = tick.quote;
-    sumX += x;
-    sumY += y;
-    sumXY += x * y;
-    sumXX += x * x;
-  });
-
-  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-  return slope;
-}
-
-function pickDirection(digit) {
-  // Over if digit is high, under if low
-  return digit >= 5 ? 'OVER' : 'UNDER';
-}
-
-function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
-  const cfg = { ...config, ...overrides, weighting: { ...config.weighting, ...(overrides.weighting || {}) } };
-
-  if (!tickHistory || tickHistory.length < 10) {
-    return { shouldTrade: false, reason: 'Insufficient ticks (Warmup)', isWarmup: true };
-  }
-
-  // 1. Math Analysis
-  const markov = computeMarkovProbability(digitHistory);
-  const rsi = computeRSI(tickHistory, 14);
-  const slope = computeLinearRegressionSlope(tickHistory, 10);
-
-  // 2. Frequency Analysis (Legacy but useful for confirmation)
-  const freq = computeDigitFrequency(digitHistory, cfg.digitFrequencyDepth);
-  const dfpmScore = Math.max(...freq);
-
-  // 3. Signal Logic
-  let side = null;
-  let confidence = 0;
-  let reasonParts = [];
-
-  // STRATEGY: Markov + RSI Reversal + Trend Confirmation
-
-  // Case A: Strong Markov Prediction
-  if (markov.probability > 0.4 && markov.predictedDigit !== null) {
-    // If Markov predicts a high digit (>=5), we expect OVER? 
-    // Actually, distinct digit markets are chaotic. 
-    // Let's use Markov to predict direction.
-    const predictedSide = pickDirection(markov.predictedDigit);
-    confidence += markov.probability * 0.4; // 40% weight
-    reasonParts.push(`MKV:${markov.probability.toFixed(2)}`);
-    side = predictedSide;
-  }
-
-  // Case B: RSI Reversal (Overbought/Oversold)
-  if (rsi > 70) {
-    // Overbought -> Expect Drop -> Sell/Under/Put
-    // For digit markets, "Put" usually aligns with "Under" or predicting low digits.
-    // Let's assume we want to bet UNDER if RSI is high.
-    if (side === 'UNDER' || !side) {
-      side = 'UNDER';
-      confidence += 0.3; // 30% weight
-      reasonParts.push(`RSI_High:${rsi.toFixed(0)}`);
-    } else {
-      confidence -= 0.1; // Conflict
-    }
-  } else if (rsi < 30) {
-    // Oversold -> Expect Rise -> Buy/Over/Call
-    if (side === 'OVER' || !side) {
-      side = 'OVER';
-      confidence += 0.3; // 30% weight
-      reasonParts.push(`RSI_Low:${rsi.toFixed(0)}`);
-    } else {
-      confidence -= 0.1; // Conflict
-    }
-  }
-
-  // Case C: Trend Slope Confirmation
-  // If we are betting OVER (Up), we want positive slope.
-  // If we are betting UNDER (Down), we want negative slope.
-  const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
-  if (isTrendAligned) {
-    confidence += 0.2; // 20% weight
-    reasonParts.push(`Trend:${slope > 0 ? 'Up' : 'Down'}`);
-  }
-
-  // Legacy Freq confirm
-  if (side === 'OVER' && dfpmScore > 0.15) confidence += 0.1;
-  if (side === 'UNDER' && dfpmScore > 0.15) confidence += 0.1;
-
-  // Final Decision
-  // Default to UNDER if no clear signal but we need a side for the object structure
-  const finalSide = side || 'UNDER';
-  const finalDigit = side === 'OVER' ? 7 : 2; // Arbitrary safe digits for directional bets
+  // Only valid if probability significantly differs from random (significance threshold)
+  const isSignificant = maxProb > quantConfig.markov.significanceThreshold;
 
   return {
-    shouldTrade: confidence >= 0.55, // Require 55% composite confidence (lowered for more signals)
-    side: finalSide, // 'OVER' or 'UNDER' (mapped to Call/Put in executor)
-    digit: finalDigit,
-    confidence,
+    valid: isSignificant,
+    predictedDigit,
+    probability: maxProb,
+    currentDigit,
+    observationsFromCurrent,
+    probabilities, // Full row for Bayesian
+    reason: isSignificant ? `${predictedDigit} at ${(maxProb * 100).toFixed(1)}%` : 'No significant pattern'
+  };
+}
+
+/**
+ * Shannon Entropy for Digit Distribution
+ * Returns both numeric value and formatted string for consistency
+ */
+function computeDigitEntropy(digitHistory, depth = quantConfig.entropy.window) {
+  const validHistory = digitHistory.filter(d => Number.isInteger(d) && d >= 0 && d <= 9);
+
+  if (validHistory.length < depth) {
+    return {
+      value: 3.32,
+      str: '3.32',
+      isPredictable: false,
+      isModerate: false,
+      isTooRandom: true
+    };
+  }
+
+  const recent = validHistory.slice(-depth);
+  const counts = Array(10).fill(0);
+
+  for (const d of recent) {
+    counts[d]++;
+  }
+
+  let entropy = 0;
+  for (const count of counts) {
+    if (count > 0) {
+      const p = count / depth;
+      entropy -= p * Math.log2(p);
+    }
+  }
+
+  return {
+    value: entropy,
+    str: entropy.toFixed(2),
+    // Use config thresholds
+    isPredictable: entropy < quantConfig.entropy.predictableThreshold,
+    isModerate: entropy >= quantConfig.entropy.predictableThreshold && entropy < quantConfig.entropy.chaosThreshold,
+    isTooRandom: entropy >= quantConfig.entropy.chaosThreshold,
+    // Legacy compatibility
+    entropy: entropy,
+    formatted: entropy.toFixed(2)
+  };
+}
+
+/**
+ * Compute circular delta for wrap-aware streak detection
+ * Treats 0→9 as -1 and 9→0 as +1 (like a clock)
+ */
+function circularDelta(a, b) {
+  // Standard delta
+  const direct = b - a;
+
+  // Circular delta: find smaller arc
+  if (direct > 5) return direct - 10;  // e.g., 2→9 = -3 not +7
+  if (direct < -5) return direct + 10; // e.g., 9→2 = +3 not -7
+  return direct;
+}
+
+/**
+ * Digit Delta Streak Detection
+ * Uses circular delta if enabled in config
+ */
+function detectDigitDeltaStreak(digitHistory, depth = quantConfig.streak.window) {
+  const validHistory = digitHistory.filter(d => Number.isInteger(d) && d >= 0 && d <= 9);
+
+  if (validHistory.length < depth) return { streak: 0, direction: 0, meanReversion: false };
+
+  const recent = validHistory.slice(-depth);
+  let currentStreak = 0;
+  let currentDirection = 0;
+  let increases = 0;
+  let decreases = 0;
+
+  const useCircular = quantConfig.circularDelta.enabled;
+
+  for (let i = 1; i < recent.length; i++) {
+    const delta = useCircular
+      ? circularDelta(recent[i - 1], recent[i])
+      : recent[i] - recent[i - 1];
+
+    const dir = delta > 0 ? 1 : (delta < 0 ? -1 : 0);
+
+    if (delta > 0) increases++;
+    if (delta < 0) decreases++;
+
+    if (dir === currentDirection && dir !== 0) {
+      currentStreak++;
+    } else if (dir !== 0) {
+      currentStreak = 1;
+      currentDirection = dir;
+    }
+  }
+
+  // Mean reversion: if streak >= threshold, expect reversal
+  const meanReversion = currentStreak >= quantConfig.streak.meanReversionStreak;
+  const suggestedDirection = meanReversion ? -currentDirection : currentDirection;
+
+  return {
+    streak: currentStreak,
+    direction: currentDirection,
+    meanReversion,
+    suggestedDirection,
+    increases,
+    decreases,
+    bias: increases > decreases ? 1 : (decreases > increases ? -1 : 0)
+  };
+}
+
+/**
+ * Digit Exhaustion Rule
+ * Identifies digits that appear less frequently (likely to appear soon)
+ */
+function computeDigitExhaustion(digitHistory, depth = quantConfig.exhaustion.window) {
+  const freq = computeDigitFrequency(digitHistory, depth);
+
+  // Find least frequent digit (exhausted, due to appear)
+  let minFreq = 1;
+  let exhaustedDigit = 0;
+
+  // Also find most frequent digit (momentum)
+  let maxFreq = 0;
+  let hotDigit = 0;
+
+  freq.forEach((f, digit) => {
+    if (f < minFreq) { minFreq = f; exhaustedDigit = digit; }
+    if (f > maxFreq) { maxFreq = f; hotDigit = digit; }
+  });
+
+  // Exhaustion strength: how much below average is the digit?
+  const avgFreq = 0.1; // 1/10 for uniform distribution
+  const exhaustionStrength = (avgFreq - minFreq) / avgFreq;
+
+  return {
+    exhaustedDigit,
+    exhaustedFreq: minFreq,
+    hotDigit,
+    hotFreq: maxFreq,
+    exhaustionStrength,
+    isSignificant: exhaustionStrength > quantConfig.exhaustion.threshold
+  };
+}
+
+/**
+ * Recent Bias Detection
+ * Checks last N digits for OVER (5-9) vs UNDER (0-4) bias.
+ */
+function detectRecentBias(digitHistory, depth = quantConfig.bias.window) {
+  const validHistory = digitHistory.filter(d => Number.isInteger(d) && d >= 0 && d <= 9);
+
+  if (validHistory.length < depth) return { bias: 'NEUTRAL', strength: 0, suggestion: null };
+
+  const recent = validHistory.slice(-depth);
+  let over = 0;
+  let under = 0;
+
+  for (const d of recent) {
+    if (d >= 5) over++;
+    else under++;
+  }
+
+  const bias = over > under ? 'OVER' : (under > over ? 'UNDER' : 'NEUTRAL');
+  const strength = Math.abs(over - under) / depth;
+
+  // Mean reversion: if strong bias, expect opposite
+  const meanReversion = strength > quantConfig.bias.meanReversionStrength;
+  const suggestion = meanReversion ? (bias === 'OVER' ? 'UNDER' : 'OVER') : null;
+
+  return {
+    bias,
+    strength,
+    over,
+    under,
+    suggestion: strength > quantConfig.bias.strengthThreshold ? suggestion : null,
+    meanReversion
+  };
+}
+
+/**
+ * Select optimal digit using Bayesian posterior + frequency blend
+ * score = posterior * alpha + (1 - freq) * (1 - alpha)
+ */
+function selectOptimalDigit(side, posterior, freq) {
+  const alpha = quantConfig.digitSelection.posteriorWeight;
+
+  let candidates;
+  let offset = 0;
+
+  if (side === 'OVER') {
+    candidates = [5, 6, 7, 8, 9];
+    offset = 5;
+  } else {
+    candidates = [0, 1, 2, 3, 4];
+  }
+
+  let bestScore = -1;
+  let bestDigit = side === 'OVER' ? 7 : 2; // Fallback
+
+  for (const digit of candidates) {
+    const posteriorProb = posterior[digit] || 0.1;
+    const inverseFreq = 1 - (freq[digit] || 0.1);
+    const score = (posteriorProb * alpha) + (inverseFreq * (1 - alpha));
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestDigit = digit;
+    }
+  }
+
+  return { digit: bestDigit, score: bestScore };
+}
+
+// ==================== SIGNAL GENERATION ====================
+
+/**
+ * Generate Trading Signal - PURE DIGIT-BASED
+ * (Legacy compatibility - quantEngine.js uses this internally)
+ */
+function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
+  // Warmup: need sufficient digit history
+  if (!digitHistory || digitHistory.length < quantConfig.warmup.minDigits) {
+    return {
+      shouldTrade: false,
+      reason: `Warmup (${quantConfig.warmup.minDigits} digits)`,
+      isWarmup: true,
+      confidence: 0
+    };
+  }
+
+  // ==================== ANALYSIS ====================
+
+  const entropy = computeDigitEntropy(digitHistory, quantConfig.entropy.window);
+  const markov = computeMarkovPrediction(digitHistory, quantConfig.markov.minObservations);
+  const exhaustion = computeDigitExhaustion(digitHistory, quantConfig.exhaustion.window);
+  const streak = detectDigitDeltaStreak(digitHistory, quantConfig.streak.window);
+  const recentBias = detectRecentBias(digitHistory, quantConfig.bias.window);
+  const freq = computeDigitFrequency(digitHistory, quantConfig.entropy.window);
+
+  // ==================== KILL SWITCHES ====================
+
+  // Kill switch 1: Too random, don't trade
+  if (entropy.isTooRandom) {
+    return {
+      shouldTrade: false,
+      reason: `High entropy: ${entropy.str} (random)`,
+      confidence: 0,
+      entropy: entropy.value
+    };
+  }
+
+  // ==================== SIGNAL LOGIC ====================
+
+  let votes = { OVER: 0, UNDER: 0 };
+  let totalWeight = 0;
+  let reasonParts = [];
+  let factors = 0;
+
+  // Factor 1: Markov Prediction
+  if (markov.valid) {
+    const side = markov.predictedDigit >= 5 ? 'OVER' : 'UNDER';
+    const weight = Math.min(markov.probability * 1.5, 1.0);
+    votes[side] += weight;
+    totalWeight += weight;
+    factors++;
+    reasonParts.push(`MKV:${markov.predictedDigit}@${(markov.probability * 100).toFixed(0)}%`);
+  }
+
+  // Factor 2: Digit Exhaustion
+  if (exhaustion.isSignificant) {
+    const side = exhaustion.exhaustedDigit >= 5 ? 'OVER' : 'UNDER';
+    const weight = exhaustion.exhaustionStrength * 0.8;
+    votes[side] += weight;
+    totalWeight += weight;
+    factors++;
+    reasonParts.push(`EXH:${exhaustion.exhaustedDigit}`);
+  }
+
+  // Factor 3: Delta Streak Mean Reversion
+  if (streak.streak >= quantConfig.streak.minStreak && streak.meanReversion) {
+    const side = streak.suggestedDirection === 1 ? 'OVER' : 'UNDER';
+    const weight = Math.min(streak.streak * 0.12, 0.6);
+    votes[side] += weight;
+    totalWeight += weight;
+    factors++;
+    reasonParts.push(`STK:${streak.streak}→REV`);
+  }
+
+  // Factor 4: Recent Bias Mean Reversion
+  if (recentBias.suggestion && recentBias.meanReversion) {
+    const weight = recentBias.strength * 0.6;
+    votes[recentBias.suggestion] += weight;
+    totalWeight += weight;
+    factors++;
+    reasonParts.push(`BIAS:${recentBias.bias}→${recentBias.suggestion}`);
+  }
+
+  // Factor 5: Entropy Bonus (when predictable)
+  if (entropy.isPredictable && totalWeight > 0) {
+    const majority = votes.OVER > votes.UNDER ? 'OVER' : 'UNDER';
+    const bonus = 0.2;
+    votes[majority] += bonus;
+    totalWeight += bonus;
+    reasonParts.push(`ENT:${entropy.str}✓`);
+  }
+
+  // ==================== CONTRADICTION DETECTION ====================
+
+  const voteDiff = Math.abs(votes.OVER - votes.UNDER);
+  const voteRatio = totalWeight > 0 ? voteDiff / totalWeight : 0;
+
+  if (voteRatio < quantConfig.confidence.contradictionRatio && factors >= 2) {
+    return {
+      shouldTrade: false,
+      reason: `Contradiction: O=${votes.OVER.toFixed(2)} vs U=${votes.UNDER.toFixed(2)}`,
+      confidence: 0,
+      entropy: entropy.value,
+      contradiction: true
+    };
+  }
+
+  // ==================== FINAL DECISION ====================
+
+  const finalSide = votes.OVER > votes.UNDER ? 'OVER' : 'UNDER';
+  const winningVote = Math.max(votes.OVER, votes.UNDER);
+
+  // Normalized confidence
+  const rawConfidence = totalWeight > 0 ? voteDiff / totalWeight : 0;
+  const normalizedConfidence = Math.min(rawConfidence, 1.0);
+
+  // Digit selection with Bayesian + frequency blend
+  const markovRow = markov.valid && markov.probabilities ? markov.probabilities : Array(10).fill(0.1);
+  const { digit: selectedDigit } = selectOptimalDigit(finalSide, markovRow, freq);
+
+  // Trade requirements
+  const shouldTrade = factors >= quantConfig.confidence.minFactors &&
+    normalizedConfidence >= quantConfig.confidence.stableMin;
+
+  return {
+    shouldTrade,
+    side: finalSide,
+    digit: selectedDigit,
+    confidence: normalizedConfidence,
+    factors,
     reason: reasonParts.join(' '),
     market,
-    parts: { markov: markov.probability, rsi, slope },
+    analysis: {
+      entropy: entropy.value,
+      isPredictable: entropy.isPredictable,
+      markovValid: markov.valid,
+      markovProb: markov.probability || 0,
+      exhaustedDigit: exhaustion.exhaustedDigit,
+      streak: streak.streak,
+      bias: recentBias.bias,
+      votes,
+      totalWeight,
+      voteRatio
+    },
     freq
   };
+}
+
+// Legacy compatibility
+function confidenceIndex(weights, parts) {
+  return 0.5; // Deprecated
 }
 
 module.exports = {
   generateSignal,
   computeDigitFrequency,
+  computeDigitEntropy,
+  computeMarkovPrediction,
+  detectDigitDeltaStreak,
+  computeDigitExhaustion,
+  detectRecentBias,
+  selectOptimalDigit,
+  circularDelta,
   confidenceIndex
 };

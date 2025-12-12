@@ -161,13 +161,13 @@ async function getSession(sessionId) {
 }
 
 async function getSessions(adminId, options = {}) {
+  // Base query - simple select without joins (join failed due to missing FK relationship)
   let query = supabase
     .from('trading_sessions')
     .select('*');
 
   if (options.publicAccess) {
     // For normal users, show only pending/running sessions regardless of creator
-    // Using 'in' which works like SQL IN
     query = query.in('status', ['pending', 'running']);
   } else {
     // For admins, restrictive by owner
@@ -182,7 +182,21 @@ async function getSessions(adminId, options = {}) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+
+  // Get participants count for each session separately
+  const sessionsWithCount = await Promise.all((data || []).map(async (session) => {
+    const { count } = await supabase
+      .from('session_participants')
+      .select('*', { count: 'exact', head: true })
+      .eq('session_id', session.id);
+
+    return {
+      ...session,
+      participants_count: count || 0
+    };
+  }));
+
+  return sessionsWithCount;
 }
 
 async function updateSession(sessionId, updates) {

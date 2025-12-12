@@ -1,4 +1,5 @@
 const strategyEngine = require('./strategyEngine');
+const quantEngine = require('./quantEngine');
 const tickCollector = require('./tickCollector');
 const tradeExecutor = require('./tradeExecutor');
 const riskEngine = require('./trading-engine/risk/RiskEngine');
@@ -42,16 +43,30 @@ class SignalWorker {
   async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions') {
     this.sessionId = sessionId;
     this.sessionTable = sessionTable;
+
+    // Initialize quant engine memory for this session
+    quantEngine.initSession(sessionId);
+
     // Ensure connection
     if (!tickCollector.isConnected()) {
       await tickCollector.connect(apiToken);
+      // Wait for connection to stabilize before subscribing
+      await this.sleep(1000);
     }
 
-    markets.forEach(m => tickCollector.subscribeTicks(m));
+    // Subscribe to ticks with small delay between each
+    for (const m of markets) {
+      tickCollector.subscribeTicks(m);
+      await this.sleep(200); // Small delay between subscriptions
+    }
 
-    // Run every 3 seconds
-    this.interval = setInterval(() => this.tick(markets), 3000);
-    console.log('[SignalWorker]  started');
+    // Run every 2 seconds for fast execution
+    this.interval = setInterval(() => this.tick(markets), 2000);
+    console.log('[SignalWorker] 🧠 Quant Engine started (2s interval, with learning)');
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   stop() {
@@ -126,11 +141,11 @@ class SignalWorker {
         });
       }
 
-      const signal = strategyEngine.generateSignal({
+      // Use Quant Engine for signal generation (with memory, regime, Bayesian)
+      const signal = quantEngine.generateQuantSignal({
         market,
         tickHistory: ticks,
-        digitHistory: digits,
-        overrides: {} // Could load from session config
+        digitHistory: digits
       });
 
       // Emit signal analysis update to market room
