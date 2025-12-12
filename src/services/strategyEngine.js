@@ -186,13 +186,10 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
 
   // STRATEGY: Markov + RSI Reversal + Trend Confirmation
 
-  // Case A: Strong Markov Prediction
-  if (markov.probability > 0.4 && markov.predictedDigit !== null) {
-    // If Markov predicts a high digit (>=5), we expect OVER? 
-    // Actually, distinct digit markets are chaotic. 
-    // Let's use Markov to predict direction.
+  // Case A: Strong Markov Prediction (boosted weight for more trades)
+  if (markov.probability > 0.3 && markov.predictedDigit !== null) {
     const predictedSide = pickDirection(markov.predictedDigit);
-    confidence += markov.probability * 0.4; // 40% weight
+    confidence += markov.probability * 0.6; // 60% weight (boosted from 40%)
     reasonParts.push(`MKV:${markov.probability.toFixed(2)}`);
     side = predictedSide;
   }
@@ -220,12 +217,10 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
     }
   }
 
-  // Case C: Trend Slope Confirmation
-  // If we are betting OVER (Up), we want positive slope.
-  // If we are betting UNDER (Down), we want negative slope.
+  // Case C: Trend Slope Confirmation (boosted weight)
   const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
   if (isTrendAligned) {
-    confidence += 0.2; // 20% weight
+    confidence += 0.3; // 30% weight (boosted from 20%)
     reasonParts.push(`Trend:${slope > 0 ? 'Up' : 'Down'}`);
   }
 
@@ -239,7 +234,7 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const finalDigit = side === 'OVER' ? 7 : 2; // Arbitrary safe digits for directional bets
 
   return {
-    shouldTrade: confidence >= 0.55, // Require 55% composite confidence (lowered for more signals)
+    shouldTrade: confidence >= 0.35, // Require 35% confidence (lowered for active trading)
     side: finalSide, // 'OVER' or 'UNDER' (mapped to Call/Put in executor)
     digit: finalDigit,
     confidence,
