@@ -161,9 +161,13 @@ async function getSession(sessionId) {
 }
 
 async function getSessions(adminId, options = {}) {
+  // Base query with participants count subquery
   let query = supabase
     .from('trading_sessions')
-    .select('*');
+    .select(`
+      *,
+      session_participants!left(id)
+    `);
 
   if (options.publicAccess) {
     // For normal users, show only pending/running sessions regardless of creator
@@ -182,7 +186,15 @@ async function getSessions(adminId, options = {}) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+
+  // Transform to include participants_count
+  const sessionsWithCount = (data || []).map(session => ({
+    ...session,
+    participants_count: session.session_participants?.length || 0,
+    session_participants: undefined // Remove the raw array from response
+  }));
+
+  return sessionsWithCount;
 }
 
 async function updateSession(sessionId, updates) {
