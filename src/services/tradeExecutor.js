@@ -59,17 +59,29 @@ class TradeExecutor {
 
       console.log(`[TradeExecutor]  Executing multi-account trade for session ${sessionId}`);
       console.log(`[TradeExecutor] Signal: ${signal.side} ${signal.digit} (${(signal.confidence * 100).toFixed(1)}%)`);
+      console.log(`[TradeExecutor] Looking up session in table: ${sessionTable}`);
 
-      // Get session details
+      // Get session details - query without status filter first for debugging
       const { data: session, error: sessionError } = await supabase
-        .from(sessionTable) // Use correct table
+        .from(sessionTable)
         .select('*')
         .eq('id', sessionId)
-        .eq('status', 'active')
         .single();
 
-      if (sessionError || !session) {
-        throw new Error('Session not found or not active');
+      if (sessionError) {
+        console.error(`[TradeExecutor] Session query error:`, sessionError.message, sessionError.details);
+        throw new Error(`Session query failed: ${sessionError.message}`);
+      }
+
+      if (!session) {
+        console.error(`[TradeExecutor] Session ${sessionId} not found in ${sessionTable}`);
+        throw new Error('Session not found');
+      }
+
+      // Check if session is active in code (more flexible)
+      if (session.status !== 'active') {
+        console.log(`[TradeExecutor] Session ${session.name} status is '${session.status}', not 'active'. Skipping.`);
+        return { executed: 0, total: 0, reason: `session_${session.status}` };
       }
 
       console.log(`[TradeExecutor] Session: ${session.name} (Table: ${sessionTable}, Type: ${session.type || 'N/A'}, MinBal: $${session.min_balance || 0}, TP: $${session.default_tp}, SL: $${session.default_sl})`);
