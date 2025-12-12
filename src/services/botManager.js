@@ -139,6 +139,7 @@ class BotManager {
 
     tradeExecutor.paused = false;
     tradeExecutor.consecutiveLosses = 0;
+    tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
 
     // Start signal worker (pass sessionTable so worker knows where to check status)
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);

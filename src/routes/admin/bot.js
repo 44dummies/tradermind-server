@@ -42,8 +42,13 @@ router.post('/stop', async (req, res) => {
         const state = await botManager.stopBot();
         res.json({ success: true, message: 'Bot stopped', state });
     } catch (error) {
-        console.error('Stop bot error:', error);
-        res.status(400).json({ error: error.message });
+        // If bot is already stopped, return success instead of error
+        if (error.message === 'Bot is not running') {
+            res.json({ success: true, message: 'Bot already stopped', state: botManager.getState() });
+        } else {
+            console.error('Stop bot error:', error);
+            res.status(400).json({ error: error.message });
+        }
     }
 });
 
