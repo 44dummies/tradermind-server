@@ -36,8 +36,11 @@ class TradeExecutor {
 
   /**
    * Execute trade for multiple accounts with improved locking
+   * @param {Object} signal - Trade signal from quant engine
+   * @param {string} sessionId - Session ID
+   * @param {string} sessionTable - Table name (default: 'trading_sessions')
    */
-  async executeMultiAccountTrade(signal, sessionId) {
+  async executeMultiAccountTrade(signal, sessionId, sessionTable = 'trading_sessions') {
     // Create a lock key based on session and signal details
     const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
 
@@ -62,7 +65,7 @@ class TradeExecutor {
         .from(sessionTable) // Use correct table
         .select('*')
         .eq('id', sessionId)
-        .eq('status', 'running')
+        .eq('status', 'active')
         .single();
 
       if (sessionError || !session) {

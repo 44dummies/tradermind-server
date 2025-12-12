@@ -48,7 +48,7 @@ router.post('/sessions/:id/start', async (req, res) => {
   const { id } = req.params;
   const { error } = await supabase
     .from('trading_sessions_v2')
-    .update({ status: 'running', started_at: new Date().toISOString() })
+    .update({ status: 'active', started_at: new Date().toISOString() })
     .eq('id', id)
     .eq('type', 'recovery');
 

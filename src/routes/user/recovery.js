@@ -24,7 +24,7 @@ router.post('/join', async (req, res) => {
     .select('*')
     .eq('id', sessionId)
     .eq('type', 'recovery')
-    .in('status', ['pending', 'running'])
+    .in('status', ['pending', 'active'])
     .single();
 
   if (sessErr || !session) return res.status(404).json({ error: 'Recovery session not found' });

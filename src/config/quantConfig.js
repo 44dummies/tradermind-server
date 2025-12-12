@@ -9,11 +9,11 @@ module.exports = {
     // ==================== ENTROPY THRESHOLDS ====================
     entropy: {
         // Below this = predictable patterns, good to trade
-        predictableThreshold: 2.2,
-        // Above this = too random, kill-switch
-        chaosThreshold: 2.9,
+        predictableThreshold: 2.5,
+        // Above this = too random, kill-switch (max possible ~3.32 for 10 digits)
+        chaosThreshold: 3.15,
         // Moderate randomness - trade cautiously
-        transitionThreshold: 2.5,
+        transitionThreshold: 2.8,
         // Window size for entropy calculation
         window: 30
     },
