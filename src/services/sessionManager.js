@@ -202,7 +202,7 @@ class SessionManager {
 
         // Check balance if we have account data
         if (account.balance < session.minimum_balance) {
-          throw new Error(`Balance too low. Minimum required: $${session.minimum_balance}`);
+          throw new Error(`Your balance ($${account.balance.toFixed(2)}) is below the minimum required ($${session.minimum_balance}). Please wait for a session with lower balance requirements.`);
         }
       }
 

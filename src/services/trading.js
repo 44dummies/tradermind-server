@@ -115,6 +115,9 @@ async function verifyDerivToken(token) {
 // ==================== Session Operations ====================
 
 async function createSession(adminId, sessionData) {
+  // Handle market from simplified form (can be in markets array or volatility_index)
+  const market = sessionData.markets?.[0] || sessionData.volatility_index || sessionData.volatilityIndex || 'R_100';
+
   const { data, error } = await supabase
     .from('trading_sessions')
     .insert({
@@ -123,13 +126,14 @@ async function createSession(adminId, sessionData) {
       session_name: sessionData.name || `Session ${new Date().toLocaleDateString()}`,
       session_type: sessionData.session_type || sessionData.type || 'day',
       status: 'pending',
-      volatility_index: sessionData.volatility_index || sessionData.volatilityIndex || 'R_100',
+      volatility_index: market,
       contract_type: sessionData.contract_type || sessionData.contractType || 'DIGITEVEN',
-      mode: sessionData.mode || 'real', // Add mode support
+      mode: sessionData.mode || 'demo',
       strategy_name: sessionData.strategy || 'DFPM',
       staking_mode: sessionData.staking_mode || sessionData.stakingMode || 'fixed',
-      initial_stake: sessionData.initial_stake || sessionData.baseStake || 1.0,
+      initial_stake: sessionData.initial_stake || sessionData.baseStake || 0.35,
       martingale_multiplier: sessionData.martingale_multiplier || 2.0,
+      minimum_balance: sessionData.min_balance || sessionData.minimum_balance || 5.0,
       profit_threshold: sessionData.default_tp || sessionData.targetProfit || 10.0,
       loss_threshold: sessionData.default_sl || sessionData.stopLoss || 5.0,
       total_trades: 0,
