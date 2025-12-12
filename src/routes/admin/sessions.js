@@ -292,14 +292,31 @@ router.get('/:id/participants', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Verify session exists
-        const { data: session, error: sessionError } = await supabase
-            .from('trading_sessions_v2')
+        // Verify session exists - try V1 table first, then V2
+        let session = null;
+        let sessionError = null;
+
+        // Try V1 table first (trading_sessions)
+        const { data: v1Session, error: v1Error } = await supabase
+            .from('trading_sessions')
             .select('id, name, status')
             .eq('id', id)
             .single();
 
-        if (sessionError || !session) {
+        if (v1Session) {
+            session = v1Session;
+        } else {
+            // Fallback to V2 table
+            const { data: v2Session, error: v2Error } = await supabase
+                .from('trading_sessions_v2')
+                .select('id, name, status')
+                .eq('id', id)
+                .single();
+            session = v2Session;
+            sessionError = v2Error;
+        }
+
+        if (!session) {
             return res.status(404).json({ error: 'Session not found' });
         }
 
