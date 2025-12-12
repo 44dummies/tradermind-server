@@ -326,7 +326,8 @@ router.post('/sessions/:id/start', authMiddleware, async (req, res) => {
       status: trading.SESSION_STATUS.RUNNING,
       started_at: new Date().toISOString()
     });
-    await trading.logActivity('session_started', `Session "${session.name}" started`, { sessionId: req.params.id });
+    const sessionName = session.session_name || session.name || 'Unnamed';
+    await trading.logActivity('session_started', `Session "${sessionName}" started`, { sessionId: req.params.id });
     res.json({ success: true, data: session });
   } catch (error) {
     console.error('Error starting session:', error);
