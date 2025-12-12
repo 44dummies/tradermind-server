@@ -65,7 +65,7 @@ class TradeExecutor {
         .from(sessionTable) // Use correct table
         .select('*')
         .eq('id', sessionId)
-        .eq('status', 'running')
+        .eq('status', 'active')
         .single();
 
       if (sessionError || !session) {

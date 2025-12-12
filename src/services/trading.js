@@ -11,7 +11,7 @@ const botManager = require('./botManager');
 
 const SESSION_TYPE = { DAY: 'day', ONE_TIME: 'one_time', RECOVERY: 'recovery' };
 const SESSION_STATUS = {
-  PENDING: 'pending', RUNNING: 'running', PAUSED: 'paused',
+  PENDING: 'pending', RUNNING: 'active', PAUSED: 'paused',
   COMPLETED: 'completed', TP_REACHED: 'tp_reached', SL_REACHED: 'sl_reached', ERROR: 'error'
 };
 const ACCOUNT_STATUS = { ACTIVE: 'active', DISCONNECTED: 'disconnected', ERROR: 'error', DISABLED: 'disabled' };
@@ -167,8 +167,8 @@ async function getSessions(adminId, options = {}) {
     .select('*');
 
   if (options.publicAccess) {
-    // For normal users, show only pending/running sessions regardless of creator
-    query = query.in('status', ['pending', 'running']);
+    // For normal users, show only pending/active sessions regardless of creator
+    query = query.in('status', ['pending', 'active']);
   } else {
     // For admins, restrictive by owner
     query = query.eq('admin_id', adminId);

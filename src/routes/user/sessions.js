@@ -30,7 +30,7 @@ router.get('/available', async (req, res) => {
         let query = supabase
             .from('trading_sessions_v2')
             .select('id, name, type, min_balance, default_tp, default_sl, status, created_at')
-            .in('status', ['pending', 'running'])
+            .in('status', ['pending', 'active'])
             .order('created_at', { ascending: false });
 
         // Filter recovery sessions for eligible users only
@@ -149,7 +149,7 @@ async function handleAcceptSession(req, res, sessionId) {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        if (!['pending', 'running'].includes(session.status)) {
+        if (!['pending', 'active'].includes(session.status)) {
             return res.status(400).json({ error: 'Session is not accepting participants' });
         }
 

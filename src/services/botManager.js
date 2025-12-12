@@ -31,11 +31,11 @@ class BotManager {
     try {
       console.log('[BotManager]  Checking for active sessions to resume...');
 
-      // Check for 'running' sessions in v2 table
+      // Check for 'active' sessions in v2 table
       const { data: v2Session } = await supabase
         .from('trading_sessions_v2')
         .select('*')
-        .eq('status', 'running')
+        .eq('status', 'active')
         .single();
 
       if (v2Session) {
@@ -99,9 +99,8 @@ class BotManager {
       throw new Error('Session not found');
     }
 
-    // Determine valid status based on table (V1 uses 'active', V2 uses 'running')
-    // TODO: Ideally check schema, but for now map based on table name
-    const statusToSet = sessionTable === 'trading_sessions' ? 'active' : 'running';
+    // Both V1 and V2 tables use 'active' status based on database constraint
+    const statusToSet = 'active';
 
     // Update session status
     console.log(`[BotManager] Updating session ${sessionId} status to '${statusToSet}' in ${sessionTable}...`);
@@ -253,7 +252,7 @@ class BotManager {
     if (this.state.activeSessionId) {
       await supabase
         .from(sessionTable)
-        .update({ status: 'running' })
+        .update({ status: 'active' })
         .eq('id', this.state.activeSessionId);
     }
     return this.getState();
