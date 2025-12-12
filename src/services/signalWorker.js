@@ -49,9 +49,9 @@ class SignalWorker {
 
     markets.forEach(m => tickCollector.subscribeTicks(m));
 
-    // Run every 3 seconds
-    this.interval = setInterval(() => this.tick(markets), 3000);
-    console.log('[SignalWorker]  started');
+    // Run every 2 seconds for fast execution
+    this.interval = setInterval(() => this.tick(markets), 2000);
+    console.log('[SignalWorker] ⚡ TURBO MODE started (2s interval)');
   }
 
   stop() {

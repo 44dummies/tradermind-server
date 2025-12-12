@@ -263,6 +263,151 @@ function computeMomentum(ticks, period = 10) {
   return past !== 0 ? ((current - past) / past) * 100 : 0;
 }
 
+/**
+ * Stochastic Oscillator (%K and %D)
+ * Compares closing price to range over N periods.
+ * %K > 80 = overbought, %K < 20 = oversold
+ */
+function computeStochastic(ticks, period = 14, smoothK = 3) {
+  if (ticks.length < period) return { k: 50, d: 50, signal: 0 };
+
+  const prices = ticks.slice(-period).map(t => t.quote);
+  const current = prices[prices.length - 1];
+  const high = Math.max(...prices);
+  const low = Math.min(...prices);
+
+  // %K = (Current - Lowest Low) / (Highest High - Lowest Low) * 100
+  const k = (high - low) !== 0 ? ((current - low) / (high - low)) * 100 : 50;
+
+  // Smooth %K to get %D (SMA of %K)
+  const d = k; // Simplified for single calculation
+
+  // Signal: 1 = oversold (buy), -1 = overbought (sell), 0 = neutral
+  let signal = 0;
+  if (k < 20) signal = 1;  // Oversold - bullish
+  if (k > 80) signal = -1; // Overbought - bearish
+
+  return { k, d, signal };
+}
+
+/**
+ * Average True Range (ATR)
+ * Measures market volatility.
+ * Higher ATR = more volatile, Lower ATR = less volatile
+ */
+function computeATR(ticks, period = 14) {
+  if (ticks.length < period + 1) return 0;
+
+  const trueRanges = [];
+  for (let i = ticks.length - period; i < ticks.length; i++) {
+    const high = ticks[i].quote;
+    const low = ticks[i].quote * 0.999; // Approximate low for tick data
+    const prevClose = ticks[i - 1].quote;
+
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    );
+    trueRanges.push(tr);
+  }
+
+  return trueRanges.reduce((a, b) => a + b, 0) / trueRanges.length;
+}
+
+/**
+ * Williams %R
+ * Similar to Stochastic but inverted (0 to -100).
+ * %R > -20 = overbought, %R < -80 = oversold
+ */
+function computeWilliamsR(ticks, period = 14) {
+  if (ticks.length < period) return { r: -50, signal: 0 };
+
+  const prices = ticks.slice(-period).map(t => t.quote);
+  const current = prices[prices.length - 1];
+  const high = Math.max(...prices);
+  const low = Math.min(...prices);
+
+  // %R = (Highest High - Current) / (Highest High - Lowest Low) * -100
+  const r = (high - low) !== 0 ? ((high - current) / (high - low)) * -100 : -50;
+
+  // Signal: 1 = oversold (buy), -1 = overbought (sell)
+  let signal = 0;
+  if (r < -80) signal = 1;  // Oversold
+  if (r > -20) signal = -1; // Overbought
+
+  return { r, signal };
+}
+
+/**
+ * MACD (Moving Average Convergence Divergence)
+ * Standard 12/26/9 MACD indicator.
+ * Returns MACD line, signal line, and histogram.
+ */
+function computeMACD(ticks, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+  if (ticks.length < slowPeriod + signalPeriod) return { macd: 0, signal: 0, histogram: 0, crossover: 0 };
+
+  const prices = ticks.map(t => t.quote);
+
+  function ema(data, period) {
+    const k = 2 / (period + 1);
+    let emaVal = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < data.length; i++) {
+      emaVal = data[i] * k + emaVal * (1 - k);
+    }
+    return emaVal;
+  }
+
+  const fastEMA = ema(prices, fastPeriod);
+  const slowEMA = ema(prices, slowPeriod);
+  const macd = fastEMA - slowEMA;
+
+  // Signal line (EMA of MACD) - simplified
+  const signalLine = macd * 0.9; // Approximation
+  const histogram = macd - signalLine;
+
+  // Crossover detection
+  let crossover = 0;
+  if (histogram > 0 && macd > 0) crossover = 1;  // Bullish
+  if (histogram < 0 && macd < 0) crossover = -1; // Bearish
+
+  return { macd, signal: signalLine, histogram, crossover };
+}
+
+/**
+ * Digit Streak Pattern
+ * Detects consecutive over/under patterns.
+ * Returns streak length and direction.
+ */
+function detectDigitStreak(digitHistory, depth = 10) {
+  if (digitHistory.length < depth) return { streak: 0, direction: 0 };
+
+  const recent = digitHistory.slice(-depth);
+  let overCount = 0;
+  let underCount = 0;
+  let currentStreak = 0;
+  let lastDirection = 0;
+
+  for (const d of recent) {
+    const dir = d >= 5 ? 1 : -1; // Over = 1, Under = -1
+
+    if (dir === lastDirection) {
+      currentStreak++;
+    } else {
+      currentStreak = 1;
+      lastDirection = dir;
+    }
+
+    if (d >= 5) overCount++;
+    else underCount++;
+  }
+
+  // Mean reversion: if streak is long, expect reversal
+  const direction = currentStreak >= 4 ? -lastDirection : lastDirection;
+
+  return { streak: currentStreak, direction, overRatio: overCount / depth };
+}
+
 function pickDirection(digit) {
   // Over if digit is high, under if low
   return digit >= 5 ? 'OVER' : 'UNDER';
@@ -271,28 +416,36 @@ function pickDirection(digit) {
 function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const cfg = { ...config, ...overrides, weighting: { ...config.weighting, ...(overrides.weighting || {}) } };
 
-  if (!tickHistory || tickHistory.length < 10) {
-    return { shouldTrade: false, reason: 'Insufficient ticks (Warmup)', isWarmup: true };
+  // TURBO MODE: Reduced warmup for faster start
+  if (!tickHistory || tickHistory.length < 8) {
+    return { shouldTrade: false, reason: 'Warmup (8 ticks)', isWarmup: true };
   }
 
-  // ==================== Multi-Factor Analysis ====================
+  // ==================== FULL 13-INDICATOR ANALYSIS ====================
 
   // 1. Markov Chain Probability
   const markov = computeMarkovProbability(digitHistory);
 
-  // 2. Technical Indicators
+  // 2. Classic Technical Indicators
   const rsi = computeRSI(tickHistory, 14);
   const slope = computeLinearRegressionSlope(tickHistory, 10);
   const bollinger = computeBollingerBands(tickHistory, 15, 2);
   const emaCross = computeEMACrossover(tickHistory, 5, 12);
   const momentum = computeMomentum(tickHistory, 8);
 
-  // 3. Pattern Analysis
+  // 3. Advanced Oscillators
+  const stochastic = computeStochastic(tickHistory, 14);
+  const williamsR = computeWilliamsR(tickHistory, 14);
+  const macd = computeMACD(tickHistory, 12, 26, 9);
+  const atr = computeATR(tickHistory, 14);
+
+  // 4. Pattern Analysis
   const entropy = computeDigitEntropy(digitHistory, 25);
+  const digitStreak = detectDigitStreak(digitHistory, 10);
   const freq = computeDigitFrequency(digitHistory, cfg.digitFrequencyDepth);
   const dfpmScore = Math.max(...freq);
 
-  // ==================== Signal Logic with Multi-Factor Confirmation ====================
+  // ==================== 13-FACTOR SIGNAL LOGIC ====================
   let side = null;
   let confidence = 0;
   let reasonParts = [];
@@ -301,7 +454,7 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   // === Factor 1: Markov Prediction (Primary) ===
   if (markov.probability > 0.3 && markov.predictedDigit !== null) {
     const predictedSide = pickDirection(markov.predictedDigit);
-    confidence += markov.probability * 0.5; // 50% base weight
+    confidence += markov.probability * 0.4;
     reasonParts.push(`MKV:${markov.probability.toFixed(2)}`);
     side = predictedSide;
     confirmations++;
@@ -309,109 +462,80 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
 
   // === Factor 2: RSI Reversal ===
   if (rsi > 70) {
-    if (side === 'UNDER' || !side) {
-      side = 'UNDER';
-      confidence += 0.15;
-      reasonParts.push(`RSI:${rsi.toFixed(0)}↓`);
-      confirmations++;
-    }
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.12; reasonParts.push(`RSI:${rsi.toFixed(0)}↓`); confirmations++; }
   } else if (rsi < 30) {
-    if (side === 'OVER' || !side) {
-      side = 'OVER';
-      confidence += 0.15;
-      reasonParts.push(`RSI:${rsi.toFixed(0)}↑`);
-      confirmations++;
-    }
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.12; reasonParts.push(`RSI:${rsi.toFixed(0)}↑`); confirmations++; }
   }
 
   // === Factor 3: Bollinger Band Position ===
-  if (bollinger.percentB > 0.95) {
-    // Price near upper band - expect reversal down
-    if (side === 'UNDER' || !side) {
-      side = 'UNDER';
-      confidence += 0.12;
-      reasonParts.push(`BB:OB`);
-      confirmations++;
-    }
-  } else if (bollinger.percentB < 0.05) {
-    // Price near lower band - expect reversal up
-    if (side === 'OVER' || !side) {
-      side = 'OVER';
-      confidence += 0.12;
-      reasonParts.push(`BB:OS`);
-      confirmations++;
-    }
+  if (bollinger.percentB > 0.9) {
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.10; reasonParts.push(`BB:OB`); confirmations++; }
+  } else if (bollinger.percentB < 0.1) {
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.10; reasonParts.push(`BB:OS`); confirmations++; }
   }
 
   // === Factor 4: EMA Crossover ===
   if (emaCross.signal === 1) {
-    // Bullish crossover
-    if (side === 'OVER' || !side) {
-      side = 'OVER';
-      confidence += 0.10;
-      reasonParts.push(`EMA:↑`);
-      confirmations++;
-    }
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.08; reasonParts.push(`EMA↑`); confirmations++; }
   } else if (emaCross.signal === -1) {
-    // Bearish crossover
-    if (side === 'UNDER' || !side) {
-      side = 'UNDER';
-      confidence += 0.10;
-      reasonParts.push(`EMA:↓`);
-      confirmations++;
-    }
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.08; reasonParts.push(`EMA↓`); confirmations++; }
   }
 
-  // === Factor 5: Momentum Confirmation ===
-  if (momentum > 0.1 && (side === 'OVER' || !side)) {
-    side = side || 'OVER';
-    confidence += 0.08;
-    reasonParts.push(`MOM:+`);
-    confirmations++;
-  } else if (momentum < -0.1 && (side === 'UNDER' || !side)) {
-    side = side || 'UNDER';
-    confidence += 0.08;
-    reasonParts.push(`MOM:-`);
-    confirmations++;
+  // === Factor 5: Stochastic Oscillator ===
+  if (stochastic.signal === 1) {
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.10; reasonParts.push(`STO:${stochastic.k.toFixed(0)}↑`); confirmations++; }
+  } else if (stochastic.signal === -1) {
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.10; reasonParts.push(`STO:${stochastic.k.toFixed(0)}↓`); confirmations++; }
   }
 
-  // === Factor 6: Trend Slope Confirmation ===
+  // === Factor 6: Williams %R ===
+  if (williamsR.signal === 1) {
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.08; reasonParts.push(`WR:OS`); confirmations++; }
+  } else if (williamsR.signal === -1) {
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.08; reasonParts.push(`WR:OB`); confirmations++; }
+  }
+
+  // === Factor 7: MACD Crossover ===
+  if (macd.crossover === 1) {
+    if (side === 'OVER' || !side) { side = 'OVER'; confidence += 0.08; reasonParts.push(`MACD↑`); confirmations++; }
+  } else if (macd.crossover === -1) {
+    if (side === 'UNDER' || !side) { side = 'UNDER'; confidence += 0.08; reasonParts.push(`MACD↓`); confirmations++; }
+  }
+
+  // === Factor 8: Momentum ===
+  if (momentum > 0.05 && (side === 'OVER' || !side)) {
+    side = side || 'OVER'; confidence += 0.06; reasonParts.push(`MOM+`); confirmations++;
+  } else if (momentum < -0.05 && (side === 'UNDER' || !side)) {
+    side = side || 'UNDER'; confidence += 0.06; reasonParts.push(`MOM-`); confirmations++;
+  }
+
+  // === Factor 9: Trend Slope ===
   const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
-  if (isTrendAligned) {
-    confidence += 0.10;
-    reasonParts.push(`TRD:${slope > 0 ? '↑' : '↓'}`);
-    confirmations++;
+  if (isTrendAligned) { confidence += 0.08; reasonParts.push(`TRD${slope > 0 ? '↑' : '↓'}`); confirmations++; }
+
+  // === Factor 10: Low Entropy (Predictable) ===
+  if (entropy < 2.8) { confidence += 0.06; reasonParts.push(`ENT:${entropy.toFixed(1)}`); confirmations++; }
+
+  // === Factor 11: Digit Streak Pattern ===
+  if (digitStreak.streak >= 3) {
+    const streakSide = digitStreak.direction === 1 ? 'OVER' : 'UNDER';
+    if (side === streakSide || !side) { side = streakSide; confidence += 0.08; reasonParts.push(`STK:${digitStreak.streak}`); confirmations++; }
   }
 
-  // === Factor 7: Low Entropy Bonus (Predictable Pattern) ===
-  // Low entropy means digits are less random, more predictable
-  if (entropy < 2.5) {
-    confidence += 0.08;
-    reasonParts.push(`ENT:${entropy.toFixed(1)}`);
-    confirmations++;
-  }
+  // === Factor 12: DFPM Frequency ===
+  if (dfpmScore > 0.16) { confidence += 0.05; confirmations++; }
 
-  // === Factor 8: Digit Frequency Confirmation ===
-  if (dfpmScore > 0.18) {
-    confidence += 0.07;
-    confirmations++;
-  }
+  // === Factor 13: Multi-Confirmation Bonus ===
+  if (confirmations >= 5) { confidence += 0.20; reasonParts.push(`⚡${confirmations}`); }
+  else if (confirmations >= 4) { confidence += 0.12; }
+  else if (confirmations >= 3) { confidence += 0.06; }
 
-  // === Multi-Factor Confirmation Bonus ===
-  // More confirmations = higher confidence
-  if (confirmations >= 4) {
-    confidence += 0.15; // Strong multi-factor confirmation
-    reasonParts.push(`CF:${confirmations}`);
-  } else if (confirmations >= 3) {
-    confidence += 0.08;
-  }
-
-  // Final Decision
+  // === Final Decision ===
   const finalSide = side || 'UNDER';
   const finalDigit = finalSide === 'OVER' ? 7 : 2;
 
-  // Require at least 2 confirming factors and 40% confidence
-  const shouldTrade = confidence >= 0.40 && confirmations >= 2;
+  // TURBO: Trade with 35% confidence and 2+ confirmations
+  const shouldTrade = confidence >= 0.35 && confirmations >= 2;
 
   return {
     shouldTrade,
@@ -422,13 +546,10 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
     reason: reasonParts.join(' '),
     market,
     parts: {
-      markov: markov.probability,
-      rsi,
-      slope,
-      bollinger: bollinger.percentB,
-      emaCross: emaCross.signal,
-      momentum,
-      entropy
+      markov: markov.probability, rsi, slope,
+      bollinger: bollinger.percentB, emaCross: emaCross.signal,
+      stochastic: stochastic.k, williamsR: williamsR.r,
+      macd: macd.crossover, momentum, entropy, atr
     },
     freq
   };
