@@ -1,4 +1,5 @@
 const strategyEngine = require('./strategyEngine');
+const quantEngine = require('./quantEngine');
 const tickCollector = require('./tickCollector');
 const tradeExecutor = require('./tradeExecutor');
 const riskEngine = require('./trading-engine/risk/RiskEngine');
@@ -42,6 +43,10 @@ class SignalWorker {
   async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions') {
     this.sessionId = sessionId;
     this.sessionTable = sessionTable;
+
+    // Initialize quant engine memory for this session
+    quantEngine.initSession(sessionId);
+
     // Ensure connection
     if (!tickCollector.isConnected()) {
       await tickCollector.connect(apiToken);
@@ -51,7 +56,7 @@ class SignalWorker {
 
     // Run every 2 seconds for fast execution
     this.interval = setInterval(() => this.tick(markets), 2000);
-    console.log('[SignalWorker] ⚡ TURBO MODE started (2s interval)');
+    console.log('[SignalWorker] 🧠 Quant Engine started (2s interval, with learning)');
   }
 
   stop() {
@@ -126,11 +131,11 @@ class SignalWorker {
         });
       }
 
-      const signal = strategyEngine.generateSignal({
+      // Use Quant Engine for signal generation (with memory, regime, Bayesian)
+      const signal = quantEngine.generateQuantSignal({
         market,
         tickHistory: ticks,
-        digitHistory: digits,
-        overrides: {} // Could load from session config
+        digitHistory: digits
       });
 
       // Emit signal analysis update to market room
