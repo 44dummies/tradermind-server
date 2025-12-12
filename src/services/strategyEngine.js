@@ -166,7 +166,7 @@ function pickDirection(digit) {
 function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const cfg = { ...config, ...overrides, weighting: { ...config.weighting, ...(overrides.weighting || {}) } };
 
-  if (!tickHistory || tickHistory.length < 20) {
+  if (!tickHistory || tickHistory.length < 10) {
     return { shouldTrade: false, reason: 'Insufficient ticks (Warmup)', isWarmup: true };
   }
 
@@ -239,7 +239,7 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const finalDigit = side === 'OVER' ? 7 : 2; // Arbitrary safe digits for directional bets
 
   return {
-    shouldTrade: confidence >= 0.65, // Require 65% composite confidence
+    shouldTrade: confidence >= 0.55, // Require 55% composite confidence (lowered for more signals)
     side: finalSide, // 'OVER' or 'UNDER' (mapped to Call/Put in executor)
     digit: finalDigit,
     confidence,
