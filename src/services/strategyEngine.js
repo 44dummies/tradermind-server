@@ -158,6 +158,111 @@ function computeLinearRegressionSlope(ticks, length = 10) {
   return slope;
 }
 
+// ==================== Additional Advanced Math Models ====================
+
+/**
+ * Bollinger Bands
+ * Returns upper, middle (SMA), lower bands and %B position indicator.
+ * %B > 1 = overbought, %B < 0 = oversold
+ */
+function computeBollingerBands(ticks, period = 20, multiplier = 2) {
+  if (ticks.length < period) return { upper: 0, middle: 0, lower: 0, percentB: 0.5 };
+
+  const recent = ticks.slice(-period).map(t => t.quote);
+  const sma = recent.reduce((a, b) => a + b, 0) / period;
+
+  // Standard deviation
+  const variance = recent.reduce((sum, val) => sum + Math.pow(val - sma, 2), 0) / period;
+  const stdDev = Math.sqrt(variance);
+
+  const upper = sma + (multiplier * stdDev);
+  const lower = sma - (multiplier * stdDev);
+  const currentPrice = ticks[ticks.length - 1].quote;
+
+  // %B = (Price - Lower Band) / (Upper Band - Lower Band)
+  const percentB = (upper - lower) !== 0 ? (currentPrice - lower) / (upper - lower) : 0.5;
+
+  return { upper, middle: sma, lower, percentB, stdDev };
+}
+
+/**
+ * Shannon Entropy for Digit Distribution
+ * Measures randomness/predictability of digits.
+ * Low entropy = more predictable patterns, High entropy = more random
+ * Returns 0-3.32 range (log2(10) max for 10 digits)
+ */
+function computeDigitEntropy(digitHistory, depth = 30) {
+  if (digitHistory.length < depth) return 3.32; // Max entropy = assume random
+
+  const recent = digitHistory.slice(-depth);
+  const counts = Array(10).fill(0);
+
+  for (const d of recent) {
+    if (Number.isInteger(d) && d >= 0 && d <= 9) counts[d]++;
+  }
+
+  let entropy = 0;
+  for (const count of counts) {
+    if (count > 0) {
+      const p = count / depth;
+      entropy -= p * Math.log2(p);
+    }
+  }
+
+  return entropy;
+}
+
+/**
+ * EMA Crossover Signal
+ * Computes fast and slow EMAs, returns crossover direction.
+ * 1 = bullish crossover (fast > slow), -1 = bearish crossover, 0 = neutral
+ */
+function computeEMACrossover(ticks, fastPeriod = 5, slowPeriod = 12) {
+  if (ticks.length < slowPeriod + 2) return { signal: 0, fastEMA: 0, slowEMA: 0 };
+
+  const prices = ticks.map(t => t.quote);
+
+  function ema(data, period) {
+    const k = 2 / (period + 1);
+    let emaVal = data.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < data.length; i++) {
+      emaVal = data[i] * k + emaVal * (1 - k);
+    }
+    return emaVal;
+  }
+
+  const fastEMA = ema(prices, fastPeriod);
+  const slowEMA = ema(prices, slowPeriod);
+
+  // Previous EMAs for crossover detection
+  const prevPrices = prices.slice(0, -1);
+  const prevFastEMA = ema(prevPrices, fastPeriod);
+  const prevSlowEMA = ema(prevPrices, slowPeriod);
+
+  // Bullish crossover: fast crosses above slow
+  // Bearish crossover: fast crosses below slow
+  let signal = 0;
+  if (prevFastEMA <= prevSlowEMA && fastEMA > slowEMA) signal = 1;  // Bullish
+  if (prevFastEMA >= prevSlowEMA && fastEMA < slowEMA) signal = -1; // Bearish
+
+  return { signal, fastEMA, slowEMA, diff: fastEMA - slowEMA };
+}
+
+/**
+ * Momentum Ratio
+ * Measures rate of change over N periods.
+ * Positive = upward momentum, Negative = downward momentum
+ */
+function computeMomentum(ticks, period = 10) {
+  if (ticks.length < period + 1) return 0;
+
+  const current = ticks[ticks.length - 1].quote;
+  const past = ticks[ticks.length - 1 - period].quote;
+
+  // Momentum as percentage change
+  return past !== 0 ? ((current - past) / past) * 100 : 0;
+}
+
 function pickDirection(digit) {
   // Over if digit is high, under if low
   return digit >= 5 ? 'OVER' : 'UNDER';
@@ -170,77 +275,161 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
     return { shouldTrade: false, reason: 'Insufficient ticks (Warmup)', isWarmup: true };
   }
 
-  // 1. Math Analysis
+  // ==================== Multi-Factor Analysis ====================
+
+  // 1. Markov Chain Probability
   const markov = computeMarkovProbability(digitHistory);
+
+  // 2. Technical Indicators
   const rsi = computeRSI(tickHistory, 14);
   const slope = computeLinearRegressionSlope(tickHistory, 10);
+  const bollinger = computeBollingerBands(tickHistory, 15, 2);
+  const emaCross = computeEMACrossover(tickHistory, 5, 12);
+  const momentum = computeMomentum(tickHistory, 8);
 
-  // 2. Frequency Analysis (Legacy but useful for confirmation)
+  // 3. Pattern Analysis
+  const entropy = computeDigitEntropy(digitHistory, 25);
   const freq = computeDigitFrequency(digitHistory, cfg.digitFrequencyDepth);
   const dfpmScore = Math.max(...freq);
 
-  // 3. Signal Logic
+  // ==================== Signal Logic with Multi-Factor Confirmation ====================
   let side = null;
   let confidence = 0;
   let reasonParts = [];
+  let confirmations = 0;
 
-  // STRATEGY: Markov + RSI Reversal + Trend Confirmation
-
-  // Case A: Strong Markov Prediction (boosted weight for more trades)
+  // === Factor 1: Markov Prediction (Primary) ===
   if (markov.probability > 0.3 && markov.predictedDigit !== null) {
     const predictedSide = pickDirection(markov.predictedDigit);
-    confidence += markov.probability * 0.6; // 60% weight (boosted from 40%)
+    confidence += markov.probability * 0.5; // 50% base weight
     reasonParts.push(`MKV:${markov.probability.toFixed(2)}`);
     side = predictedSide;
+    confirmations++;
   }
 
-  // Case B: RSI Reversal (Overbought/Oversold)
+  // === Factor 2: RSI Reversal ===
   if (rsi > 70) {
-    // Overbought -> Expect Drop -> Sell/Under/Put
-    // For digit markets, "Put" usually aligns with "Under" or predicting low digits.
-    // Let's assume we want to bet UNDER if RSI is high.
     if (side === 'UNDER' || !side) {
       side = 'UNDER';
-      confidence += 0.3; // 30% weight
-      reasonParts.push(`RSI_High:${rsi.toFixed(0)}`);
-    } else {
-      confidence -= 0.1; // Conflict
+      confidence += 0.15;
+      reasonParts.push(`RSI:${rsi.toFixed(0)}↓`);
+      confirmations++;
     }
   } else if (rsi < 30) {
-    // Oversold -> Expect Rise -> Buy/Over/Call
     if (side === 'OVER' || !side) {
       side = 'OVER';
-      confidence += 0.3; // 30% weight
-      reasonParts.push(`RSI_Low:${rsi.toFixed(0)}`);
-    } else {
-      confidence -= 0.1; // Conflict
+      confidence += 0.15;
+      reasonParts.push(`RSI:${rsi.toFixed(0)}↑`);
+      confirmations++;
     }
   }
 
-  // Case C: Trend Slope Confirmation (boosted weight)
-  const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
-  if (isTrendAligned) {
-    confidence += 0.3; // 30% weight (boosted from 20%)
-    reasonParts.push(`Trend:${slope > 0 ? 'Up' : 'Down'}`);
+  // === Factor 3: Bollinger Band Position ===
+  if (bollinger.percentB > 0.95) {
+    // Price near upper band - expect reversal down
+    if (side === 'UNDER' || !side) {
+      side = 'UNDER';
+      confidence += 0.12;
+      reasonParts.push(`BB:OB`);
+      confirmations++;
+    }
+  } else if (bollinger.percentB < 0.05) {
+    // Price near lower band - expect reversal up
+    if (side === 'OVER' || !side) {
+      side = 'OVER';
+      confidence += 0.12;
+      reasonParts.push(`BB:OS`);
+      confirmations++;
+    }
   }
 
-  // Legacy Freq confirm
-  if (side === 'OVER' && dfpmScore > 0.15) confidence += 0.1;
-  if (side === 'UNDER' && dfpmScore > 0.15) confidence += 0.1;
+  // === Factor 4: EMA Crossover ===
+  if (emaCross.signal === 1) {
+    // Bullish crossover
+    if (side === 'OVER' || !side) {
+      side = 'OVER';
+      confidence += 0.10;
+      reasonParts.push(`EMA:↑`);
+      confirmations++;
+    }
+  } else if (emaCross.signal === -1) {
+    // Bearish crossover
+    if (side === 'UNDER' || !side) {
+      side = 'UNDER';
+      confidence += 0.10;
+      reasonParts.push(`EMA:↓`);
+      confirmations++;
+    }
+  }
+
+  // === Factor 5: Momentum Confirmation ===
+  if (momentum > 0.1 && (side === 'OVER' || !side)) {
+    side = side || 'OVER';
+    confidence += 0.08;
+    reasonParts.push(`MOM:+`);
+    confirmations++;
+  } else if (momentum < -0.1 && (side === 'UNDER' || !side)) {
+    side = side || 'UNDER';
+    confidence += 0.08;
+    reasonParts.push(`MOM:-`);
+    confirmations++;
+  }
+
+  // === Factor 6: Trend Slope Confirmation ===
+  const isTrendAligned = (side === 'OVER' && slope > 0) || (side === 'UNDER' && slope < 0);
+  if (isTrendAligned) {
+    confidence += 0.10;
+    reasonParts.push(`TRD:${slope > 0 ? '↑' : '↓'}`);
+    confirmations++;
+  }
+
+  // === Factor 7: Low Entropy Bonus (Predictable Pattern) ===
+  // Low entropy means digits are less random, more predictable
+  if (entropy < 2.5) {
+    confidence += 0.08;
+    reasonParts.push(`ENT:${entropy.toFixed(1)}`);
+    confirmations++;
+  }
+
+  // === Factor 8: Digit Frequency Confirmation ===
+  if (dfpmScore > 0.18) {
+    confidence += 0.07;
+    confirmations++;
+  }
+
+  // === Multi-Factor Confirmation Bonus ===
+  // More confirmations = higher confidence
+  if (confirmations >= 4) {
+    confidence += 0.15; // Strong multi-factor confirmation
+    reasonParts.push(`CF:${confirmations}`);
+  } else if (confirmations >= 3) {
+    confidence += 0.08;
+  }
 
   // Final Decision
-  // Default to UNDER if no clear signal but we need a side for the object structure
   const finalSide = side || 'UNDER';
-  const finalDigit = side === 'OVER' ? 7 : 2; // Arbitrary safe digits for directional bets
+  const finalDigit = finalSide === 'OVER' ? 7 : 2;
+
+  // Require at least 2 confirming factors and 40% confidence
+  const shouldTrade = confidence >= 0.40 && confirmations >= 2;
 
   return {
-    shouldTrade: confidence >= 0.35, // Require 35% confidence (lowered for active trading)
-    side: finalSide, // 'OVER' or 'UNDER' (mapped to Call/Put in executor)
+    shouldTrade,
+    side: finalSide,
     digit: finalDigit,
     confidence,
+    confirmations,
     reason: reasonParts.join(' '),
     market,
-    parts: { markov: markov.probability, rsi, slope },
+    parts: {
+      markov: markov.probability,
+      rsi,
+      slope,
+      bollinger: bollinger.percentB,
+      emaCross: emaCross.signal,
+      momentum,
+      entropy
+    },
     freq
   };
 }
