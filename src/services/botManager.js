@@ -1,6 +1,8 @@
 const { supabase } = require('../db/supabase');
 const signalWorker = require('./signalWorker');
 const tradeExecutor = require('./tradeExecutor');
+const quantMemory = require('./quantMemory');
+const tickCollector = require('./tickCollector');
 
 class BotManager {
   constructor() {
@@ -17,11 +19,15 @@ class BotManager {
     this.sessionTimer = null; // Auto-stop timer
   }
 
-  initialize(io) {
+  async initialize(io) {
     this.io = io;
     signalWorker.setSocket(io);
     tradeExecutor.setSocket(io);
-    console.log('[BotManager] Socket.IO initialized for real-time updates');
+
+    // Preload quant memory from Supabase
+    await quantMemory.initializeMemory();
+
+    console.log('[BotManager] Socket.IO and QuantMemory initialized');
 
     // Attempt to resume any active session from DB
     this.resumeActiveSession();
@@ -189,10 +195,11 @@ class BotManager {
     }
 
     const sessionId = this.state.activeSessionId;
-    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Stop components
     signalWorker.stop();
+    tickCollector.unsubscribeAll();  // Clean up subscriptions
     tradeExecutor.disconnectAll();
 
     // Clear auto-stop timer if running
@@ -229,7 +236,7 @@ class BotManager {
     this.state.isPaused = true;
     tradeExecutor.paused = true;
 
-    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Update session status
     if (this.state.activeSessionId) {
@@ -246,7 +253,7 @@ class BotManager {
     this.state.isPaused = false;
     tradeExecutor.paused = false;
 
-    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Update session status
     if (this.state.activeSessionId) {
@@ -260,7 +267,7 @@ class BotManager {
 
   async emergencyStop(reason = 'Manual override') {
     const sessionId = this.state.activeSessionId;
-    const sessionTable = this.state.activeSessionTable || 'trading_sessions';
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Immediately stop all components
     signalWorker.stop();

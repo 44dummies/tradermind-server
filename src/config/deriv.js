@@ -2,11 +2,10 @@
  * Deriv API Configuration
  * Central source of truth for backend Deriv connections
  */
-const APP_ID = process.env.DERIV_APP_ID || calculateAppId();
+const APP_ID = process.env.DERIV_APP_ID;
 
-function calculateAppId() {
-    // If we are in production (based on URL usually, but here we default)
-    return '114042';
+if (!APP_ID) {
+    throw new Error('DERIV_APP_ID environment variable is required');
 }
 
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;

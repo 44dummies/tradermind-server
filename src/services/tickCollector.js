@@ -155,6 +155,26 @@ class TickCollector extends EventEmitter {
   }
 
   /**
+   * Unsubscribe from all tick streams
+   * Called when session stops to clean up
+   */
+  unsubscribeAll() {
+    console.log('[TickCollector] 🧹 Unsubscribing from all markets...');
+    const markets = Array.from(this.subscriptions.keys());
+
+    for (const market of markets) {
+      this.unsubscribeTicks(market);
+    }
+
+    // Clear history to prevent pollution
+    this.tickHistory.clear();
+    this.digitHistory.clear();
+
+    console.log(`[TickCollector] ✅ Cleaned up ${markets.length} subscriptions`);
+    return markets.length;
+  }
+
+  /**
    * Handle incoming WebSocket messages
    */
   handleMessage(message) {

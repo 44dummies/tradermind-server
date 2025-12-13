@@ -138,8 +138,8 @@ function buildMarkovRow(digitHistory, currentDigit, depth = 50) {
  * Combines all models with regime awareness and learning weights
  */
 function generateQuantSignal({ market, tickHistory, digitHistory }) {
-    // Load memory
-    const memory = quantMemory.loadMemory();
+    // Load memory (sync - uses cache or defaults)
+    const memory = quantMemory.getMemorySync();
 
     // Warmup check
     if (!digitHistory || digitHistory.length < 25) {
@@ -335,7 +335,7 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
  * Record trade outcome and update learning
  */
 function recordTradeOutcome(tradeData) {
-    const memory = quantMemory.loadMemory();
+    const memory = quantMemory.getMemorySync();
     quantMemory.recordTrade(memory, tradeData);
 
     console.log(`[QuantEngine] Trade recorded: ${tradeData.side} ${tradeData.won ? 'WON' : 'LOST'}`);
@@ -347,9 +347,9 @@ function recordTradeOutcome(tradeData) {
 /**
  * Initialize session in memory
  */
-function initSession(sessionId) {
-    const memory = quantMemory.loadMemory();
-    quantMemory.startSession(memory, sessionId);
+async function initSession(sessionId) {
+    const memory = await quantMemory.loadMemory();
+    await quantMemory.startSession(memory, sessionId);
     console.log(`[QuantEngine] Session initialized: ${sessionId}`);
     return memory;
 }
@@ -358,7 +358,7 @@ function initSession(sessionId) {
  * Get current engine state for debugging
  */
 function getEngineState() {
-    const memory = quantMemory.loadMemory();
+    const memory = quantMemory.getMemorySync();
     return {
         summary: quantMemory.getMemorySummary(memory),
         memory

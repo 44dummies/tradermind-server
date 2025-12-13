@@ -40,7 +40,7 @@ class TradeExecutor {
    * @param {string} sessionId - Session ID
    * @param {string} sessionTable - Table name (default: 'trading_sessions')
    */
-  async executeMultiAccountTrade(signal, sessionId, sessionTable = 'trading_sessions') {
+  async executeMultiAccountTrade(signal, sessionId, sessionTable = 'trading_sessions_v2') {
     // Create a lock key based on session and signal details
     const lockKey = `${sessionId}-${signal.market}-${signal.digit}-${signal.side}`;
 
@@ -376,6 +376,7 @@ class TradeExecutor {
       if (this.io) {
         this.io.emit('trade_update', {
           type: 'open',
+          sessionId: session.id,  // Add session ID for filtering
           contractId: contract.contract_id,
           market: session.markets ? session.markets[0] : 'R_100', // Assuming single market for now
           signal: signal.side,
@@ -658,6 +659,7 @@ class TradeExecutor {
       if (this.io) {
         this.io.emit('trade_update', {
           type: 'close',
+          sessionId: session?.id,  // Add session ID for filtering
           contractId: tradeResult.contractId,
           result: finalPL > 0 ? 'win' : 'loss',
           profit: finalPL,

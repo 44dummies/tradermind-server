@@ -67,15 +67,13 @@ function decryptToken(encryptedToken) {
 }
 
 /**
- * Get or generate encryption key
+ * Get encryption key from environment
  */
 function getEncryptionKey() {
     const keyHex = process.env.ENCRYPTION_KEY;
 
     if (!keyHex) {
-        // Generate a key for development (NOT for production!)
-        console.warn('[Encryption] ENCRYPTION_KEY not set! Using fallback (INSECURE)');
-        return crypto.createHash('sha256').update('tradermind-dev-key').digest();
+        throw new Error('ENCRYPTION_KEY environment variable is required for token encryption');
     }
 
     return Buffer.from(keyHex, 'hex');
