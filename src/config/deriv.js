@@ -5,7 +5,7 @@
 const APP_ID = process.env.DERIV_APP_ID;
 
 if (!APP_ID) {
-    throw new Error('DERIV_APP_ID environment variable is required');
+    console.error('⚠️ DERIV_APP_ID environment variable is missing - Deriv API will fail');
 }
 
 const WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${APP_ID}`;
