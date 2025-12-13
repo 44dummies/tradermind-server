@@ -10,8 +10,8 @@
 
 const WebSocket = require('ws');
 const DerivAPIBasic = require('@deriv/deriv-api/dist/DerivAPIBasic');
+const { APP_ID } = require('../config/deriv');
 
-const APP_ID = process.env.DERIV_APP_ID || process.env.REACT_APP_DERIV_APP_ID || '1089';
 const WS_ENDPOINT = 'ws.derivws.com';
 
 class DerivClient {

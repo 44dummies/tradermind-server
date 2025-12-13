@@ -1,19 +1,11 @@
 /**
- * Quant Memory - Persistent Learning State
+ * Quant Memory - Supabase Persistent Learning State
  * 
- * This module provides a persistent memory layer for the trading engine.
- * The memory stores:
- * - Indicator performance (accuracy)
- * - Dynamic weights
- * - Trade history
- * - Market regime history
- * - Entropy clusters
+ * Migrated from filesystem to Supabase for Railway persistence.
+ * Memory survives redeploys and scales across workers.
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const MEMORY_FILE = path.join(__dirname, '../data/quant_memory.json');
+const { supabase } = require('../db/supabase');
 
 // Default memory structure
 const DEFAULT_MEMORY = {
@@ -80,40 +72,117 @@ const DEFAULT_MEMORY = {
     }
 };
 
-// Ensure data directory exists
-function ensureDataDir() {
-    const dataDir = path.dirname(MEMORY_FILE);
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
+// In-memory cache to reduce DB reads
+let memoryCache = null;
+let lastCacheTime = 0;
+const CACHE_TTL = 5000; // 5 seconds
+let isInitialized = false;
+
+/**
+ * Initialize memory at startup (call this once at server start)
+ * This preloads cache so synchronous access works
+ */
+async function initializeMemory(market = 'default') {
+    console.log('[QuantMemory] Initializing from Supabase...');
+    await loadMemory(market);
+    isInitialized = true;
+    console.log('[QuantMemory] Memory initialized');
+    return memoryCache;
 }
 
 /**
- * Load memory from disk
+ * Synchronous getter - returns cache or defaults
+ * Use this in hot paths like signal generation
+ * Falls back to defaults if not yet loaded from DB
  */
-function loadMemory() {
-    try {
-        ensureDataDir();
-        if (fs.existsSync(MEMORY_FILE)) {
-            const data = fs.readFileSync(MEMORY_FILE, 'utf8');
-            const parsed = JSON.parse(data);
-            // Merge with defaults to ensure new fields exist
-            return { ...DEFAULT_MEMORY, ...parsed };
-        }
-    } catch (error) {
-        console.error('[QuantMemory] Error loading memory:', error.message);
+function getMemorySync() {
+    if (memoryCache) {
+        return memoryCache;
     }
+    // Return defaults if not yet loaded
+    // This allows signal generation to work before first DB load
     return { ...DEFAULT_MEMORY };
 }
 
 /**
- * Save memory to disk
+ * Load memory from Supabase (async)
  */
-function saveMemory(memory) {
+async function loadMemory(market = 'default') {
+    // Check cache first
+    if (memoryCache && (Date.now() - lastCacheTime) < CACHE_TTL) {
+        return memoryCache;
+    }
+
     try {
-        ensureDataDir();
+        const { data, error } = await supabase
+            .from('quant_memory')
+            .select('*')
+            .eq('market', market)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            // PGRST116 = not found, which is OK
+            console.error('[QuantMemory] Load error:', error.message);
+        }
+
+        if (data) {
+            // Merge with defaults to ensure new fields exist
+            memoryCache = {
+                ...DEFAULT_MEMORY,
+                ...data.weights_data,
+                ...data.performance_data,
+                updatedAt: data.updated_at
+            };
+        } else {
+            // Create new memory record
+            memoryCache = { ...DEFAULT_MEMORY };
+            await saveMemory(memoryCache, market);
+        }
+
+        lastCacheTime = Date.now();
+        return memoryCache;
+
+    } catch (error) {
+        console.error('[QuantMemory] Error loading memory:', error.message);
+        return memoryCache || { ...DEFAULT_MEMORY };
+    }
+}
+
+/**
+ * Save memory to Supabase
+ */
+async function saveMemory(memory, market = 'default') {
+    try {
         memory.updatedAt = new Date().toISOString();
-        fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
+
+        const { error } = await supabase
+            .from('quant_memory')
+            .upsert({
+                market,
+                weights_data: {
+                    weights: memory.weights,
+                    thresholds: memory.thresholds,
+                    indicatorPerformance: memory.indicatorPerformance
+                },
+                performance_data: {
+                    performance: memory.performance,
+                    lastTrades: memory.lastTrades?.slice(0, memory.maxTradeHistory || 100),
+                    regime: memory.regime,
+                    currentSession: memory.currentSession
+                },
+                updated_at: memory.updatedAt
+            }, {
+                onConflict: 'market'
+            });
+
+        if (error) {
+            console.error('[QuantMemory] Save error:', error.message);
+        }
+
+        // Update cache
+        memoryCache = memory;
+        lastCacheTime = Date.now();
+
     } catch (error) {
         console.error('[QuantMemory] Error saving memory:', error.message);
     }
@@ -135,9 +204,10 @@ function calculateWeight(indicator) {
 
 /**
  * Update memory after a trade completes
+ * @param {Object} memory - Current memory state
  * @param {Object} trade - { side, won, indicators, digit, regime }
  */
-function recordTrade(memory, trade) {
+async function recordTrade(memory, trade) {
     const { side, won, indicators = [], digit, regime, confidence } = trade;
 
     // Update overall performance
@@ -198,8 +268,10 @@ function recordTrade(memory, trade) {
     if (won) memory.currentSession.wins++;
     else memory.currentSession.losses++;
 
-    // Save to disk
-    saveMemory(memory);
+    // Save to Supabase (async, non-blocking)
+    saveMemory(memory).catch(err => {
+        console.error('[QuantMemory] Background save error:', err.message);
+    });
 
     return memory;
 }
@@ -207,7 +279,7 @@ function recordTrade(memory, trade) {
 /**
  * Update regime history
  */
-function recordRegime(memory, regime) {
+async function recordRegime(memory, regime) {
     if (memory.regime.current !== regime) {
         memory.regime.history.unshift({
             from: memory.regime.current,
@@ -233,7 +305,7 @@ function recordRegime(memory, regime) {
 /**
  * Start a new session
  */
-function startSession(memory, sessionId) {
+async function startSession(memory, sessionId) {
     memory.currentSession = {
         sessionId,
         startedAt: new Date().toISOString(),
@@ -241,7 +313,7 @@ function startSession(memory, sessionId) {
         wins: 0,
         losses: 0
     };
-    saveMemory(memory);
+    await saveMemory(memory);
     return memory;
 }
 
@@ -264,11 +336,23 @@ function getMemorySummary(memory) {
 }
 
 /**
- * Reset memory to defaults
+ * Reset memory to defaults (clears Supabase record)
  */
-function resetMemory() {
+async function resetMemory(market = 'default') {
     const memory = { ...DEFAULT_MEMORY, createdAt: new Date().toISOString() };
-    saveMemory(memory);
+
+    const { error } = await supabase
+        .from('quant_memory')
+        .delete()
+        .eq('market', market);
+
+    if (error) {
+        console.error('[QuantMemory] Reset error:', error.message);
+    }
+
+    memoryCache = null;
+    lastCacheTime = 0;
+
     return memory;
 }
 
@@ -281,5 +365,7 @@ module.exports = {
     getMemorySummary,
     resetMemory,
     calculateWeight,
+    initializeMemory,
+    getMemorySync,
     DEFAULT_MEMORY
 };

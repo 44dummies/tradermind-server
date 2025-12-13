@@ -6,11 +6,20 @@ const notificationWorker = require('./notificationWorker');
 const sessionWorker = require('./sessionWorker');
 const orderManager = require('../trading-engine/orderManager');
 
+// Global flag to prevent duplicate initialization
+let workersInitialized = false;
+
 /**
  * Start all workers
  * @param {object} io - Socket.IO instance
  */
 async function startAllWorkers(io) {
+    // Prevent duplicate initialization
+    if (workersInitialized) {
+        console.log('[Workers] Workers already initialized, skipping...');
+        return;
+    }
+
     console.log('[Workers] Initializing background workers...');
 
     // Set Socket.IO for notification worker and order manager
@@ -25,6 +34,7 @@ async function startAllWorkers(io) {
         orderManager.start()
     ]);
 
+    workersInitialized = true;
     console.log('[Workers] All workers started');
 }
 

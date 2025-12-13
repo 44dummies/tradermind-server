@@ -6,6 +6,7 @@ const { supabase } = require('../db/supabase');
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const botManager = require('./botManager');
+const { WS_URL } = require('../config/deriv');
 
 // ==================== Constants ====================
 
@@ -16,7 +17,7 @@ const SESSION_STATUS = {
 };
 const ACCOUNT_STATUS = { ACTIVE: 'active', DISCONNECTED: 'disconnected', ERROR: 'error', DISABLED: 'disabled' };
 
-const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
+const DERIV_WS_URL = WS_URL;
 
 // ==================== Account Operations ====================
 
@@ -183,7 +184,7 @@ async function getSessions(adminId, options = {}) {
   const { data, error } = await query;
   if (error) throw error;
 
-  // Get participants count for each session separately
+  // Get participants count for each session separately and normalize fields
   const sessionsWithCount = await Promise.all((data || []).map(async (session) => {
     const { count } = await supabase
       .from('session_participants')
@@ -192,6 +193,11 @@ async function getSessions(adminId, options = {}) {
 
     return {
       ...session,
+      // Normalize field names for V1/V2 frontend compatibility
+      name: session.name || session.session_name,
+      session_name: session.session_name || session.name,
+      // Convert volatility_index to markets array for frontend
+      markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100']),
       participants_count: count || 0
     };
   }));

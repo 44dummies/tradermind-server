@@ -8,8 +8,8 @@ module.exports = {
   maxLossStreak: 5,
   apiErrorThreshold: 5,
   drawdownGuard: {
-    enabled: false,
-    maxDrawdownPct: 20
+    enabled: true,
+    maxDrawdownPct: 15
   },
   minBalance: 10,
   minTp: 5,

@@ -1,4 +1,7 @@
 require('dotenv').config();
+const { validateEnv } = require('./config/validateEnv');
+validateEnv(); // Throws if missing required vars
+
 const express = require('express');
 const http = require('http');
 const path = require('path');
@@ -236,7 +239,7 @@ async function startServer() {
     schedulerService.start();
 
     const botManager = require('./services/botManager');
-    botManager.initialize(io);
+    await botManager.initialize(io);
 
     // Initialize Redis message queue
     try {

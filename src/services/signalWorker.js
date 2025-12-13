@@ -40,12 +40,12 @@ class SignalWorker {
     this.io = io;
   }
 
-  async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions') {
+  async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions_v2') {
     this.sessionId = sessionId;
     this.sessionTable = sessionTable;
 
     // Initialize quant engine memory for this session
-    quantEngine.initSession(sessionId);
+    await quantEngine.initSession(sessionId);
 
     // Ensure connection
     if (!tickCollector.isConnected()) {
@@ -85,7 +85,7 @@ class SignalWorker {
   async tick(markets) {
     // Ensure session is still running
     const { data: session, error } = await supabase
-      .from(this.sessionTable || 'trading_sessions')
+      .from(this.sessionTable || 'trading_sessions_v2')
       .select('*')
       .eq('id', this.sessionId)
       .single();
