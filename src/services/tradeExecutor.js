@@ -185,8 +185,8 @@ class TradeExecutor {
           profile.deriv_id = tradingAccount.deriv_account_id;
         }
 
-        // Calculate stake for this participant to determine default TP/SL
-        const baseStake = session.initial_stake || session.base_stake || 0.35;
+        // Calculate stake for this participant - use min_balance as stake (set by admin)
+        const baseStake = session.min_balance || session.minimum_balance || session.initial_stake || 0.35;
 
         // Default TP/SL is 50% of stake if not set by user or session
         // Priority: 1) User's custom TP/SL, 2) Session defaults, 3) 50% of stake
@@ -343,8 +343,8 @@ class TradeExecutor {
       // Connect to Deriv WebSocket using the participant's token
       const ws = await this.getConnection(profile.deriv_id, apiToken);
 
-      // Calculate stake (use session base stake for now)
-      const stake = session.initial_stake || session.base_stake || 0.35;
+      // Calculate stake - use min_balance as stake (set by admin)
+      const stake = session.min_balance || session.minimum_balance || session.initial_stake || 0.35;
 
       // Prepare contract parameters
       const contractParams = {
