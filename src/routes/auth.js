@@ -141,7 +141,10 @@ router.post('/login', async (req, res) => {
         username: user.username,
         email: user.email,
         displayName: user.displayName,
-        avatarUrl: user.avatarUrl
+        avatarUrl: user.avatarUrl,
+        userRole: userRole,
+        role: userRole,
+        is_admin: user.isAdmin || false
       },
       accessToken
       // refreshToken moved to HttpOnly cookie
@@ -361,7 +364,10 @@ router.get('/me', async (req, res) => {
         winRate: true,
         totalTrades: true,
         reputationScore: true,
-        createdAt: true
+        reputationScore: true,
+        createdAt: true,
+        role: true,
+        isAdmin: true
       }
     });
 
@@ -369,7 +375,10 @@ router.get('/me', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json(user);
+    res.json({
+      ...user,
+      is_admin: user.isAdmin || user.role === 'admin'
+    });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user' });

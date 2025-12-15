@@ -58,7 +58,8 @@ const defaultOrigins = [
   'http://localhost:3001',
   'https://www.tradermind.site',
   'https://tradermind.site',
-  'https://deriv-ws.vercel.app'
+  'https://deriv-ws.vercel.app',
+  'http://localhost:5173'
 ];
 
 const corsOrigins = process.env.CORS_ORIGIN
