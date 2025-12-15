@@ -55,19 +55,40 @@ class RiskEngine {
             }
         });
 
+        // Rule: Block if Max Consecutive Losses Exceeded
+        this.engine.addRule({
+            conditions: {
+                all: [{
+                    fact: 'consecutiveLosses',
+                    operator: 'greaterThanInclusive',
+                    value: {
+                        fact: 'maxConsecutiveLossesLimit' // Dynamic value from context
+                    }
+                }]
+            },
+            event: {
+                type: 'BLOCK_TRADE',
+                params: {
+                    reason: 'Max Consecutive Losses Reached'
+                }
+            }
+        });
+
         // Rule: Check RSI Overbought (Example logic)
         // If RSI > 70 and attempting BUY -> Block (maybe)
     }
 
     async evaluateRisk(tradeContext) {
-        // tradeContext = { dailyLoss, currentExposure, signal: { type: 'BUY', symbol: '...' }, history: [...] }
+        // tradeContext = { dailyLoss, currentExposure, consecutiveLosses, signal: { type: 'BUY', symbol: '...' } }
 
-        // Calculate indicators if needed
-        // const rsi = await indicators.rsi(tradeContext.history, 14);
-        // tradeContext.rsi = rsi ? rsi[rsi.length-1] : 50;
+        // Merge with defaults/globals if not provided in context
+        const context = {
+            ...tradeContext,
+            maxConsecutiveLossesLimit: tradeContext.maxConsecutiveLossesLimit || riskConfig.maxConsecutiveLosses || 5
+        };
 
         try {
-            const results = await this.engine.run(tradeContext);
+            const results = await this.engine.run(context);
 
             const blockingEvents = results.events.filter(e => e.type === 'BLOCK_TRADE');
             if (blockingEvents.length > 0) {

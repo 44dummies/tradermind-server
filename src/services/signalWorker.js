@@ -7,6 +7,7 @@ const config = require('../config/strategyConfig');
 const { supabase } = require('../db/supabase');
 const { logSignal } = require('../routes/debug');
 const { captureError, trackEvent } = require('../utils/alert');
+const perfMonitor = require('../utils/performance');
 
 // Event-driven architecture imports
 const { messageQueue, TOPICS } = require('../queue');
@@ -30,6 +31,8 @@ class SignalWorker {
     this.latestStats = {}; // market -> stats object
     this.lastSignal = null;
     this.io = null; // Socket.IO instance
+    this.lastTickTime = new Map(); // market -> timestamp
+    this.throttleMs = 200; // Throttle to prevent CPU overload
   }
 
   getLatestStats() {
@@ -40,12 +43,29 @@ class SignalWorker {
     this.io = io;
   }
 
+  updateSessionStatus(status) {
+    this.sessionStatus = status;
+    console.log(`[SignalWorker] Session status updated to: ${status}`);
+  }
+
   async start(sessionId, markets = config.markets, apiToken = process.env.DERIV_API_TOKEN, sessionTable = 'trading_sessions_v2') {
     this.sessionId = sessionId;
     this.sessionTable = sessionTable;
+    this.sessionStatus = 'active'; // Assume active when started
+
+    console.log(`[SignalWorker] Started for session ${sessionId} (Status: ${this.sessionStatus})`);
 
     // Initialize quant engine memory for this session
     await quantEngine.initSession(sessionId);
+
+    // Fetch initial session details for min_balance (Drawdown guard)
+    const { data: sessionData } = await supabase
+      .from(this.sessionTable)
+      .select('min_balance')
+      .eq('id', sessionId)
+      .single();
+
+    this.minBalance = sessionData?.min_balance || 0;
 
     // Ensure connection
     if (!tickCollector.isConnected()) {
@@ -83,25 +103,9 @@ class SignalWorker {
   }
 
   async tick(markets) {
-    // Ensure session is still running
-    const { data: session, error } = await supabase
-      .from(this.sessionTable || 'trading_sessions_v2')
-      .select('*')
-      .eq('id', this.sessionId)
-      .single();
-
-    if (error) {
-      console.error('[SignalWorker]  Session query error:', error.message);
-      return;
-    }
-
-    if (!session) {
-      console.error('[SignalWorker]  Session not found:', this.sessionId);
-      return;
-    }
-
-    if (session.status !== 'running' && session.status !== 'active') {
-      console.log(`[SignalWorker]  Session status is "${session.status}", not running/active. Skipping.`);
+    // Check local session state instead of polling DB
+    if (this.sessionStatus !== 'running' && this.sessionStatus !== 'active') {
+      // console.log(`[SignalWorker]  Session status is "${this.sessionStatus}", not running/active. Skipping.`);
       return;
     }
 
@@ -114,7 +118,7 @@ class SignalWorker {
         .neq('profit_loss', null)
         .limit(1);
       const netPnl = (pnlAgg && pnlAgg.reduce) ? pnlAgg.reduce((a, b) => a + (b.profit_loss || 0), 0) : 0;
-      const balanceRef = session.min_balance || 1;
+      const balanceRef = this.minBalance || 1;
       const ddPct = balanceRef ? (Math.abs(netPnl) / balanceRef) * 100 : 0;
       if (netPnl < 0 && ddPct >= config.drawdownGuard.maxDrawdownPct) {
         tradeExecutor.paused = true;
@@ -125,76 +129,91 @@ class SignalWorker {
 
     let best = null;
     for (const market of markets) {
-      const ticks = tickCollector.getTickHistory(market);
-      const digits = tickCollector.getDigitHistory(market);
+      // Throttling
+      const now = Date.now();
+      const last = this.lastTickTime.get(market) || 0;
+      if (now - last < this.throttleMs) continue;
+      this.lastTickTime.set(market, now);
 
-      // Log tick collection status
-      console.log(`[SignalWorker]  ${market}: ${ticks.length} ticks, ${digits.length} digits`);
+      try {
+        const perfId = `tick_${market}_${now}`;
+        perfMonitor.start(perfId);
 
-      // Emit tick update to market room
-      if (this.io && ticks.length > 0) {
-        const latestTick = ticks[ticks.length - 1];
-        this.io.to(`market_${market}`).emit('tick_update', {
+        const ticks = tickCollector.getTickHistory(market);
+        const digits = tickCollector.getDigitHistory(market);
+
+        // Log tick collection status
+        // console.log(`[SignalWorker]  ${market}: ${ticks.length} ticks, ${digits.length} digits`);
+
+        // Emit tick update to market room
+        if (this.io && ticks.length > 0) {
+          const latestTick = ticks[ticks.length - 1];
+          this.io.to(`market_${market}`).emit('tick_update', {
+            market,
+            tick: latestTick.quote,
+            time: latestTick.epoch
+          });
+        }
+
+        // Use Quant Engine for signal generation (with memory, regime, Bayesian)
+        const signal = quantEngine.generateQuantSignal({
           market,
-          tick: latestTick.quote,
-          time: latestTick.epoch
+          tickHistory: ticks,
+          digitHistory: digits
         });
-      }
 
-      // Use Quant Engine for signal generation (with memory, regime, Bayesian)
-      const signal = quantEngine.generateQuantSignal({
-        market,
-        tickHistory: ticks,
-        digitHistory: digits
-      });
+        // Emit signal analysis update to market room
+        if (this.io) {
+          this.io.to(`market_${market}`).emit('signal_update', {
+            market,
+            ...signal,
+            timestamp: new Date().toISOString()
+          });
+        }
 
-      // Emit signal analysis update to market room
-      if (this.io) {
-        this.io.to(`market_${market}`).emit('signal_update', {
-          market,
-          ...signal,
-          timestamp: new Date().toISOString()
+        // Store stats for analytics
+        this.latestStats[market] = {
+          timestamp: new Date(),
+          parts: signal.parts,
+          freq: signal.freq,
+          confidence: signal.confidence,
+          side: signal.side,
+          digit: signal.digit
+        };
+
+        // Log to debug buffer for /debug/signals endpoint
+        logSignal({
+          symbol: market,
+          price: ticks.length > 0 ? ticks[ticks.length - 1].quote : 0,
+          indicators: signal.parts || {},
+          conditionsPassed: signal.shouldTrade ? ['CONFIDENCE_OK'] : [],
+          conditionsFailed: signal.shouldTrade ? [] : ['CONFIDENCE_LOW'],
+          signalGenerated: signal.shouldTrade,
+          signalType: signal.side?.toLowerCase() === 'over' ? 'call' : 'put',
+          confidence: signal.confidence || 0
         });
-      }
 
-      // Store stats for analytics
-      this.latestStats[market] = {
-        timestamp: new Date(),
-        parts: signal.parts,
-        freq: signal.freq,
-        confidence: signal.confidence,
-        side: signal.side,
-        digit: signal.digit
-      };
+        // Log signal result
+        if (signal.shouldTrade) {
+          console.log(`[SignalWorker]  Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
+        }
 
-      // Log to debug buffer for /debug/signals endpoint
-      logSignal({
-        symbol: market,
-        price: ticks.length > 0 ? ticks[ticks.length - 1].quote : 0,
-        indicators: signal.parts || {},
-        conditionsPassed: signal.shouldTrade ? ['CONFIDENCE_OK'] : [],
-        conditionsFailed: signal.shouldTrade ? [] : ['CONFIDENCE_LOW'],
-        signalGenerated: signal.shouldTrade,
-        signalType: signal.side?.toLowerCase() === 'over' ? 'call' : 'put',
-        confidence: signal.confidence || 0
-      });
+        const duration = perfMonitor.end(perfId);
+        perfMonitor.logLatency(`Tick processing for ${market}`, duration, 1000); // 1000ms threshold
 
-      // Log signal result
-      if (signal.shouldTrade) {
-        console.log(`[SignalWorker]  Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
-      } else {
-        console.log(`[SignalWorker]  No trade signal: ${signal.reason || 'confidence too low'}`);
-      }
+        if (!signal.shouldTrade) continue;
 
-      if (!signal.shouldTrade) continue;
+        if (!best || signal.confidence > best.confidence) {
+          best = signal;
+        }
 
-      if (!best || signal.confidence > best.confidence) {
-        best = signal;
+      } catch (err) {
+        console.error(`[SignalWorker] Error processing tick for ${market}:`, err);
       }
     }
 
     if (!best) {
-      console.log('[SignalWorker]  No qualifying signal this tick');
+      // console.log('[SignalWorker]  No qualifying signal this tick');
       return;
     }
 
@@ -208,6 +227,7 @@ class SignalWorker {
       const freshTicks = tickCollector.getTickHistory(best.market);
       const freshDigits = tickCollector.getDigitHistory(best.market);
       const revalidated = strategyEngine.generateSignal({ market: best.market, tickHistory: freshTicks, digitHistory: freshDigits });
+      revalidated.generatedAt = new Date();
 
       if (!revalidated.shouldTrade) {
         console.log('[SignalWorker] Smart delay vetoed trade for', best.market);
@@ -244,6 +264,8 @@ class SignalWorker {
         const riskContext = {
           dailyLoss,
           currentExposure: tradeExecutor.activeConnections?.size || 0,
+          consecutiveLosses: tradeExecutor.consecutiveLosses || 0,
+          maxConsecutiveLossesLimit: config.risk?.maxConsecutiveLosses || 5, // Pass dynamic limit if available
           signal: {
             type: revalidated.side,
             symbol: revalidated.market,
@@ -293,7 +315,7 @@ class SignalWorker {
           trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
         }
       } catch (error) {
-        console.error('[SignalWorker] Trade execution error:', error);
+        console.error('[SignalWorker] Trade execution execution error:', error);
         captureError(error, { market: revalidated.market, sessionId: this.sessionId, phase: 'execution' });
       }
     }, config.smartDelayMs || 1500);

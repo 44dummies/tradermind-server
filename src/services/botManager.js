@@ -29,41 +29,51 @@ class BotManager {
 
     console.log('[BotManager] Socket.IO and QuantMemory initialized');
 
-    // Attempt to resume any active session from DB
-    this.resumeActiveSession();
+    // Attempt to recover any active session from DB
+    this.recoverActiveSessions();
   }
 
-  async resumeActiveSession() {
+  async recoverActiveSessions() {
     try {
-      console.log('[BotManager]  Checking for active sessions to resume...');
+      console.log('[BotManager] 🔄 Checking for active sessions to recover...');
 
       // Check for 'active' sessions in v2 table
-      const { data: v2Session } = await supabase
+      const { data: v2Session, error: v2Error } = await supabase
         .from('trading_sessions_v2')
         .select('*')
         .eq('status', 'active')
-        .single();
+        .maybeSingle();
+
+      if (v2Error) {
+        console.error('[BotManager] Error checking V2 sessions:', v2Error.message);
+      }
 
       if (v2Session) {
-        console.log(`[BotManager]  Found active V2 session: ${v2Session.id}. Resuming...`);
-        return this.startBot(v2Session.id);
+        console.log(`[BotManager] 🔄 RECOVERING Active V2 session: ${v2Session.id}`);
+        await this.startBot(v2Session.id);
+        return;
       }
 
       // Check for 'active' sessions in v1 table
-      const { data: v1Session } = await supabase
+      const { data: v1Session, error: v1Error } = await supabase
         .from('trading_sessions')
         .select('*')
         .eq('status', 'active')
-        .single();
+        .maybeSingle();
 
-      if (v1Session) {
-        console.log(`[BotManager]  Found active V1 session: ${v1Session.id}. Resuming...`);
-        return this.startBot(v1Session.id);
+      if (v1Error) {
+        console.error('[BotManager] Error checking V1 sessions:', v1Error.message);
       }
 
-      console.log('[BotManager] No active sessions found.');
+      if (v1Session) {
+        console.log(`[BotManager] 🔄 RECOVERING Active V1 session: ${v1Session.id}`);
+        await this.startBot(v1Session.id);
+        return;
+      }
+
+      console.log('[BotManager] No active sessions found to recover.');
     } catch (error) {
-      console.error('[BotManager]  Failed to auto-resume session:', error);
+      console.error('[BotManager] ❌ Failed to recover session:', error);
     }
   }
 
@@ -146,7 +156,11 @@ class BotManager {
     tradeExecutor.consecutiveLosses = 0;
     tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
 
-    // Start signal worker (pass sessionTable so worker knows where to check status)
+    tradeExecutor.consecutiveLosses = 0;
+    tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
+
+    // Start signal worker (pass sessionTable so worker knows where to check status if needed)
+    signalWorker.updateSessionStatus('active');
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
     // Session Auto-Stop Timer
@@ -198,6 +212,7 @@ class BotManager {
     const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Stop components
+    signalWorker.updateSessionStatus('completed');
     signalWorker.stop();
     tickCollector.unsubscribeAll();  // Clean up subscriptions
     tradeExecutor.disconnectAll();
@@ -235,6 +250,7 @@ class BotManager {
     if (!this.state.isRunning) return;
     this.state.isPaused = true;
     tradeExecutor.paused = true;
+    signalWorker.updateSessionStatus('paused');
 
     const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
@@ -252,6 +268,7 @@ class BotManager {
     if (!this.state.isRunning) return;
     this.state.isPaused = false;
     tradeExecutor.paused = false;
+    signalWorker.updateSessionStatus('active');
 
     const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
@@ -270,6 +287,7 @@ class BotManager {
     const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
 
     // Immediately stop all components
+    signalWorker.updateSessionStatus('cancelled');
     signalWorker.stop();
     tradeExecutor.disconnectAll();
     tradeExecutor.paused = true;

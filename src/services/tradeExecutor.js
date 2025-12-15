@@ -6,6 +6,7 @@ const { decryptToken } = require('../utils/encryption');
 const { messageQueue, TOPICS } = require('../queue');
 const { createTradeClosedEvent } = require('../trading-engine/eventContract');
 const quantEngine = require('./quantEngine');
+const perfMonitor = require('../utils/performance');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -59,6 +60,13 @@ class TradeExecutor {
 
       console.log(`[TradeExecutor]  Executing multi-account trade for session ${sessionId}`);
       console.log(`[TradeExecutor] Signal: ${signal.side} ${signal.digit} (${(signal.confidence * 100).toFixed(1)}%)`);
+
+      // Calculate and log execution latency
+      if (signal.generatedAt) {
+        const latency = new Date() - new Date(signal.generatedAt);
+        console.log(`[TradeExecutor] ⏱ Execution Latency: ${latency}ms`);
+      }
+
       console.log(`[TradeExecutor] Looking up session in table: ${sessionTable}`);
 
       // Get session details - query without status filter first for debugging
@@ -339,6 +347,9 @@ class TradeExecutor {
    * Execute single trade for one participant
    */
   async executeSingleTrade(participant, profile, apiToken, signal, session) {
+    const perfId = `trade_exec_${profile.deriv_id}_${signal.market}_${Date.now()}`;
+    perfMonitor.start(perfId);
+
     try {
       // Connect to Deriv WebSocket using the participant's token
       const ws = await this.getConnection(profile.deriv_id, apiToken);
@@ -370,6 +381,9 @@ class TradeExecutor {
 
       const contract = buyResponse.buy;
 
+      const duration = perfMonitor.end(perfId);
+      perfMonitor.logLatency(`Trade execution for ${profile.deriv_id}`, duration, 2000);
+
       console.log(`[TradeExecutor]  Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
 
       // Emit trade start event
@@ -400,7 +414,8 @@ class TradeExecutor {
         stake,
         takeProfit: participant.effectiveTp || participant.tp,
         stopLoss: participant.effectiveSl || participant.sl,
-        timestamp: new Date()
+        timestamp: new Date(),
+        executionDuration: duration
       };
 
     } catch (error) {
@@ -446,27 +461,51 @@ class TradeExecutor {
               // Check TP
               if (currentPL >= invitation.take_profit) {
                 console.log(`[TradeExecutor]  TP HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                console.log(`[TradeExecutor] 🎯 Entry: ${contract.entry_spot}, Exit: ${contract.current_spot || contract.exit_tick}`);
                 // Remove listener immediately to prevent double firing
                 ws.removeListener('message', updateHandler);
-                await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session);
+
+                const auditData = {
+                  entrySpot: contract.entry_spot,
+                  exitSpot: contract.current_spot || contract.exit_tick,
+                  durationMs: new Date() - new Date(tradeResult.timestamp)
+                };
+
+                await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session, auditData);
                 return;
               }
 
               // Check SL
               if (currentPL <= -Math.abs(invitation.stop_loss)) {
                 console.log(`[TradeExecutor]  SL HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                console.log(`[TradeExecutor] 🎯 Entry: ${contract.entry_spot}, Exit: ${contract.current_spot || contract.exit_tick}`);
                 ws.removeListener('message', updateHandler);
-                await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session);
+
+                const auditData = {
+                  entrySpot: contract.entry_spot,
+                  exitSpot: contract.current_spot || contract.exit_tick,
+                  durationMs: new Date() - new Date(tradeResult.timestamp)
+                };
+
+                await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session, auditData);
                 return;
               }
             } else {
               // Contract closed externally or finished naturally
               if (contract.is_sold) {
                 console.log(`[TradeExecutor] Contract ${tradeResult.contractId} closed naturally. Profit: ${contract.profit}`);
+                console.log(`[TradeExecutor] 🎯 Entry: ${contract.entry_spot}, Exit: ${contract.exit_tick || contract.current_spot}`);
                 ws.removeListener('message', updateHandler);
                 const finalPL = contract.profit || 0;
                 const status = finalPL > 0 ? 'win' : 'loss';
-                await this.closeTrade(tradeResult, status, finalPL, invitation, session);
+
+                const auditData = {
+                  entrySpot: contract.entry_spot,
+                  exitSpot: contract.exit_tick || contract.current_spot,
+                  durationMs: new Date() - new Date(tradeResult.timestamp)
+                };
+
+                await this.closeTrade(tradeResult, status, finalPL, invitation, session, auditData);
               }
             }
           }
@@ -504,7 +543,7 @@ class TradeExecutor {
   /**
    * Close trade and remove account from session
    */
-  async closeTrade(tradeResult, reason, finalPL, invitation, session) {
+  async closeTrade(tradeResult, reason, finalPL, invitation, session, auditData = {}) {
     try {
       const monitorId = `${tradeResult.contractId}_${tradeResult.accountId}`;
 
@@ -550,7 +589,10 @@ class TradeExecutor {
         .update({
           status: reason,
           profit_loss: finalPL,
-          closed_at: new Date().toISOString()
+          closed_at: new Date().toISOString(),
+          entry_spot: auditData.entrySpot,
+          exit_spot: auditData.exitSpot,
+          duration_ms: auditData.durationMs
         })
         .eq('contract_id', tradeResult.contractId);
 
@@ -602,6 +644,8 @@ class TradeExecutor {
       const losses = tradeHistory?.filter(t => t.result === 'loss').length || 0;
       const winRate = totalTrades > 0 ? ((wins / totalTrades) * 100).toFixed(1) : '0';
 
+      const durationSec = auditData.durationMs ? (auditData.durationMs / 1000).toFixed(1) : '0.0';
+
       await this.sendNotification(tradeResult.userId, {
         type: 'session_report',
         message: reportMessage,
@@ -618,7 +662,8 @@ class TradeExecutor {
           takeProfit: invitation.tp,
           stopLoss: invitation.sl,
           sessionMode: session.mode || 'real',
-          closedAt: new Date().toISOString()
+          closedAt: new Date().toISOString(),
+          duration: `${durationSec}s`
         }
       });
 
@@ -637,7 +682,30 @@ class TradeExecutor {
         this.consecutiveLosses = 0;
       }
 
-      console.log(`[TradeExecutor]  Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}`);
+      console.log(`[TradeExecutor]  Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}, Duration: ${durationSec}s`);
+
+      // Emit Admin Audit Event
+      if (this.io) {
+        // Calculate latency from signal if available
+        let latency = 0;
+        if (tradeResult.signal?.generatedAt) {
+          latency = new Date(tradeResult.timestamp).getTime() - new Date(tradeResult.signal.generatedAt).getTime();
+        }
+
+        this.io.to('admin').emit('trade_audit', {
+          contractId: tradeResult.contractId,
+          sessionId: session.id,
+          userId: tradeResult.userId,
+          entrySpot: auditData.entrySpot,
+          exitSpot: auditData.exitSpot,
+          durationMs: auditData.durationMs,
+          executionLatencyMs: latency,
+          result: finalPL > 0 ? 'win' : 'loss',
+          pnl: finalPL,
+          reason,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       // === QUANT ENGINE LEARNING: Record trade outcome ===
       try {
@@ -958,6 +1026,11 @@ class TradeExecutor {
     try {
       if (!tradeResult.success) return;
 
+      let executionLatencyMs = null;
+      if (tradeResult.signal?.generatedAt) {
+        executionLatencyMs = new Date(tradeResult.timestamp) - new Date(tradeResult.signal.generatedAt);
+      }
+
       await supabase
         .from('trades')
         .insert({
@@ -971,7 +1044,8 @@ class TradeExecutor {
           signal: tradeResult.signal,
           confidence: tradeResult.signal?.confidence,
           status: 'open',
-          created_at: tradeResult.timestamp.toISOString()
+          created_at: tradeResult.timestamp.toISOString(),
+          execution_latency_ms: executionLatencyMs
         });
     } catch (error) {
       console.error('[TradeExecutor] Log trade error:', error);

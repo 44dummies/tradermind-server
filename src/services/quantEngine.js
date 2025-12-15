@@ -20,6 +20,7 @@ const {
 
 const quantMemory = require('./quantMemory');
 const quantConfig = require('../config/quantConfig');
+const perfMonitor = require('../utils/performance');
 
 // ==================== MARKET REGIME CLASSIFIER ====================
 
@@ -138,6 +139,8 @@ function buildMarkovRow(digitHistory, currentDigit, depth = 50) {
  * Combines all models with regime awareness and learning weights
  */
 function generateQuantSignal({ market, tickHistory, digitHistory }) {
+    perfMonitor.start('quant_signal_gen');
+
     // Load memory (sync - uses cache or defaults)
     const memory = quantMemory.getMemorySync();
 
@@ -297,6 +300,9 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
         meetsFactors
     };
 
+    const duration = perfMonitor.end('quant_signal_gen');
+    perfMonitor.logLatency('QuantEngine.generateSignal', duration, 20); // 20ms threshold
+
     return {
         shouldTrade,
         side: finalSide,
@@ -306,6 +312,7 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
         reason: factors.join(' '),
         indicatorsUsed,
         market,
+        latency: duration,
         decisionLog,
 
         // Detailed analysis for logging
@@ -348,9 +355,15 @@ function recordTradeOutcome(tradeData) {
  * Initialize session in memory
  */
 async function initSession(sessionId) {
+    console.log(`[QuantEngine] Initializing session: ${sessionId}`);
+
+    // Force reload from DB to ensure fresh state
     const memory = await quantMemory.loadMemory();
+
+    // Initialize session structure
     await quantMemory.startSession(memory, sessionId);
-    console.log(`[QuantEngine] Session initialized: ${sessionId}`);
+
+    console.log(`[QuantEngine] Session initialized: ${sessionId}, Memory Version: ${memory.version}`);
     return memory;
 }
 
