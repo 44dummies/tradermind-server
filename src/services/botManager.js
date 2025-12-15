@@ -120,8 +120,8 @@ class BotManager {
       throw new Error('Session not found');
     }
 
-    // Both V1 and V2 tables use 'active' status based on database constraint
-    const statusToSet = 'active';
+    // V2 uses 'running', V1 uses 'active' due to DB constraints
+    const statusToSet = sessionTable === 'trading_sessions_v2' ? 'running' : 'active';
 
     // Update session status
     console.log(`[BotManager] Updating session ${sessionId} status to '${statusToSet}' in ${sessionTable}...`);
@@ -161,11 +161,8 @@ class BotManager {
     tradeExecutor.consecutiveLosses = 0;
     tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
 
-    tradeExecutor.consecutiveLosses = 0;
-    tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
-
     // Start signal worker (pass sessionTable so worker knows where to check status if needed)
-    signalWorker.updateSessionStatus('active');
+    signalWorker.updateSessionStatus(statusToSet);
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
     // Start Real-time Account Monitoring (Balances)
@@ -274,17 +271,18 @@ class BotManager {
 
   async resumeBot() {
     if (!this.state.isRunning) return;
+    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
+    const statusToSet = sessionTable === 'trading_sessions_v2' ? 'running' : 'active';
+
     this.state.isPaused = false;
     tradeExecutor.paused = false;
-    signalWorker.updateSessionStatus('active');
-
-    const sessionTable = this.state.activeSessionTable || 'trading_sessions_v2';
+    signalWorker.updateSessionStatus(statusToSet);
 
     // Update session status
     if (this.state.activeSessionId) {
       await supabase
         .from(sessionTable)
-        .update({ status: 'active' })
+        .update({ status: statusToSet })
         .eq('id', this.state.activeSessionId);
     }
     return this.getState();
