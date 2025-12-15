@@ -1,6 +1,9 @@
 // Default strategy configuration
 module.exports = {
-  markets: ['R_100'],
+  markets: [
+    'R_100', 'R_75', 'R_50', 'R_25', 'R_10',
+    '1HZ100V', '1HZ75V', '1HZ50V', '1HZ25V', '1HZ10V'
+  ],
   tickWindow: 50, // number of recent ticks to analyze
   digitFrequencyDepth: 20,
   minConfidence: 0.58,

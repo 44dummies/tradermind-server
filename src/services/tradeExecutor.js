@@ -408,7 +408,7 @@ class TradeExecutor {
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: session.volatility_index || (session.markets && session.markets[0]) || 'R_100',
+          symbol: signal.market || session.volatility_index || (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
           currency: profile.currency || 'USD',

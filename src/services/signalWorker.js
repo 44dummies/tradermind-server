@@ -80,9 +80,9 @@ class SignalWorker {
       await this.sleep(200); // Small delay between subscriptions
     }
 
-    // Run every 2 seconds for fast execution
-    this.interval = setInterval(() => this.tick(markets), 2000);
-    console.log('[SignalWorker] 🧠 Quant Engine started (2s interval, with learning)');
+    // Run every 1 second for precise 1HZ market execution
+    this.interval = setInterval(() => this.tick(markets), 1000);
+    console.log('[SignalWorker] 🧠 Quant Engine started (1s interval, with learning)');
   }
 
   sleep(ms) {
