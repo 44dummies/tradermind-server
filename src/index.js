@@ -50,6 +50,7 @@ const { startCronJobs } = require('./cron');
 const schedulerService = require('./services/schedulerService');
 
 const app = express();
+app.set('trust proxy', 1); // Trust first proxy (Railway/Nginx)
 const server = http.createServer(app);
 
 const defaultOrigins = [
@@ -239,7 +240,11 @@ async function startServer() {
     schedulerService.start();
 
     const botManager = require('./services/botManager');
-    await botManager.initialize(io);
+    try {
+      await botManager.initialize(io);
+    } catch (botErr) {
+      console.error('BotManager initialization failed (non-fatal):', botErr);
+    }
 
     // Initialize Redis message queue
     try {

@@ -259,6 +259,13 @@ router.post('/refresh', async (req, res) => {
     // Get refresh token from cookie instead of body
     const refreshToken = req.cookies?.refreshToken;
 
+    // DEBUG LOGGING
+    console.log('[Auth] Refresh attempted. Cookie present:', !!refreshToken);
+    if (!refreshToken) {
+      console.log('[Auth] Cookies received:', Object.keys(req.cookies || {}));
+      console.log('[Auth] Headers origin:', req.headers.origin);
+    }
+
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });
     }

@@ -25,9 +25,14 @@ class BotManager {
     tradeExecutor.setSocket(io);
 
     // Preload quant memory from Supabase
-    await quantMemory.initializeMemory();
+    try {
+      await quantMemory.initializeMemory();
+      console.log('[BotManager] QuantMemory initialized');
+    } catch (memErr) {
+      console.error('[BotManager] QuantMemory init failed (using defaults):', memErr.message);
+    }
 
-    console.log('[BotManager] Socket.IO and QuantMemory initialized');
+    console.log('[BotManager] Socket.IO initialized');
 
     // Attempt to recover any active session from DB
     this.recoverActiveSessions();
