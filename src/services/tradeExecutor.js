@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const strategyConfig = require('../config/strategyConfig');
 const { decryptToken } = require('../utils/encryption');
 const { messageQueue, TOPICS } = require('../queue');
-const { createTradeClosedEvent } = require('../trading-engine/eventContract');
+const { createTradeClosedEvent, createTradeExecutedEvent } = require('../trading-engine/eventContract');
 const quantEngine = require('./quantEngine');
 const perfMonitor = require('../utils/performance');
 
@@ -445,6 +445,27 @@ class TradeExecutor {
           payout: contract.payout,
           timestamp: new Date().toISOString()
         });
+      }
+
+      // Event-Driven: Publish to Redis for SSE
+      if (messageQueue.isReady()) {
+        const executedEvent = createTradeExecutedEvent(
+          {
+            contract_id: contract.contract_id,
+            symbol: session.markets ? session.markets[0] : 'R_100',
+            direction: signal.side,
+            stake: stake,
+            entry_price: contract.buy_price,
+            start_time: contract.start_time || Math.floor(Date.now() / 1000),
+            participant_id: participant.id
+          },
+          {
+            sessionId: session.id,
+            userId: participant.user_id,
+            correlationId: `trade-${contract.contract_id}`
+          }
+        );
+        messageQueue.publish(TOPICS.TRADE_EXECUTED, executedEvent);
       }
 
       return {
