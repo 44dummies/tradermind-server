@@ -131,19 +131,19 @@ async function createSession(adminId, sessionData) {
       status: 'pending',
       markets: markets,
       // volatility_index: market, // specific to V1, removed for V2
-      contract_type: sessionData.contract_type || sessionData.contractType || 'DIGITEVEN',
-      mode: sessionData.mode || 'demo',
+      // contract_type: sessionData.contract_type || 'DIGITEVEN', // Removed for V2
+      // mode: sessionData.mode || 'demo', // Removed for V2
       strategy: sessionData.strategy_name || sessionData.strategy || 'DFPM',
       staking_mode: sessionData.staking_mode || sessionData.stakingMode || 'fixed',
       base_stake: sessionData.initial_stake || sessionData.baseStake || 0.35,
-      // martingale_multiplier: sessionData.martingale_multiplier || 2.0, // V2 doesn't use this column usually? keeping just in case or omitting
+      // martingale_multiplier: sessionData.martingale_multiplier || 2.0, // V2 doesn't use this column usually
       min_balance: sessionData.min_balance || sessionData.minimum_balance || 5.0,
       default_tp: sessionData.default_tp || sessionData.targetProfit || sessionData.profit_threshold || 10.0,
       default_sl: sessionData.default_sl || sessionData.stopLoss || sessionData.loss_threshold || 5.0,
       trade_count: 0,
       win_count: 0,
       loss_count: 0,
-      current_pnl: 0, // V2 uses current_pnl instead of net_pnl
+      current_pnl: 0,
       created_at: new Date().toISOString()
     })
     .select()
