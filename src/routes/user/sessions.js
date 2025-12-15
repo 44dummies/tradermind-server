@@ -131,7 +131,23 @@ router.post('/:sessionId/accept', async (req, res) => {
  */
 async function handleAcceptSession(req, res, sessionId) {
     try {
-        const userId = req.user.id;
+        // Resolve user UUID from profile if needed (in case req.user.id is the deriv ID)
+        let userId = req.user.id;
+
+        // Check if userId is a UVUID or CR ID
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+            const { data: userProfile } = await supabase
+                .from('user_profiles')
+                .select('id')
+                .eq('deriv_id', req.user.derivId || req.user.username)
+                .single();
+
+            if (userProfile) {
+                userId = userProfile.id;
+            } else {
+                throw new Error('User profile not found for ID resolution');
+            }
+        }
         const { tp, sl } = req.body;
 
         if (!sessionId) {
