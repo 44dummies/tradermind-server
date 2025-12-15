@@ -328,7 +328,7 @@ async function acceptInvitation(invitationId, accountId) {
 
   const { data, error } = await supabase
     .from('session_invitations')
-    .update({ status: 'accepted', accepted_at: new Date().toISOString() })
+    .update({ status: 'accepted', responded_at: new Date().toISOString() })
     .eq('id', invitationId)
     .select()
     .single();
@@ -391,7 +391,7 @@ async function joinSession(sessionId, accountId) {
     // If pending or declined, update to accepted
     const { data, error } = await supabase
       .from('session_invitations')
-      .update({ status: 'accepted', accepted_at: new Date().toISOString() })
+      .update({ status: 'accepted', responded_at: new Date().toISOString() })
       .eq('id', existing.id)
       .select()
       .single();
@@ -426,7 +426,7 @@ async function joinSession(sessionId, accountId) {
       session_id: sessionId,
       account_id: accountId,
       status: 'accepted',
-      accepted_at: new Date().toISOString(),
+      responded_at: new Date().toISOString(),
       created_at: new Date().toISOString()
     })
     .select()
