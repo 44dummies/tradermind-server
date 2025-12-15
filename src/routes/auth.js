@@ -14,7 +14,8 @@ const COOKIE_OPTIONS = {
   secure: true, // Always secure for None
   sameSite: 'none', // Allow cross-site usage
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  path: '/'
+  path: '/',
+  partitioned: true // CHIPS support for cross-site cookies
 };
 
 
