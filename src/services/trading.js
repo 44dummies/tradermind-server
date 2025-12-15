@@ -191,6 +191,18 @@ async function getSessions(adminId, options = {}) {
       .select('*', { count: 'exact', head: true })
       .eq('session_id', session.id);
 
+    let finalCount = count || 0;
+
+    // Fallback for legacy sessions: check invitations if participants table is empty
+    if (finalCount === 0) {
+      const { count: invCount } = await supabase
+        .from('session_invitations')
+        .select('*', { count: 'exact', head: true })
+        .eq('session_id', session.id)
+        .eq('status', 'accepted');
+      finalCount = invCount || 0;
+    }
+
     return {
       ...session,
       // Normalize field names for V1/V2 frontend compatibility
@@ -198,7 +210,7 @@ async function getSessions(adminId, options = {}) {
       session_name: session.session_name || session.name,
       // Convert volatility_index to markets array for frontend
       markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100']),
-      participants_count: count || 0
+      participants_count: finalCount
     };
   }));
 
