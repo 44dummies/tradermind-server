@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const botManager = require('./botManager');
 const { WS_URL } = require('../config/deriv');
+const strategyConfig = require('../config/strategyConfig');
 
 // ==================== Constants ====================
 
@@ -118,7 +119,7 @@ async function verifyDerivToken(token) {
 async function createSession(adminId, sessionData) {
   // Handle market from simplified form (can be in markets array or volatility_index)
   // V2 uses 'markets' array
-  const market = sessionData.markets?.[0] || sessionData.volatility_index || sessionData.volatilityIndex || 'R_100';
+  const market = sessionData.markets?.[0] || sessionData.volatility_index || sessionData.volatilityIndex || strategyConfig.markets[0];
   const markets = sessionData.markets || [market];
 
   const { data, error } = await supabase
@@ -226,7 +227,7 @@ async function getSessions(adminId, options = {}) {
       session_name: session.session_name || session.name,
       type: session.type || session.session_type, // Normalize type
       // Convert volatility_index to markets array for frontend
-      markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100']),
+      markets: session.markets || (session.volatility_index ? [session.volatility_index] : [strategyConfig.markets[0]]),
       participants_count: finalCount
     };
   }));
