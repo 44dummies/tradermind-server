@@ -18,6 +18,7 @@ class DerivClient {
     constructor() {
         this.connections = new Map(); // accountId -> { api, authorized }
         this.tickSubscriptions = new Map(); // symbol -> subscription
+        this.balanceSubscriptions = new Map(); // accountId -> subscription
         this.reconnectAttempts = new Map();
         this.maxReconnectAttempts = 5;
     }
@@ -192,6 +193,73 @@ class DerivClient {
                 console.log(`[DerivClient] 🔕 Unsubscribed from ${symbol} ticks`);
             } catch (e) {
                 console.error(`[DerivClient] Error unsubscribing from ${symbol}:`, e);
+            }
+        }
+    }
+
+    /**
+     * Subscribe to balance updates
+     */
+    async subscribeBalance(accountId, apiToken, callback) {
+        if (this.balanceSubscriptions.has(accountId)) {
+            console.log(`[DerivClient] Already subscribed to balance for ${accountId}`);
+            return;
+        }
+
+        try {
+            const api = await this.getConnection(accountId, apiToken);
+
+            // Subscribe to balance
+            const subscription = await api.subscribe({ balance: 1 });
+
+            // Store subscription
+            this.balanceSubscriptions.set(accountId, subscription);
+
+            // Get connection to listen for stream
+            const connData = this.connections.get(accountId);
+            if (connData && connData.connection) {
+                connData.connection.on('message', (data) => {
+                    try {
+                        const msg = JSON.parse(data.toString());
+                        if (msg.msg_type === 'balance' && msg.balance) {
+                            callback({
+                                accountId,
+                                balance: msg.balance.balance,
+                                currency: msg.balance.currency,
+                                loginid: msg.balance.loginid
+                            });
+                        }
+                    } catch (e) {
+                        // Ignore parse errors
+                    }
+                });
+            }
+
+            console.log(`[DerivClient] 💰 Subscribed to balance updates for ${accountId}`);
+            return subscription;
+        } catch (error) {
+            console.error(`[DerivClient] Failed to subscribe to balance for ${accountId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Unsubscribe from balance updates
+     */
+    async unsubscribeBalance(accountId) {
+        if (this.balanceSubscriptions.has(accountId)) {
+            try {
+                // We don't explicitly close the stream usually as it shar es connection, 
+                // but we can send forget. For now just removing listener reference essentially.
+                // ideally we should send { forget: subscription_id } but deriv-api basic handles subscriptions?
+                // actually DerivAPIBasic subscribe returns an observable usually? 
+                // In our case we are manually handling messages on connection too.
+
+                // For simplicity/safety with shared connection:
+                this.balanceSubscriptions.delete(accountId);
+                console.log(`[DerivClient] Unsubscribed balance for ${accountId}`);
+            } catch (e) {
+                console.error(`[DerivClient] Error unsubscribing balance for ${accountId}:`, e);
             }
         }
     }

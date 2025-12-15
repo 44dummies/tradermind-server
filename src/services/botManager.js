@@ -168,6 +168,9 @@ class BotManager {
     signalWorker.updateSessionStatus('active');
     await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
 
+    // Start Real-time Account Monitoring (Balances)
+    tradeExecutor.monitorSessionAccounts(sessionId, sessionTable);
+
     // Session Auto-Stop Timer
     if (session.duration_minutes && session.duration_minutes > 0) {
       const durationMs = session.duration_minutes * 60 * 1000;

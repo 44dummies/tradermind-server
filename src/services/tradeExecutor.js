@@ -605,6 +605,64 @@ class TradeExecutor {
 
   // NOTE: checkTPSL is no longer needed as we use the event handler above
 
+  /**
+   * Monitor all accounts in a session for balance updates
+   */
+  async monitorSessionAccounts(sessionId, sessionTable = 'trading_sessions_v2') {
+    try {
+      console.log(`[TradeExecutor] Initializing balance monitors for session ${sessionId}...`);
+
+      // Get accepted participants
+      const { data: participants, error } = await supabase
+        .from('session_participants')
+        .select('*, trading_accounts(deriv_token, deriv_account_id, account_type)')
+        .eq('session_id', sessionId)
+        .eq('status', 'active');
+
+      if (error) throw error;
+
+      if (!participants || participants.length === 0) {
+        console.log('[TradeExecutor] No participants to monitor.');
+        return;
+      }
+
+      const derivClient = require('./derivClient');
+
+      for (const p of participants) {
+        const account = p.trading_accounts; // Joined data
+        if (!account || !account.deriv_token) continue;
+
+        const accountId = account.deriv_account_id;
+        const token = account.deriv_token;
+
+        // Subscribe to balance
+        await derivClient.subscribeBalance(accountId, token, (balanceData) => {
+          // Emit update to frontend
+          if (this.io) {
+            this.io.emit('balance_update', {
+              accountId: balanceData.accountId,
+              balance: balanceData.balance,
+              currency: balanceData.currency,
+              accountType: account.account_type, // 'real' or 'demo'
+              timestamp: new Date().toISOString()
+            });
+
+            // Also emit specifically for admin stats aggregation
+            this.io.to('admin').emit('admin_balance_update', {
+              accountId: balanceData.accountId,
+              totalBalance: balanceData.balance,
+              accountType: account.account_type
+            });
+          }
+        });
+      }
+
+      console.log(`[TradeExecutor] Monitoring balances for ${participants.length} accounts`);
+    } catch (error) {
+      console.error('[TradeExecutor] Failed to monitor session accounts:', error);
+    }
+  }
+
 
   /**
    * Close trade and remove account from session
