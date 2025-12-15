@@ -339,9 +339,7 @@ router.get('/:id/participants', async (req, res) => {
                     id,
                     deriv_id,
                     username,
-                    fullname,
-                    email,
-                    is_admin
+                    fullname
                 )
             `)
             .eq('session_id', id)
