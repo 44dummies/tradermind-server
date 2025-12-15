@@ -287,6 +287,33 @@ async function acceptInvitation(invitationId, accountId) {
     .single();
 
   if (error) throw error;
+
+  // ADDED: Also add to session_participants
+  const { data: account } = await supabase
+    .from('trading_accounts')
+    .select('user_id')
+    .eq('deriv_account_id', invitation.account_id) // Assuming account_id in invitation is deriv_id? Or uuid?
+    .single();
+
+  // If invitation.account_id is UUID
+  let userId = null;
+  if (!account) {
+    const { data: acc } = await supabase.from('trading_accounts').select('user_id').eq('id', invitation.account_id).single();
+    if (acc) userId = acc.user_id;
+  } else {
+    userId = account.user_id;
+  }
+
+  if (userId) {
+    await supabase.from('session_participants').upsert({
+      session_id: invitation.session_id,
+      user_id: userId,
+      status: 'active',
+      joined_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+  }
+
   return data;
 }
 
@@ -323,6 +350,24 @@ async function joinSession(sessionId, accountId) {
       .single();
 
     if (error) throw error;
+
+    // ADDED: Ensure participant record exists
+    const { data: account } = await supabase
+      .from('trading_accounts')
+      .select('user_id')
+      .eq('id', accountId)
+      .single();
+
+    if (account) {
+      await supabase.from('session_participants').upsert({
+        session_id: sessionId,
+        user_id: account.user_id,
+        status: 'active',
+        joined_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'session_id, user_id' });
+    }
+
     return data;
   }
 
@@ -341,6 +386,24 @@ async function joinSession(sessionId, accountId) {
     .single();
 
   if (error) throw error;
+
+  // ADDED: Create participant record
+  const { data: account } = await supabase
+    .from('trading_accounts')
+    .select('user_id')
+    .eq('id', accountId)
+    .single();
+
+  if (account) {
+    await supabase.from('session_participants').upsert({
+      session_id: sessionId,
+      user_id: account.user_id,
+      status: 'active',
+      joined_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+  }
+
   return data;
 }
 

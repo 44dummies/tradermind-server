@@ -77,8 +77,8 @@ const io = new Server(server, {
   pingTimeout: 300000,
   pingInterval: 25000,
   connectTimeout: 60000,
-  transports: ['websocket', 'polling'],
-  allowUpgrades: true
+  transports: ['websocket'], // Force WebSocket only to avoid Railway 502s on polling
+  allowUpgrades: false, // No upgrades needed if we start with websocket
 });
 
 app.use(cors({
@@ -278,6 +278,7 @@ async function startServer() {
   }
 }
 
+// Start server unconditionally to ensure it runs on Railway/Process Managers
 startServer();
 
 module.exports = { app, server, io };
