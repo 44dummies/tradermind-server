@@ -88,18 +88,45 @@ class TradeExecutor {
 
       // Check if session is active in code (more flexible)
       if (session.status !== 'active') {
-        console.log(`[TradeExecutor] Session ${session.name} status is '${session.status}', not 'active'. Skipping.`);
+        console.log(`[TradeExecutor] Session ${session.name || session.session_name} status is '${session.status}', not 'active'. Skipping.`);
         return { executed: 0, total: 0, reason: `session_${session.status}` };
       }
 
-      console.log(`[TradeExecutor] Session: ${session.name} (Table: ${sessionTable}, Type: ${session.type || 'N/A'}, MinBal: $${session.min_balance || 0}, TP: $${session.default_tp}, SL: $${session.default_sl})`);
+      // Normalize session data (handle V1/V2 differences)
+      const sessionData = {
+        ...session,
+        name: session.name || session.session_name,
+        min_balance: session.min_balance || session.minimum_balance || 0,
+        default_tp: session.default_tp || session.profit_threshold,
+        default_sl: session.default_sl || session.loss_threshold,
+        markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100'])
+      };
+
+      console.log(`[TradeExecutor] Session: ${sessionData.name} (Table: ${sessionTable}, Type: ${sessionData.type || 'N/A'}, MinBal: $${sessionData.min_balance}, TP: $${sessionData.default_tp}, SL: $${sessionData.default_sl})`);
 
       // Get accepted accounts - join with trading_accounts to get deriv_token
-      const { data: invitations, error: invError } = await supabase
+      let { data: invitations, error: invError } = await supabase
         .from('session_participants')
         .select('*')
         .eq('session_id', sessionId)
         .eq('status', 'active');
+
+      // Fallback for V1 sessions (check session_invitations)
+      if (!invError && (!invitations || invitations.length === 0)) {
+        console.log('[TradeExecutor] No V2 participants found, checking V1 session_invitations...');
+        const { data: v1Invitations, error: v1Error } = await supabase
+          .from('session_invitations')
+          .select('*')
+          .eq('session_id', sessionId)
+          .eq('status', 'accepted');
+
+        if (!v1Error && v1Invitations && v1Invitations.length > 0) {
+          invitations = v1Invitations;
+          console.log(`[TradeExecutor] Found ${invitations.length} V1 participants`);
+        } else if (v1Error) {
+          console.error('[TradeExecutor] Error fetching V1 invitations:', v1Error);
+        }
+      }
 
       if (invError) {
         throw new Error(`Failed to fetch invitations: ${invError.message}`);
@@ -124,7 +151,7 @@ class TradeExecutor {
         let tradingAccount = null;
 
         // Get session mode (real or demo)
-        const sessionMode = session.mode || 'demo';
+        const sessionMode = sessionData.mode || 'demo';
         const accountType = sessionMode === 'real' ? 'real' : 'demo';
 
         // If no token in participant record (V1 flow), look up trading account matching session mode
@@ -194,16 +221,16 @@ class TradeExecutor {
         }
 
         // Calculate stake for this participant - use min_balance as stake (set by admin)
-        const baseStake = session.min_balance || session.minimum_balance || session.initial_stake || 0.35;
+        const baseStake = sessionData.min_balance || sessionData.initial_stake || 0.35;
 
         // Default TP/SL is 50% of stake if not set by user or session
         // Priority: 1) User's custom TP/SL, 2) Session defaults, 3) 50% of stake
         const defaultTPSL = baseStake * 0.5; // 50% of stake
-        const effectiveTp = participant.tp || session.default_tp || session.profit_threshold || Math.max(defaultTPSL, 0.35);
-        const effectiveSl = participant.sl || session.default_sl || session.loss_threshold || Math.max(defaultTPSL, 0.35);
+        const effectiveTp = participant.tp || sessionData.default_tp || Math.max(defaultTPSL, 0.35);
+        const effectiveSl = participant.sl || sessionData.default_sl || Math.max(defaultTPSL, 0.35);
 
         // V2: Check min_balance requirement
-        const minBalance = session.min_balance || session.minimum_balance || 0;
+        const minBalance = sessionData.min_balance || 0;
         if (participant.initial_balance && participant.initial_balance < minBalance) {
           invalidAccounts.push({
             userId: participant.user_id,
@@ -214,8 +241,8 @@ class TradeExecutor {
         }
 
         // Validate TP/SL meet session minimums (if session has minimums set)
-        const minTp = session.default_tp || session.profit_threshold || 0;
-        const minSl = session.default_sl || session.loss_threshold || 0;
+        const minTp = sessionData.default_tp || 0;
+        const minSl = sessionData.default_sl || 0;
         if (minTp > 0 && effectiveTp < minTp) {
           invalidAccounts.push({
             userId: participant.user_id,
@@ -267,7 +294,7 @@ class TradeExecutor {
             profile,
             apiToken,
             signal,
-            session
+            sessionData
           );
 
           tradeResults.push(tradeResult);
@@ -295,7 +322,7 @@ class TradeExecutor {
             });
 
             // Start TP/SL monitor
-            this.startTPSLMonitor(tradeResult, participant, session);
+            this.startTPSLMonitor(tradeResult, participant, sessionData);
           }
 
         } catch (error) {
