@@ -61,7 +61,7 @@ class OrderManager {
             const result = await tradeExecutor.executeMultiAccountTrade(
                 signal,
                 sessionId,
-                sessionTable || 'trading_sessions'  // V1 table is the default
+                sessionTable || 'trading_sessions_v2'
             );
 
             this.processedSignals++;

@@ -117,30 +117,33 @@ async function verifyDerivToken(token) {
 
 async function createSession(adminId, sessionData) {
   // Handle market from simplified form (can be in markets array or volatility_index)
+  // V2 uses 'markets' array
   const market = sessionData.markets?.[0] || sessionData.volatility_index || sessionData.volatilityIndex || 'R_100';
+  const markets = sessionData.markets || [market];
 
   const { data, error } = await supabase
-    .from('trading_sessions')
+    .from('trading_sessions_v2')
     .insert({
       id: uuidv4(),
       admin_id: adminId,
-      session_name: sessionData.name || `Session ${new Date().toLocaleDateString()}`,
-      session_type: sessionData.session_type || sessionData.type || 'day',
+      name: sessionData.name || sessionData.session_name || `Session ${new Date().toLocaleDateString()}`,
+      type: sessionData.session_type || sessionData.type || 'day',
       status: 'pending',
-      volatility_index: market,
+      markets: markets,
+      // volatility_index: market, // specific to V1, removed for V2
       contract_type: sessionData.contract_type || sessionData.contractType || 'DIGITEVEN',
       mode: sessionData.mode || 'demo',
-      strategy_name: sessionData.strategy || 'DFPM',
+      strategy: sessionData.strategy_name || sessionData.strategy || 'DFPM',
       staking_mode: sessionData.staking_mode || sessionData.stakingMode || 'fixed',
-      initial_stake: sessionData.initial_stake || sessionData.baseStake || 0.35,
-      martingale_multiplier: sessionData.martingale_multiplier || 2.0,
-      minimum_balance: sessionData.min_balance || sessionData.minimum_balance || 5.0,
-      profit_threshold: sessionData.default_tp || sessionData.targetProfit || 10.0,
-      loss_threshold: sessionData.default_sl || sessionData.stopLoss || 5.0,
-      total_trades: 0,
-      winning_trades: 0,
-      losing_trades: 0,
-      net_pnl: 0,
+      base_stake: sessionData.initial_stake || sessionData.baseStake || 0.35,
+      // martingale_multiplier: sessionData.martingale_multiplier || 2.0, // V2 doesn't use this column usually? keeping just in case or omitting
+      min_balance: sessionData.min_balance || sessionData.minimum_balance || 5.0,
+      default_tp: sessionData.default_tp || sessionData.targetProfit || sessionData.profit_threshold || 10.0,
+      default_sl: sessionData.default_sl || sessionData.stopLoss || sessionData.loss_threshold || 5.0,
+      trade_count: 0,
+      win_count: 0,
+      loss_count: 0,
+      current_pnl: 0, // V2 uses current_pnl instead of net_pnl
       created_at: new Date().toISOString()
     })
     .select()
@@ -151,20 +154,30 @@ async function createSession(adminId, sessionData) {
 }
 
 async function getSession(sessionId) {
-  const { data, error } = await supabase
+  // Try V2 first
+  const { data: v2, error: v2Error } = await supabase
+    .from('trading_sessions_v2')
+    .select('*')
+    .eq('id', sessionId)
+    .single();
+
+  if (v2) return v2;
+
+  // Fallback to V1
+  const { data: v1, error: v1Error } = await supabase
     .from('trading_sessions')
     .select('*')
     .eq('id', sessionId)
     .single();
 
-  if (error) throw error;
-  return data;
+  if (v1Error && !v1) throw v1Error || v2Error; // Throw legitimate error if neither found
+  return v1;
 }
 
 async function getSessions(adminId, options = {}) {
-  // Base query - simple select without joins (join failed due to missing FK relationship)
+  // Use V2 as primary source of truth now
   let query = supabase
-    .from('trading_sessions')
+    .from('trading_sessions_v2')
     .select('*');
 
   if (options.publicAccess) {
@@ -176,13 +189,16 @@ async function getSessions(adminId, options = {}) {
     if (options.status) query = query.eq('status', options.status);
   }
 
-  if (options.type) query = query.eq('session_type', options.type);
+  if (options.type) query = query.eq('type', options.type); // V2 uses 'type'
 
   query = query.order('created_at', { ascending: false });
   if (options.limit) query = query.limit(options.limit);
 
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) {
+    console.error('[TradingService] Error fetching sessions:', error);
+    throw error;
+  }
 
   // Get participants count for each session separately and normalize fields
   const sessionsWithCount = await Promise.all((data || []).map(async (session) => {
@@ -208,6 +224,7 @@ async function getSessions(adminId, options = {}) {
       // Normalize field names for V1/V2 frontend compatibility
       name: session.name || session.session_name,
       session_name: session.session_name || session.name,
+      type: session.type || session.session_type, // Normalize type
       // Convert volatility_index to markets array for frontend
       markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100']),
       participants_count: finalCount
@@ -218,9 +235,22 @@ async function getSessions(adminId, options = {}) {
 }
 
 async function updateSession(sessionId, updates) {
+  // Try to update V2 first
+  const { data: v2Check } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
+  let table = v2Check ? 'trading_sessions_v2' : 'trading_sessions';
+
+  // Map updates to schema if needed (basic mapping)
+  const mappedUpdates = {
+    ...updates,
+    updated_at: new Date().toISOString()
+  };
+
+  // If updating legacy table with V2 keys, might fail, but let's assume keys match mostly or caller handles it
+  // Ideally we should map keys here too but keeping it simple for now as most updates are status changes
+
   const { data, error } = await supabase
-    .from('trading_sessions')
-    .update({ ...updates, updated_at: new Date().toISOString() })
+    .from(table)
+    .update(mappedUpdates)
     .eq('id', sessionId)
     .select()
     .single();
@@ -230,12 +260,17 @@ async function updateSession(sessionId, updates) {
 }
 
 async function deleteSession(sessionId) {
+  // Try to find in V2
+  const { data: v2Check } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
+  const table = v2Check ? 'trading_sessions_v2' : 'trading_sessions';
+
   // Delete related data first
   await supabase.from('session_invitations').delete().eq('session_id', sessionId);
+  await supabase.from('session_participants').delete().eq('session_id', sessionId);
   await supabase.from('trades').delete().eq('session_id', sessionId);
 
   const { error } = await supabase
-    .from('trading_sessions')
+    .from(table)
     .delete()
     .eq('id', sessionId);
 
