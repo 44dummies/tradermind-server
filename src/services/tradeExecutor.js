@@ -67,22 +67,40 @@ class TradeExecutor {
         console.log(`[TradeExecutor] ⏱ Execution Latency: ${latency}ms`);
       }
 
-      console.log(`[TradeExecutor] Looking up session in table: ${sessionTable}`);
+      // 1. Get Session Details (Robust Lookup)
+      let session = null;
+      let usedTable = sessionTable;
 
-      // Get session details - query without status filter first for debugging
-      const { data: session, error: sessionError } = await supabase
+      // Try requested table first
+      let { data: primarySession, error: primaryError } = await supabase
         .from(sessionTable)
         .select('*')
         .eq('id', sessionId)
-        .single();
+        .maybeSingle();
 
-      if (sessionError) {
-        console.error(`[TradeExecutor] Session query error:`, sessionError.message, sessionError.details);
-        throw new Error(`Session query failed: ${sessionError.message}`);
+      if (primarySession) {
+        session = primarySession;
+      } else {
+        // Fallback: Try the other table
+        const altTable = sessionTable === 'trading_sessions' ? 'trading_sessions_v2' : 'trading_sessions';
+        console.log(`[TradeExecutor] Session not found in ${sessionTable}, trying fallback to ${altTable}...`);
+
+        const { data: altSession, error: altError } = await supabase
+          .from(altTable)
+          .select('*')
+          .eq('id', sessionId)
+          .maybeSingle();
+
+        if (altSession) {
+          session = altSession;
+          usedTable = altTable;
+          console.log(`[TradeExecutor] Found session in fallback table: ${altTable}`);
+        } else {
+          console.error(`[TradeExecutor] Session ${sessionId} not found in either table. Primary Err: ${primaryError?.message}, Alt Err: ${altError?.message}`);
+        }
       }
 
       if (!session) {
-        console.error(`[TradeExecutor] Session ${sessionId} not found in ${sessionTable}`);
         throw new Error('Session not found');
       }
 
