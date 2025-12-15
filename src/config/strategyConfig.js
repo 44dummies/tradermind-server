@@ -1,9 +1,8 @@
 // Default strategy configuration
 module.exports = {
-  markets: [
-    'R_100', 'R_75', 'R_50', 'R_25', 'R_10',
-    '1HZ100V', '1HZ75V', '1HZ50V', '1HZ25V', '1HZ10V'
-  ],
+  // Tier 1 (Core): R_100, R_75, R_50
+  // Tier 2 (Exp):  R_25
+  markets: ['R_100', 'R_75', 'R_50', 'R_25'],
   tickWindow: 50, // number of recent ticks to analyze
   digitFrequencyDepth: 20,
   minConfidence: 0.58,
