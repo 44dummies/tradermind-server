@@ -637,8 +637,50 @@ async function getTradeStats(sessionId, accountId = null) {
     wins: wins.length,
     losses: losses.length,
     winRate: completed.length > 0 ? (wins.length / completed.length) * 100 : 0,
-    totalProfit: completed.reduce((sum, t) => sum + (t.profit || 0), 0),
     totalStake: completed.reduce((sum, t) => sum + (t.stake || 0), 0)
+  };
+}
+
+async function getUserPerformance(userId) {
+  // 1. Get user accounts
+  const accounts = await getAccounts(userId);
+  const accountIds = accounts.map(a => a.deriv_account_id);
+
+  if (accountIds.length === 0) {
+    return { todayPnL: 0, winRate: 0, totalTrades: 0, totalProfit: 0 };
+  }
+
+  // 2. Get trades for these accounts
+  // Note: account_id in trades table stores the Deriv Account ID (e.g. CR123456)
+  const { data: trades, error } = await supabase
+    .from('trades')
+    .select('*')
+    .in('account_id', accountIds);
+
+  if (error) throw error;
+
+  // 3. Calculate Stats
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+
+  const completed = trades.filter(t => t.result === 'won' || t.result === 'lost');
+  const todayTrades = completed.filter(t => t.created_at >= todayStart);
+
+  const todayPnL = todayTrades.reduce((sum, t) => sum + (Number(t.profit) || 0), 0);
+  const totalTrades = completed.length;
+  const wins = completed.filter(t => t.result === 'won').length;
+  const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+  const totalProfit = completed.reduce((sum, t) => sum + (Number(t.profit) || 0), 0);
+
+  // Get last trade time
+  const lastTradeTime = trades.length > 0 ? trades[0].created_at : null;
+
+  return {
+    todayPnL,
+    winRate,
+    totalTrades,
+    totalProfit,
+    lastTradeTime
   };
 }
 
@@ -780,7 +822,7 @@ module.exports = {
   createInvitation, getInvitations, acceptInvitation, declineInvitation, joinSession,
 
   // Trades
-  recordTrade, updateTradeResult, getSessionTrades, getTradeStats,
+  recordTrade, updateTradeResult, getSessionTrades, getTradeStats, getUserPerformance,
 
   // Logs
   logActivity, getActivityLogs,

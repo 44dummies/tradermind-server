@@ -490,6 +490,17 @@ router.get('/sessions/:id/stats', authMiddleware, async (req, res) => {
   }
 });
 
+
+router.get('/performance', authMiddleware, async (req, res) => {
+  try {
+    const stats = await trading.getUserPerformance(req.userId);
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('Error fetching user performance:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== Bot Control Routes ====================
 
 router.get('/bot/status', authMiddleware, async (req, res) => {
