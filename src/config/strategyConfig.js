@@ -23,5 +23,35 @@ module.exports = {
     tpc: 0.15,
     dtp: 0.1,
     dpb: 0.05
+  },
+  // Advanced Strategy Parameters
+  positionSizing: {
+    enabled: true,
+    baseConfidence: 0.6, // Confidence level for 1x stake
+    maxMultiplier: 2.0, // Max stake multiplier (e.g. 2x stake for high confidence)
+    minMultiplier: 0.5  // Min stake multiplier for low confidence
+  },
+  exitLogic: {
+    trailingStop: {
+      enabled: true,
+      activationThreshold: 0.3, // Start trailing after 30% profit
+      callbackRate: 0.2 // Close if profit drops 20% from peak
+    },
+    timeStop: {
+      enabled: true,
+      maxDurationTicks: 10, // Hard stop after N ticks (for tick trades)
+      maxDurationSec: 60 // Hard stop after N seconds (safety)
+    },
+    regimeFilter: {
+      strictMode: true // If true, exit immediately if regime becomes CHAOS
+    },
+    zombieTrade: {
+      enabled: true,
+      thresholdRatio: 0.15 // Close if PnL < 15% of stake
+    },
+    breakEven: {
+      enabled: true,
+      thresholdRatio: 0.25 // Activate if PnL > 25% of stake
+    }
   }
 };

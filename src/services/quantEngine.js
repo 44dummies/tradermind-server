@@ -15,7 +15,9 @@ const {
     detectDigitDeltaStreak,
     computeDigitExhaustion,
     detectRecentBias,
-    selectOptimalDigit
+    selectOptimalDigit,
+    computeTrendStrength,
+    computeMomentumStability
 } = require('./strategyEngine');
 
 const quantMemory = require('./quantMemory');
@@ -25,12 +27,27 @@ const perfMonitor = require('../utils/performance');
 // ==================== MARKET REGIME CLASSIFIER ====================
 
 /**
- * Detect current market regime based on entropy
+ * Detect current market regime based on Multi-Factor Analysis
+ * Uses Entropy (Digits), Trend Strength (Price), and Stability (Price)
  */
-function detectRegime(entropy) {
-    if (entropy > quantConfig.entropy.chaosThreshold) return 'chaos';
-    if (entropy > quantConfig.entropy.transitionThreshold) return 'transition';
-    return 'stable';
+function detectRegime(entropy, trendStrength, stability) {
+    // 1. CHAOS: High Entropy OR Very Low Stability
+    if (entropy > quantConfig.entropy.chaosThreshold || stability < 0.2) {
+        return 'CHAOS';
+    }
+
+    // 2. TREND: Strong Trend + Good Stability
+    if (trendStrength > 0.6 && stability > 0.4) {
+        return 'TREND';
+    }
+
+    // 3. RANGE: Low Trend + Moderate/High Stability
+    if (trendStrength <= 0.4 && stability > 0.5) {
+        return 'RANGE';
+    }
+
+    // Default to Transition if unclear
+    return 'TRANSITION';
 }
 
 /**
@@ -38,24 +55,32 @@ function detectRegime(entropy) {
  */
 function getRegimeConfig(regime) {
     switch (regime) {
-        case 'chaos':
+        case 'CHAOS':
             return {
-                shouldTrade: false,
+                shouldTrade: false, // NO TRADING
                 minConfidence: 1.0,
-                message: 'Market chaos - Skip trading'
+                message: 'CHAOS - Market too volatile/random'
             };
-        case 'transition':
+        case 'TREND':
             return {
                 shouldTrade: true,
-                minConfidence: quantConfig.confidence.transitionMin,
-                message: 'Transition - Trade cautiously'
+                minConfidence: 0.65, // Higher confidence needed for trend following
+                strategies: ['trend_follow'],
+                message: 'TREND - Strong directional bias'
             };
-        case 'stable':
+        case 'RANGE':
+            return {
+                shouldTrade: true,
+                minConfidence: 0.60,
+                strategies: ['mean_reversion'],
+                message: 'RANGE - Mean reversion favored'
+            };
+        case 'TRANSITION':
         default:
             return {
                 shouldTrade: true,
-                minConfidence: quantConfig.confidence.stableMin,
-                message: 'Stable - Normal trading'
+                minConfidence: 0.75, // Be very picky in transition
+                message: 'TRANSITION - Exercise caution'
             };
     }
 }
@@ -157,22 +182,30 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
 
     // ==================== ANALYSIS ==================== //
 
+    // 0. Market Context Analysis (Price Action)
+    const trendStrength = computeTrendStrength(tickHistory);
+    const stability = computeMomentumStability(tickHistory);
+
     // 1. Entropy and Regime
     const entropyData = computeDigitEntropy(digitHistory, 30);
-    const regime = detectRegime(entropyData.entropy);
+
+    // Detect Regime using Multi-Factor Model
+    const regime = detectRegime(entropyData.entropy, trendStrength, stability);
     const regimeConfig = getRegimeConfig(regime);
 
     // Record regime
     quantMemory.recordRegime(memory, regime);
 
-    // Kill switch: Don't trade in chaos
+    // Kill switch: Don't trade in chaos from regime config
+    // Note: detailed reason will be available in stats
     if (!regimeConfig.shouldTrade) {
         return {
             shouldTrade: false,
             reason: regimeConfig.message,
             confidence: 0,
             regime,
-            entropy: entropyData.entropy
+            entropy: entropyData.entropy,
+            regimeStats: { trendStrength, stability, entropy: entropyData.entropy }
         };
     }
 
@@ -309,15 +342,23 @@ function generateQuantSignal({ market, tickHistory, digitHistory }) {
         digit: selectedDigit,
         confidence: normalizedConfidence,
         regime,
+        regimeStats: {
+            trendStrength: trendStrength.toFixed(3),
+            stability: stability.toFixed(3),
+            entropy: entropyData.entropy.toFixed(3)
+        },
         reason: factors.join(' '),
         indicatorsUsed,
         market,
+        regime, // Raw regime code (TREND, RANGE, CHAOS)
         latency: duration,
         decisionLog,
 
         // Detailed analysis for logging
         analysis: {
             entropy: entropyData.value,
+            trendStrength: trendStrength.toFixed(3),
+            stability: stability.toFixed(3),
             regime: regimeConfig.message,
             scores: { over: scoreOver.toFixed(2), under: scoreUnder.toFixed(2) },
             weights: {
@@ -345,7 +386,8 @@ function recordTradeOutcome(tradeData) {
     const memory = quantMemory.getMemorySync();
     quantMemory.recordTrade(memory, tradeData);
 
-    console.log(`[QuantEngine] Trade recorded: ${tradeData.side} ${tradeData.won ? 'WON' : 'LOST'}`);
+    const weightMsg = tradeData.weight ? `(Weight: ${tradeData.weight})` : '';
+    console.log(`[QuantEngine] Trade recorded: ${tradeData.side} ${tradeData.won ? 'WON' : 'LOST'} ${weightMsg}`);
     console.log(`[QuantEngine] Memory: ${JSON.stringify(quantMemory.getMemorySummary(memory))}`);
 
     return memory;

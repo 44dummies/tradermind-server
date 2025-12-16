@@ -458,6 +458,65 @@ function confidenceIndex(weights, parts) {
   return 0.5; // Deprecated
 }
 
+// ==================== PRICE-BASED INDICATORS ====================
+
+/**
+ * Compute Trend Strength using Linear Regression Slope
+ * Normalized to 0-1 range
+ */
+function computeTrendStrength(tickHistory, window = 20) {
+  if (!tickHistory || tickHistory.length < window) return 0;
+
+  const recent = tickHistory.slice(-window);
+  const n = recent.length;
+
+  // Simple linear regression
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += recent[i];
+    sumXY += i * recent[i];
+    sumX2 += i * i;
+  }
+
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+
+  // Normalize slope (arbitrary scaling for ticks)
+  // detailed tick slopes are usually small, e.g. 0.001
+  // We want a value between 0 and 1.
+  const strength = Math.min(Math.abs(slope) * 1000, 1.0);
+
+  return strength;
+}
+
+/**
+ * Compute Momentum Stability
+ * Based on variance of returns (volatility)
+ * High stability = Low volatility
+ */
+function computeMomentumStability(tickHistory, window = 20) {
+  if (!tickHistory || tickHistory.length < window) return 0;
+
+  const recent = tickHistory.slice(-window);
+  const returns = [];
+
+  for (let i = 1; i < recent.length; i++) {
+    returns.push(recent[i] - recent[i - 1]);
+  }
+
+  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+
+  const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length;
+
+  // Stability is inverse of variance
+  // If variance is 0 (perfect line), stability is 1.
+  // If variance is high (0.1), stability approaches 0.
+  const stability = 1 / (1 + variance * 10000);
+
+  return Math.min(stability, 1.0);
+}
+
 module.exports = {
   generateSignal,
   computeDigitFrequency,
@@ -468,5 +527,7 @@ module.exports = {
   detectRecentBias,
   selectOptimalDigit,
   circularDelta,
-  confidenceIndex
+  confidenceIndex,
+  computeTrendStrength,
+  computeMomentumStability
 };

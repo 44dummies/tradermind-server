@@ -119,6 +119,9 @@ app.use('/api/trading', tradingRoutes);
 const tradingV2Routes = require('./routes/trading_v2');
 app.use('/api/trading-v2', tradingV2Routes);
 
+const analyticsRoutes = require('./routes/analytics');
+app.use('/api/analytics', analyticsRoutes);
+
 // Debug & Monitoring routes
 const debugRoutes = require('./routes/debug');
 app.use('/debug', debugRoutes);

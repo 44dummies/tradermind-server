@@ -23,6 +23,7 @@ class TradeExecutor {
   constructor() {
     this.activeConnections = new Map(); // derivAccountId -> WebSocket
     this.activeMonitors = new Map(); // tradeId -> monitor interval
+    this.accountBalances = new Map(); // derivAccountId -> balance
     this.rateLimitDelay = 500; // 500ms between trades
     this.consecutiveLosses = 0;
     this.apiErrorCount = 0;
@@ -121,6 +122,44 @@ class TradeExecutor {
       };
 
       console.log(`[TradeExecutor] Session: ${sessionData.name} (Table: ${sessionTable}, Type: ${sessionData.type || 'N/A'}, MinBal: $${sessionData.min_balance}, TP: $${sessionData.default_tp}, SL: $${sessionData.default_sl})`);
+
+      // 0. QUALITY GATE: Evaluate Entry based on Session Health
+      const entryDecision = this.evaluateEntry(signal, sessionData);
+      if (!entryDecision.allow) {
+        console.log(`[TradeExecutor] 🛑 Entry blocked: ${entryDecision.reason}`);
+        return { executed: 0, total: 0, reason: entryDecision.reason };
+      }
+
+      // ==================== SESSION RISK BUDGET CHECK ====================
+
+      // 1. Max Loss Check
+      const maxLoss = sessionData.max_loss || sessionData.stop_loss_limit;
+      if (maxLoss && sessionData.current_pnl <= -Math.abs(maxLoss)) {
+        console.warn(`[TradeExecutor] 🛑 Session ${sessionData.name} hit MAX LOSS limit ($${sessionData.current_pnl} <= -$${maxLoss}). Skipping trade.`);
+        // Optional: Auto-pause or close session?
+        // match user request: "If breached -> auto pause session"
+        await this.pauseSession(sessionId, sessionTable, 'max_loss_limit');
+        return { executed: 0, total: 0, reason: 'session_max_loss' };
+      }
+
+      // 2. Max Drawdown Check (if tracked)
+      if (sessionData.max_drawdown_limit) {
+        // Assuming max_drawdown is calculated elsewhere or we check current PnL vs High Watermark
+        // Simple check: if current PnL is very negative
+        if (sessionData.current_pnl <= -Math.abs(sessionData.max_drawdown_limit)) {
+          console.warn(`[TradeExecutor] 🛑 Session ${sessionData.name} hit DRAWDOWN limit. Skipping.`);
+          await this.pauseSession(sessionId, sessionTable, 'drawdown_limit');
+          return { executed: 0, total: 0, reason: 'session_drawdown' };
+        }
+      }
+
+      // 3. Regime Filter (Double Check)
+      // If signal says CHAOS, we shouldn't be here (QuantEngine should filter), but if manual signal:
+      if (signal.regime === 'CHAOS') {
+        console.warn(`[TradeExecutor] ⚠️ Skipping entry in CHAOS regime despite signal.`);
+        return { executed: 0, total: 0, reason: 'regime_chaos' };
+      }
+
 
       // Get accepted accounts - join with trading_accounts to get deriv_token
       let { data: invitations, error: invError } = await supabase
@@ -399,8 +438,13 @@ class TradeExecutor {
       // Connect to Deriv WebSocket using the participant's token
       const ws = await this.getConnection(profile.deriv_id, apiToken);
 
-      // Calculate stake - use min_balance as stake (set by admin)
-      const stake = session.min_balance || session.minimum_balance || session.initial_stake || 0.35;
+      // Get current balance for sizing
+      // Use cached balance if available, otherwise session initial or fallback
+      const cachedBalance = this.accountBalances.get(profile.deriv_id);
+      const baseBalance = cachedBalance !== undefined ? cachedBalance : (session.initial_balance || 100);
+
+      // Calculate stake with confidence weighting
+      const stake = await this.calculateStake(baseBalance, session, participant.user_id, signal.confidence);
 
       // Prepare contract parameters
       const contractParams = {
@@ -600,7 +644,159 @@ class TradeExecutor {
       console.error(`[TradeExecutor] Failed to subscribe to ${tradeResult.contractId}:`, err);
       ws.removeListener('message', updateHandler);
       this.activeMonitors.delete(monitorId);
+      return;
     }
+
+    // 5. Initialize Strategic Exit State
+    let maxProfit = -Infinity;
+    const { trailingStop, timeStop } = strategyConfig.exitLogic;
+    const startTime = Date.now();
+
+    // 6. Time Stop Safety Monitor (Independent Interval)
+    if (timeStop.enabled) {
+      // Dynamic Time Stop: Scale with confidence
+      // High confidence (0.9) -> 1.5x duration
+      // Low confidence (0.6) -> 1.0x duration
+      const confidence = tradeResult.signal?.confidence || 0.6;
+      const confidenceScaler = Math.max(1.0, confidence / 0.6);
+      const scaledMaxDuration = timeStop.maxDurationSec * confidenceScaler;
+
+      const timeStopCheck = setInterval(async () => {
+        const elapsedSec = (Date.now() - startTime) / 1000;
+        if (elapsedSec > scaledMaxDuration) {
+          console.warn(`[TradeExecutor] ⏱ TIME STOP Triggered (${elapsedSec.toFixed(1)}s > ${scaledMaxDuration.toFixed(1)}s). Forcing close.`);
+          clearInterval(timeStopCheck);
+
+          // Force close if still active
+          if (this.activeMonitors.has(monitorId)) {
+            ws.removeListener('message', updateHandler);
+            await this.closeTrade(tradeResult, 'time_stop', 0, invitation, session, {
+              durationMs: Date.now() - startTime
+            });
+          }
+        }
+      }, 5000); // Check every 5s
+
+      // Attach interval to monitor object so we can clear it
+      this.activeMonitors.get(monitorId).timeStopInterval = timeStopCheck;
+    }
+
+    // 7. Update Handler with Advanced Logic
+    // We rewrite the handler logic here to include trailing stop
+    const advancedHandler = async (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+
+        if (message.msg_type === 'proposal_open_contract') {
+          const contract = message.proposal_open_contract;
+
+          if (contract && contract.contract_id === tradeResult.contractId) {
+
+            // Handle Trailing Stop Logic (Profit Protection)
+            if (!contract.is_sold) {
+              const currentPL = contract.profit || 0;
+
+              // Thesis Invalidation: Zombie Trade (Strategic Exit)
+              // If 50% of time passed, we are negative, and price is stagnating (low variance), Exit.
+              // Adjusted for confidence: Higher confidence allows more stagnation.
+              const elapsedSec = (Date.now() - startTime) / 1000;
+              const zombieThresholdTime = (scaledMaxDuration || 60) * 0.5;
+
+              if (elapsedSec > zombieThresholdTime && currentPL < 0) {
+                // Check Stagnation: If currentPL is very small negative (drifting)
+                // Logic: "Momentum decays"
+                // Use configured threshold or default 0.15
+                const zombieThreshold = strategyConfig.exitLogic.zombieTrade?.thresholdRatio || 0.15;
+                if (Math.abs(currentPL) < (tradeResult.stake * zombieThreshold)) {
+                  console.log(`[TradeExecutor] 🧟 Zombie Trade detected (Momentum Decay). Closing.`);
+                  ws.removeListener('message', advancedHandler);
+                  await this.closeTrade(tradeResult, 'thesis_invalidated', currentPL, invitation, session, {
+                    entrySpot: contract.entry_spot,
+                    exitSpot: contract.current_spot,
+                    durationMs: Date.now() - startTime
+                  });
+                  return;
+                }
+              }
+
+              // Track Peak Profit
+              if (currentPL > maxProfit) {
+                maxProfit = currentPL;
+              }
+
+              // Check Trailing Stop
+              if (trailingStop.enabled && maxProfit > (tradeResult.stake * trailingStop.activationThreshold)) {
+                // If we are profitable enough to activate...
+                const drawdown = maxProfit - currentPL;
+                const stopThreshold = maxProfit * trailingStop.callbackRate;
+
+                if (drawdown >= stopThreshold) {
+                  console.log(`[TradeExecutor] 📉 Trailing Stop Hit! Peak: $${maxProfit}, Current: $${currentPL}`);
+                  ws.removeListener('message', advancedHandler);
+                  await this.closeTrade(tradeResult, 'trailing_stop', currentPL, invitation, session, {
+                    entrySpot: contract.entry_spot, // Note: might differ from initial entry
+                    exitSpot: contract.current_spot,
+                    durationMs: Date.now() - startTime
+                  });
+                  return;
+                }
+              }
+
+              // Check Break-Even (Profit Protection)
+              // Real Break-Even Lock: Lock capital, not hope.
+              const beThresholdRatio = strategyConfig.exitLogic.breakEven?.thresholdRatio || 0.25;
+              const beThreshold = tradeResult.stake * beThresholdRatio;
+
+              if (maxProfit >= beThreshold && currentPL <= 0) {
+                console.log(`[TradeExecutor] 🛡️ Break-Even Lock triggered. Peak: $${maxProfit}, Current: $${currentPL}`);
+                ws.removeListener('message', advancedHandler);
+                await this.closeTrade(tradeResult, 'break_even', currentPL, invitation, session, {
+                  entrySpot: contract.entry_spot,
+                  exitSpot: contract.current_spot,
+                  durationMs: Date.now() - startTime
+                });
+                return;
+              }
+
+              // Classic TP/SL checks continue below...
+              // Check TP
+              if (currentPL >= invitation.take_profit) {
+                // ... existing TP logic ...
+                console.log(`[TradeExecutor]  TP HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                ws.removeListener('message', advancedHandler);
+                await this.closeTrade(tradeResult, 'tp_hit', currentPL, invitation, session, { entrySpot: contract.entry_spot, exitSpot: contract.current_spot, durationMs: Date.now() - startTime });
+                return;
+              }
+              // Check SL
+              if (currentPL <= -Math.abs(invitation.stop_loss)) {
+                // ... existing SL logic ...
+                console.log(`[TradeExecutor]  SL HIT! Closing contract ${tradeResult.contractId} at $${currentPL}`);
+                ws.removeListener('message', advancedHandler);
+                await this.closeTrade(tradeResult, 'sl_hit', currentPL, invitation, session, { entrySpot: contract.entry_spot, exitSpot: contract.current_spot, durationMs: Date.now() - startTime });
+                return;
+              }
+
+            } else {
+              // Contract ended naturally logic...
+              if (contract.is_sold) {
+                // ... existing natural close logic ...
+                console.log(`[TradeExecutor] Contract ${tradeResult.contractId} closed naturally. Profit: ${contract.profit}`);
+                ws.removeListener('message', advancedHandler);
+                const finalPL = contract.profit || 0;
+                const status = finalPL > 0 ? 'win' : 'loss';
+                await this.closeTrade(tradeResult, status, finalPL, invitation, session, { entrySpot: contract.entry_spot, exitSpot: contract.exit_tick, durationMs: Date.now() - startTime });
+              }
+            }
+          }
+        }
+      } catch (e) { console.error('Monitor Error', e); }
+    };
+
+    // Replace the simple handler with advanced one
+    ws.removeListener('message', updateHandler); // Remove the basic one we attached in step 1-2
+    ws.on('message', advancedHandler);
+    this.activeMonitors.get(monitorId).handler = advancedHandler; // Update ref
+
   }
 
   // NOTE: checkTPSL is no longer needed as we use the event handler above
@@ -637,6 +833,9 @@ class TradeExecutor {
 
         // Subscribe to balance
         await derivClient.subscribeBalance(accountId, token, (balanceData) => {
+          // Cache balance for sizing
+          this.accountBalances.set(balanceData.accountId, balanceData.balance);
+
           // Emit update to frontend
           if (this.io) {
             this.io.emit('balance_update', {
@@ -874,16 +1073,26 @@ class TradeExecutor {
 
       // === QUANT ENGINE LEARNING: Record trade outcome ===
       try {
+        const learningWeight = {
+          tp_hit: 1.0,
+          trailing_stop: 0.6,
+          break_even: 0.3,
+          time_stop: 0.2,
+          sl_hit: 1.0,
+          manual_exit: 0.5
+        }[reason] || 0.5;
+
         const tradeDataForLearning = {
           side: tradeResult.signal?.side || 'UNDER',
           won: finalPL > 0,
           digit: tradeResult.signal?.digit,
           confidence: tradeResult.signal?.confidence,
           regime: tradeResult.signal?.regime || 'unknown',
-          indicators: tradeResult.signal?.indicatorsUsed || []
+          indicators: tradeResult.signal?.indicatorsUsed || [],
+          weight: learningWeight
         };
         quantEngine.recordTradeOutcome(tradeDataForLearning);
-        console.log(`[TradeExecutor] 🧠 Learning updated: ${finalPL > 0 ? 'WIN' : 'LOSS'} recorded`);
+        console.log(`[TradeExecutor] 🧠 Learning updated: ${finalPL > 0 ? 'WIN' : 'LOSS'} recorded (W: ${learningWeight})`);
       } catch (learningErr) {
         console.error('[TradeExecutor] Learning callback error:', learningErr.message);
       }
@@ -1107,9 +1316,9 @@ class TradeExecutor {
   /**
    * Calculate stake based on account balance and session type
    */
-  async calculateStake(balance, session, userId) {
+  async calculateStake(balance, session, userId, confidence = 0.6) {
     try {
-      // Recovery Mode Logic
+      // 1. Recovery Mode Logic (Overrides everything)
       if (session.session_type === 'recovery') {
         const { data: recoveryState } = await supabase
           .from('recovery_states')
@@ -1123,15 +1332,33 @@ class TradeExecutor {
         }
       }
 
-      // Fixed Staking
+      // 2. Determine Base Stake
+      let baseStake = 0.35;
       if (session.staking_mode === 'fixed') {
-        return Math.max(0.35, parseFloat(session.initial_stake));
+        baseStake = Math.max(0.35, parseFloat(session.initial_stake));
+      } else {
+        // Percentage Staking
+        const percentage = session.stake_percentage || 0.02;
+        baseStake = Math.max(0.35, parseFloat((balance * percentage).toFixed(2)));
       }
 
-      // Percentage Staking (Default)
-      const percentage = session.stake_percentage || 0.02;
-      const stake = balance * percentage;
-      return Math.max(0.35, parseFloat(stake.toFixed(2))); // Minimum stake $0.35
+      // 3. Confidence Weighting (if enabled)
+      if (strategyConfig.positionSizing?.enabled) {
+        const { baseConfidence, maxMultiplier, minMultiplier } = strategyConfig.positionSizing;
+
+        // Calculate multiplier: (signalConfidence / baseConfidence)
+        // e.g. 0.8 / 0.6 = 1.33x stake
+        let multiplier = confidence / baseConfidence;
+
+        // Clamp multiplier
+        multiplier = Math.max(minMultiplier, Math.min(multiplier, maxMultiplier));
+
+        const weightedStake = baseStake * multiplier;
+        console.log(`[TradeExecutor] ⚖️ Sizing: Base $${baseStake} * ${multiplier.toFixed(2)}x (Conf: ${(confidence * 100).toFixed(0)}%) = $${weightedStake.toFixed(2)}`);
+        return parseFloat(weightedStake.toFixed(2));
+      }
+
+      return baseStake;
 
     } catch (error) {
       console.error('[TradeExecutor] Calculate stake error:', error);
@@ -1249,14 +1476,86 @@ class TradeExecutor {
     console.log('[TradeExecutor] All connections closed');
   }
 
-  /**
-   * Get statistics
-   */
   getStats() {
     return {
       activeConnections: this.activeConnections.size,
       activeMonitors: this.activeMonitors.size
     };
+  }
+
+  /**
+   * Pause a session due to risk limits
+   */
+  async pauseSession(sessionId, sessionTable, reason) {
+    try {
+      console.log(`[TradeExecutor] Pausing session ${sessionId} due to: ${reason}`);
+
+      const { error } = await supabase
+        .from(sessionTable)
+        .update({
+          status: 'paused',
+          metadata: { paused_reason: reason, paused_at: new Date().toISOString() }
+        })
+        .eq('id', sessionId);
+
+      if (error) {
+        console.error(`[TradeExecutor] Failed to pause session ${sessionId}:`, error);
+      } else {
+        // Notify admin/users?
+        if (this.io) {
+          this.io.emit('session_update', {
+            session: { id: sessionId, status: 'paused' }
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[TradeExecutor] Pause session error:', err);
+    }
+  }
+  /**
+   * Evaluate Entry Quality
+   * Acts as a risk governor based on session performance and signal context
+   */
+  evaluateEntry(signal, session) {
+    // 1. Confidence floor increases when session is bleeding
+    const tradeCount = session.trade_count || 0;
+    const winCount = session.win_count || 0;
+    const winRate = tradeCount > 0 ? winCount / tradeCount : 1;
+
+    let minConfidence = 0.6; // Base requirement
+
+    // Adaptive Confidence: If performing poorly, require higher quality
+    if (tradeCount >= 5 && winRate < 0.45) {
+      minConfidence = 0.75;
+    }
+
+    if (signal.confidence < minConfidence) {
+      return { allow: false, reason: `low_confidence_session_guard (Req: ${minConfidence}, Act: ${signal.confidence.toFixed(2)}, WR: ${(winRate * 100).toFixed(0)}%)` };
+    }
+
+    // 2. Loss streak throttle
+    // If we have global consecutive losses, be stricter
+    if (this.consecutiveLosses >= 2 && signal.confidence < 0.8) {
+      return { allow: false, reason: 'loss_streak_throttle' };
+    }
+
+    // 3. Regime-strategy compatibility
+    if (signal.regime === 'TRANSITION' && signal.confidence < 0.7) {
+      return { allow: false, reason: 'regime_transition_guard' };
+    }
+
+    // 4. Volatility Guard (Added per request)
+    // Check if signal has volatility/stability score. 
+    // If stability is too low (high volatility), reject unless confidence is extreme.
+    // (Using stability from signal.regimeStats if available, where lower stability = higher volatility)
+    if (signal.regimeStats && parseFloat(signal.regimeStats.stability) < 0.3) {
+      // High volatility context
+      if (signal.confidence < 0.85) {
+        return { allow: false, reason: 'volatility_guard' };
+      }
+    }
+
+    return { allow: true };
   }
 }
 
