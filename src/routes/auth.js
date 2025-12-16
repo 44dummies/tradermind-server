@@ -85,8 +85,8 @@ router.post('/register', async (req, res) => {
         username: user.username,
         email: user.email
       },
-      accessToken
-      // refreshToken moved to HttpOnly cookie
+      accessToken,
+      refreshToken // Return for fallback
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -147,8 +147,8 @@ router.post('/login', async (req, res) => {
         role: userRole,
         is_admin: user.isAdmin || false
       },
-      accessToken
-      // refreshToken moved to HttpOnly cookie
+      accessToken,
+      refreshToken // Return for fallback
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -245,8 +245,8 @@ router.post('/deriv', async (req, res) => {
         role: userRole,
         is_admin: user.isAdmin || false
       },
-      accessToken
-      // refreshToken moved to HttpOnly cookie
+      accessToken,
+      refreshToken // Return for fallback
     });
   } catch (error) {
     console.error('Deriv login error:', error);
@@ -260,26 +260,19 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Get refresh token from cookie instead of body
-    const refreshToken = req.cookies?.refreshToken;
+    // Get refresh token from cookie OR body (fallback)
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
     // DEBUG LOGGING
     console.log('[Auth Debug] Refresh attempt');
     console.log('[Auth Debug] Cookies present:', Object.keys(req.cookies || {}));
-    console.log('[Auth Debug] Refresh Token present in cookie:', !!refreshToken);
-    console.log('[Auth Debug] Headers - Origin:', req.headers.origin);
-    console.log('[Auth Debug] Headers - User-Agent:', req.headers['user-agent']);
+    console.log('[Auth Debug] Refresh Token found:', !!refreshToken);
+    console.log('[Auth Debug] Source:', req.cookies?.refreshToken ? 'Cookie' : (req.body?.refreshToken ? 'Body' : 'None'));
 
     if (!refreshToken) {
-      console.warn('[Auth Debug] ❌ No refresh token found in cookies');
+      console.warn('[Auth Debug] ❌ No refresh token found in cookies or body');
       return res.status(401).json({ error: 'Refresh token is required' });
     }
-
-
-    if (!refreshToken) {
-      return res.status(400).json({ error: 'Refresh token is required' });
-    }
-
 
     const decoded = verifyRefreshToken(refreshToken);
     if (!decoded) {
@@ -306,8 +299,8 @@ router.post('/refresh', async (req, res) => {
     // Set new refresh token as HttpOnly cookie
     res.cookie('refreshToken', tokens.refreshToken, COOKIE_OPTIONS);
 
-    // Only return access token in body
-    res.json({ accessToken: tokens.accessToken });
+    // Return new tokens (including refresh token for fallback)
+    res.json({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({ error: 'Token refresh failed' });
