@@ -322,13 +322,13 @@ router.delete('/sessions/:id', authMiddleware, async (req, res) => {
 
 router.post('/sessions/:id/start', authMiddleware, async (req, res) => {
   try {
-    const session = await trading.updateSession(req.params.id, {
-      status: trading.SESSION_STATUS.RUNNING,
-      started_at: new Date().toISOString()
-    });
-    const sessionName = session.session_name || session.name || 'Unnamed';
-    await trading.logActivity('session_started', `Session "${sessionName}" started`, { sessionId: req.params.id });
-    res.json({ success: true, data: session });
+    const botManager = require('../services/botManager');
+
+    console.log(`[Trading] Requesting start for session ${req.params.id}`);
+    const state = await botManager.startBot(req.params.id);
+
+    await trading.logActivity('session_started', `Session started via trading API`, { sessionId: req.params.id });
+    res.json({ success: true, data: state });
   } catch (error) {
     console.error('Error starting session:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -337,12 +337,13 @@ router.post('/sessions/:id/start', authMiddleware, async (req, res) => {
 
 router.post('/sessions/:id/stop', authMiddleware, async (req, res) => {
   try {
-    const session = await trading.updateSession(req.params.id, {
-      status: trading.SESSION_STATUS.COMPLETED,
-      ended_at: new Date().toISOString()
-    });
-    await trading.logActivity('session_stopped', `Session "${session.name}" stopped`, { sessionId: req.params.id });
-    res.json({ success: true, data: session });
+    const botManager = require('../services/botManager');
+
+    console.log(`[Trading] Requesting stop for session ${req.params.id}`);
+    const state = await botManager.stopBot();
+
+    await trading.logActivity('session_stopped', `Session stopped via trading API`, { sessionId: req.params.id });
+    res.json({ success: true, data: state });
   } catch (error) {
     console.error('Error stopping session:', error);
     res.status(500).json({ success: false, error: error.message });
