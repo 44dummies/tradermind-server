@@ -808,6 +808,47 @@ class TradeExecutor {
 
       console.log(`[TradeExecutor]  Trade closed: ${reason}, P&L: $${finalPL.toFixed(2)}, Duration: ${durationSec}s`);
 
+      // === Update Session Stats (Real-time PnL) ===
+      try {
+        const { data: currentSession } = await supabase
+          .from('trading_sessions_v2')
+          .select('current_pnl, trade_count, win_count, loss_count')
+          .eq('id', session.id)
+          .single();
+
+        if (currentSession) {
+          const newPnl = (currentSession.current_pnl || 0) + finalPL;
+          const newTradeCount = (currentSession.trade_count || 0) + 1;
+          const resultCol = finalPL > 0 ? 'win_count' : 'loss_count';
+          const newResultCount = (currentSession[resultCol] || 0) + 1;
+
+          await supabase
+            .from('trading_sessions_v2')
+            .update({
+              current_pnl: newPnl,
+              trade_count: newTradeCount,
+              [resultCol]: newResultCount
+            })
+            .eq('id', session.id);
+
+          // Broadcast updated session stats to all clients
+          if (this.io) {
+            this.io.emit('session_update', {
+              session: {
+                id: session.id,
+                current_pnl: newPnl,
+                trade_count: newTradeCount,
+                [resultCol]: newResultCount,
+                // Include the other count that didn't change
+                [finalPL > 0 ? 'loss_count' : 'win_count']: currentSession[finalPL > 0 ? 'loss_count' : 'win_count']
+              }
+            });
+          }
+        }
+      } catch (statsErr) {
+        console.error('[TradeExecutor] Failed to update session stats:', statsErr);
+      }
+
       // Emit Admin Audit Event
       if (this.io) {
         // Calculate latency from signal if available
