@@ -49,7 +49,7 @@ router.get('/', async (req, res) => {
         // Build query for trades from activity logs
         let tradesQuery = supabase
             .from('trading_activity_logs')
-            .select('*')
+            .select('action_type, action_details, created_at')
             .in('action_type', ['trade_won', 'trade_lost', 'trade_closed']);
 
         if (sessionId) {
@@ -196,7 +196,7 @@ router.get('/accounts', async (req, res) => {
         // Get trade stats grouped by account from activity logs
         let query = supabase
             .from('trading_activity_logs')
-            .select('user_id, metadata, action')
+            .select('user_id, action_details, action_type')
             .in('action_type', ['trade_won', 'trade_lost']);
 
         if (sessionId) {
@@ -390,7 +390,7 @@ router.get('/timeline', async (req, res) => {
 
         let query = supabase
             .from('trading_activity_logs')
-            .select('created_at, metadata, action')
+            .select('created_at, action_details, action_type')
             .in('action_type', ['trade_won', 'trade_lost'])
             .order('created_at', { ascending: true });
 
