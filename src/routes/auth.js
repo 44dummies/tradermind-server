@@ -264,11 +264,17 @@ router.post('/refresh', async (req, res) => {
     const refreshToken = req.cookies?.refreshToken;
 
     // DEBUG LOGGING
-    console.log('[Auth] Refresh attempted. Cookie present:', !!refreshToken);
+    console.log('[Auth Debug] Refresh attempt');
+    console.log('[Auth Debug] Cookies present:', Object.keys(req.cookies || {}));
+    console.log('[Auth Debug] Refresh Token present in cookie:', !!refreshToken);
+    console.log('[Auth Debug] Headers - Origin:', req.headers.origin);
+    console.log('[Auth Debug] Headers - User-Agent:', req.headers['user-agent']);
+
     if (!refreshToken) {
-      console.log('[Auth] Cookies received:', Object.keys(req.cookies || {}));
-      console.log('[Auth] Headers origin:', req.headers.origin);
+      console.warn('[Auth Debug] ❌ No refresh token found in cookies');
+      return res.status(401).json({ error: 'Refresh token is required' });
     }
+
 
     if (!refreshToken) {
       return res.status(400).json({ error: 'Refresh token is required' });

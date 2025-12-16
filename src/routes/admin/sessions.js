@@ -235,24 +235,19 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/start', async (req, res) => {
     try {
         const { id } = req.params;
+        const botManager = require('../../services/botManager'); // Lazy load to avoid circular deps if any
 
-        const { data, error } = await supabase
-            .from('trading_sessions_v2')
-            .update({
-                status: SESSION_STATUS.RUNNING,
-                started_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', id)
-            .select()
-            .single();
+        console.log(`[Admin] Requesting start for session ${id}`);
+        const state = await botManager.startBot(id);
 
-        if (error) throw error;
-
-        res.json({ session: data });
+        res.json({
+            success: true,
+            message: 'Session started successfully',
+            state
+        });
     } catch (error) {
         console.error('Start session error:', error);
-        res.status(500).json({ error: 'Failed to start session' });
+        res.status(500).json({ error: error.message || 'Failed to start session' });
     }
 });
 
@@ -263,24 +258,19 @@ router.post('/:id/start', async (req, res) => {
 router.post('/:id/stop', async (req, res) => {
     try {
         const { id } = req.params;
+        const botManager = require('../../services/botManager');
 
-        const { data, error } = await supabase
-            .from('trading_sessions_v2')
-            .update({
-                status: SESSION_STATUS.COMPLETED,
-                ended_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', id)
-            .select()
-            .single();
+        console.log(`[Admin] Requesting stop for session ${id}`);
+        const state = await botManager.stopBot();
 
-        if (error) throw error;
-
-        res.json({ session: data });
+        res.json({
+            success: true,
+            message: 'Session stopped successfully',
+            state
+        });
     } catch (error) {
         console.error('Stop session error:', error);
-        res.status(500).json({ error: 'Failed to stop session' });
+        res.status(500).json({ error: error.message || 'Failed to stop session' });
     }
 });
 
