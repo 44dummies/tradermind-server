@@ -12,10 +12,25 @@ const { supabase } = require('../db/supabase');
 
 router.get('/accounts', authMiddleware, async (req, res) => {
   try {
+    // Trigger background sync
+    trading.syncUserBalances(req.userId, req.app.get('io'));
+    trading.reconcileUserTrades(req.userId);
+
     const accounts = await trading.getAccounts(req.userId);
     res.json({ success: true, data: accounts });
   } catch (error) {
     console.error('Error fetching accounts:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Trigger manual trade sync
+router.post('/trades/sync', authMiddleware, async (req, res) => {
+  try {
+    const count = await trading.reconcileUserTrades(req.userId);
+    res.json({ success: true, reconciled: count });
+  } catch (error) {
+    console.error('Error syncing trades:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

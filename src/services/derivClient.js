@@ -283,6 +283,51 @@ class DerivClient {
     }
 
     /**
+     * Get profit table (completed trades)
+     */
+    async getProfitTable(accountId, apiToken, limit = 50, offset = 0) {
+        const api = await this.getConnection(accountId, apiToken);
+        const response = await api.send({
+            profit_table: 1,
+            description: 1,
+            limit,
+            offset,
+            sort: 'DESC'
+        });
+
+        if (response.error) {
+            throw new Error(response.error.message);
+        }
+
+        return {
+            count: response.profit_table.count,
+            transactions: response.profit_table.transactions
+        };
+    }
+
+    /**
+     * Get statement (all transactions)
+     */
+    async getStatement(accountId, apiToken, limit = 50, offset = 0) {
+        const api = await this.getConnection(accountId, apiToken);
+        const response = await api.send({
+            statement: 1,
+            description: 1,
+            limit,
+            offset
+        });
+
+        if (response.error) {
+            throw new Error(response.error.message);
+        }
+
+        return {
+            count: response.statement.count,
+            transactions: response.statement.transactions
+        };
+    }
+
+    /**
      * Subscribe to contract updates (for TP/SL monitoring)
      */
     async subscribeToContract(accountId, apiToken, contractId, callback) {

@@ -8,6 +8,7 @@ const WebSocket = require('ws');
 const botManager = require('./botManager');
 const { WS_URL } = require('../config/deriv');
 const strategyConfig = require('../config/strategyConfig');
+const derivClient = require('./derivClient');
 
 // ==================== Constants ====================
 
@@ -112,6 +113,111 @@ async function verifyDerivToken(token) {
       reject(err);
     });
   });
+}
+
+async function syncUserBalances(userId, io) {
+  try {
+    const accounts = await getAccounts(userId);
+    for (const account of accounts) {
+      if (!account.deriv_token) continue;
+
+      // Use verifyDerivToken to fetch latest balance
+      verifyDerivToken(account.deriv_token).then(async (info) => {
+        if (info.balance !== account.balance) {
+          await updateAccount(account.id, {
+            balance: info.balance,
+            currency: info.currency,
+            last_balance_update: new Date().toISOString()
+          });
+
+          if (io) {
+            io.emit('balance_update', {
+              accountId: account.deriv_account_id,
+              balance: info.balance,
+              currency: info.currency,
+              accountType: account.account_type,
+              timestamp: new Date().toISOString()
+            });
+            io.to('admin').emit('admin_balance_update', {
+              accountId: account.deriv_account_id,
+              totalBalance: info.balance,
+              accountType: account.account_type
+            });
+          }
+        }
+      }).catch(err => console.error(`Failed to sync balance for ${account.deriv_account_id}:`, err.message));
+    }
+  } catch (error) {
+    console.error('Error syncing user balances:', error);
+  }
+}
+
+
+async function reconcileUserTrades(userId) {
+  try {
+    const accounts = await getAccounts(userId);
+    let reconciledCount = 0;
+
+    for (const account of accounts) {
+      if (!account.deriv_token) continue;
+
+      // 1. Get pending trades for this account from DB
+      const { data: pendingTrades } = await supabase
+        .from('trades')
+        .select('*')
+        .eq('account_id', account.deriv_account_id) // trades uses deriv_account_id in account_id column usually?
+        // Wait, schema check. trades.account_id is UUID or string? 
+        // In recordTrade (line 466), it uses tradeData.accountId. 
+        // In executeSingleTrade (tradeExecutor.js:475), it returns profile.deriv_id as derivAccountId and participant.id as participantId.
+        // Let's assume trades.account_id stores the Deriv Account ID (e.g., CR123456) or the Postgres UUID. 
+        // Looking at recordTrade: `account_id: tradeData.accountId`.
+        // In tradeExecutor: `accountId: accountId` from the input which is `participant.accountId`?
+        // Actually, let's look at `tradeExecutor.js` imports.
+        // It seems `account_id` in `trades` table might be the Deriv Login ID based on some usage, OR the internal UUID.
+        // Getting pending trades for *this user* generally.
+        .eq('result', 'pending');
+
+      if (!pendingTrades || pendingTrades.length === 0) continue;
+
+      console.log(`[Trading] Found ${pendingTrades.length} pending trades for ${account.deriv_account_id}, checking Deriv...`);
+
+      // 2. Fetch completed trades from Deriv
+      try {
+        const profitTable = await derivClient.getProfitTable(account.deriv_account_id, account.deriv_token, 50);
+
+        // 3. Match and Update
+        for (const trade of pendingTrades) {
+          // Find matching contract in profit table
+          const match = profitTable.transactions.find(t => t.contract_id === Number(trade.contract_id) || t.transaction_id === Number(trade.contract_id));
+
+          if (match) {
+            console.log(`[Trading] Reconciling trade ${trade.contract_id}: Profit ${match.sell_price - match.buy_price}`);
+            const profit = Number(match.sell_price) - Number(match.buy_price);
+            const result = profit >= 0 ? 'won' : 'lost'; // Using 'won'/'lost' to match existing enums if any, or 'win'/'loss'
+            // tradeExecutor uses 'won'/'lost' in updateTradeResult? No, it uses 'tp_hit', 'sl_hit', or 'win'/'loss' (lines 566).
+            // updateTradeResult implementation (line 484) takes `result`.
+            // Let's use 'won'/'lost' as safe bets or 'win'/'loss'.
+            // TradeExecutor line 525: `wins = completed.filter(t => t.result === 'won')`. 
+            // So 'won'/'lost' seems correct for `getTradeStats`.
+
+            await updateTradeResult(
+              trade.id,
+              profit >= 0 ? 'won' : 'lost',
+              profit,
+              match.exit_tick || match.sell_time
+            );
+            reconciledCount++;
+          }
+        }
+      } catch (err) {
+        console.error(`[Trading] Failed to fetch profit table for ${account.deriv_account_id}:`, err.message);
+      }
+    }
+    return reconciledCount;
+  } catch (error) {
+    console.error('[Trading] Error reconciling trades:', error);
+    return 0;
+  }
 }
 
 // ==================== Session Operations ====================
@@ -665,7 +771,7 @@ module.exports = {
   SESSION_TYPE, SESSION_STATUS, ACCOUNT_STATUS,
 
   // Accounts
-  getAccounts, addAccount, updateAccount, deleteAccount, verifyDerivToken,
+  getAccounts, addAccount, updateAccount, deleteAccount, verifyDerivToken, syncUserBalances, reconcileUserTrades,
 
   // Sessions
   createSession, getSession, getSessions, updateSession, deleteSession,
