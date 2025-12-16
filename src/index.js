@@ -133,7 +133,11 @@ app.use('/api/user/recovery', authMiddleware, isUser, userRecoveryRoutes);
 app.use('/api/events', eventsRouter);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    deploy_check: 'check-1'
+  });
 });
 
 app.get('/api/health/db', async (req, res) => {
