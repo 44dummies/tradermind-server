@@ -142,6 +142,12 @@ router.post('/', async (req, res) => {
 
         if (error) throw error;
 
+        // Emit real-time update
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('session_update', { session: data });
+        }
+
         res.status(201).json({ session: data });
     } catch (error) {
         console.error('Create session error:', error);
@@ -180,6 +186,12 @@ router.put('/:id', async (req, res) => {
             .single();
 
         if (error) throw error;
+
+        // Emit real-time update
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('session_update', { session: data });
+        }
 
         res.json({ session: data });
     } catch (error) {
@@ -220,6 +232,14 @@ router.delete('/:id', async (req, res) => {
             .eq('id', id);
 
         if (error) throw error;
+
+        // Emit removal event (send status cancelled/deleted so frontend removes it)
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('session_update', {
+                session: { id, status: 'cancelled' }
+            });
+        }
 
         res.json({ success: true });
     } catch (error) {

@@ -147,6 +147,13 @@ class BotManager {
 
     console.log(`[BotManager]  Session status after update: ${verifySession?.status}`);
 
+    // Emit status update
+    if (this.io) {
+      this.io.emit('session_status', {
+        session: { id: sessionId, status: statusToSet, started_at: new Date().toISOString() }
+      });
+    }
+
     // Start components
     this.state.isRunning = true;
     this.state.isPaused = false;
@@ -190,7 +197,7 @@ class BotManager {
             created_at: new Date().toISOString()
           });
 
-          // Emit event to connected clients
+          // Emit event to connected clients handled by stopBot now, but specific end reason here
           if (this.io) {
             this.io.emit('session_ended', {
               sessionId,
@@ -245,6 +252,12 @@ class BotManager {
           ended_at: new Date().toISOString()
         })
         .eq('id', sessionId);
+
+      if (this.io) {
+        this.io.emit('session_status', {
+          session: { id: sessionId, status: 'completed', ended_at: new Date().toISOString() }
+        });
+      }
     }
 
     console.log(`[BotManager] Bot stopped for session ${sessionId}`);
@@ -265,6 +278,12 @@ class BotManager {
         .from(sessionTable)
         .update({ status: 'paused', paused_at: new Date().toISOString() })
         .eq('id', this.state.activeSessionId);
+
+      if (this.io) {
+        this.io.emit('session_status', {
+          session: { id: this.state.activeSessionId, status: 'paused' }
+        });
+      }
     }
     return this.getState();
   }
@@ -284,6 +303,12 @@ class BotManager {
         .from(sessionTable)
         .update({ status: statusToSet })
         .eq('id', this.state.activeSessionId);
+
+      if (this.io) {
+        this.io.emit('session_status', {
+          session: { id: this.state.activeSessionId, status: statusToSet }
+        });
+      }
     }
     return this.getState();
   }
@@ -320,6 +345,12 @@ class BotManager {
           ended_at: new Date().toISOString()
         })
         .eq('id', sessionId);
+
+      if (this.io) {
+        this.io.emit('session_status', {
+          session: { id: sessionId, status: 'cancelled', ended_at: new Date().toISOString() }
+        });
+      }
     }
 
     console.log(`[BotManager] EMERGENCY STOP executed. Reason: ${reason}`);
