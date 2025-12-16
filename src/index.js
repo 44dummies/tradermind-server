@@ -132,11 +132,11 @@ app.use('/api/user/recovery', authMiddleware, isUser, userRecoveryRoutes);
 // SSE Events route for real-time dashboard
 app.use('/api/events', eventsRouter);
 
-app.get('/health', (req, res) => {
+app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.get('/health/db', async (req, res) => {
+app.get('/api/health/db', async (req, res) => {
   try {
     const { supabase } = require('./db/supabase');
     const { data, error } = await supabase.from('Chatroom').select('id').limit(1);
