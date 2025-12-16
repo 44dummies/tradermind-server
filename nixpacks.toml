@@ -1,0 +1,15 @@
+# Nixpacks configuration for TraderMind Server
+# This file tells Railway how to build the Node.js server
+
+[phases.setup]
+nixPkgs = ["nodejs_18"]
+
+[phases.install]
+cmds = ["npm ci --omit=dev"]
+
+# No build phase needed - this is a Node.js server, not a frontend
+[phases.build]
+cmds = []
+
+[start]
+cmd = "node src/index.js"
