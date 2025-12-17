@@ -124,7 +124,7 @@ async function syncUserBalances(userId, io) {
       // Use optimized getBalance (Cached + Backoff + Reused Connection)
       try {
         const info = await derivClient.getBalance(account.deriv_account_id, account.deriv_token);
-        
+
         if (info.balance !== account.balance) {
           await updateAccount(account.id, {
             balance: info.balance,
@@ -148,7 +148,7 @@ async function syncUserBalances(userId, io) {
           }
         }
       } catch (err) {
-         console.error(`Failed to sync balance for ${account.deriv_account_id}:`, err.message);
+        console.error(`Failed to sync balance for ${account.deriv_account_id}:`, err.message);
       }
     }
   } catch (error) {
@@ -292,8 +292,9 @@ async function getSessions(adminId, options = {}) {
     .select('*');
 
   if (options.publicAccess) {
-    // For normal users, show only pending/active sessions regardless of creator
-    query = query.in('status', ['pending', 'active']);
+    // For normal users, show only pending/active/running sessions regardless of creator
+    // Fix: Include 'running' which is used by V2 sessions
+    query = query.in('status', ['pending', 'active', 'running']);
   } else {
     // For admins, restrictive by owner
     query = query.eq('admin_id', adminId);
