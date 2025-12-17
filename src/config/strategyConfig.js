@@ -19,6 +19,14 @@ module.exports = {
     enabled: true,
     maxDrawdownPct: 15
   },
+  riskGuard: {
+    maxGlobalConcurrent: 10,
+    maxConcurrentPerAsset: 3
+  },
+  rateLimits: {
+    tradesPerMinute: 30,
+    tradesPerHour: 500
+  },
   minBalance: 10,
   minTp: 5,
   minSl: 3,

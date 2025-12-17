@@ -15,16 +15,17 @@ class RiskEngine {
     /**
      * Comprehensive Risk Check
      */
-    checkRisk(sessionId, sessionData, signal) {
+    async checkRisk(sessionId, sessionData, signal) {
         // 1. Rate Limit
         try {
-            this.rateLimiter.checkLimit(sessionId);
+            await this.rateLimiter.checkLimit(sessionId);
         } catch (e) {
             return { allowed: false, reason: 'rate_limit', detail: e.message };
         }
 
         // 2. Correlation / Risk Guard
-        if (!this.correlationManager.canEnterTrade(signal.market)) {
+        const canEnter = await this.correlationManager.canEnterTrade(signal.market);
+        if (!canEnter) {
             return { allowed: false, reason: 'risk_guard_limit', detail: 'Max concurrent trades reached' };
         }
 
@@ -49,12 +50,12 @@ class RiskEngine {
         return { allowed: true };
     }
 
-    registerTrade(trade) {
-        this.correlationManager.registerTrade(trade.contractId, trade.market);
+    async registerTrade(trade) {
+        await this.correlationManager.registerTrade(trade.contractId, trade.market);
     }
 
-    deregisterTrade(trade) {
-        this.correlationManager.deregisterTrade(trade.contractId, trade.market);
+    async deregisterTrade(trade) {
+        await this.correlationManager.deregisterTrade(trade.market, trade.contractId);
     }
 }
 

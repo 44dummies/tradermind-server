@@ -3,61 +3,100 @@
  * Manages exposure to specific assets and ensures diversification
  */
 const { messageQueue } = require('../queue');
+const strategyConfig = require('../config/strategyConfig');
 
 class CorrelationManager {
     constructor(config = {}) {
-        this.maxConcurrentPerAsset = config.maxConcurrentPerAsset || 3;
-        this.maxGlobalConcurrent = config.maxGlobalConcurrent || 10;
-
-        // In-memory tracking (could be Redis backed for scaling)
-        this.activeTrades = new Map(); // asset -> Set(tradeIds)
-        this.totalTrades = 0;
+        this.maxConcurrentPerAsset = config.maxConcurrentPerAsset || strategyConfig.riskGuard?.maxConcurrentPerAsset || 3;
+        this.maxGlobalConcurrent = config.maxGlobalConcurrent || strategyConfig.riskGuard?.maxGlobalConcurrent || 10;
+        this.redis = messageQueue.redis; // Access underlying redis client
     }
 
     /**
-     * Check if trade is allowed based on current exposure
+     * Check if trade is allowed based on current exposure (Redis Persisted)
      * @param {string} asset - e.g. "R_100"
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    canEnterTrade(asset) {
-        // 1. Check Global Limit
-        if (this.totalTrades >= this.maxGlobalConcurrent) {
-            console.warn(`[CorrelationManager] Global trade limit reached (${this.totalTrades})`);
+    async canEnterTrade(asset) {
+        if (!messageQueue.isReady() || !this.redis) {
+            console.warn('[CorrelationManager] Redis not ready, allowing trade (fail-open) or blocking? Blocking for safety.');
             return false;
         }
 
-        // 2. Check Asset Limit
-        const assetTrades = this.activeTrades.get(asset) || new Set();
-        if (assetTrades.size >= this.maxConcurrentPerAsset) {
-            console.warn(`[CorrelationManager] Asset limit reached for ${asset} (${assetTrades.size})`);
-            return false;
-        }
+        const globalKey = 'risk:global_trades';
+        const assetKey = `risk:asset_trades:${asset}`;
 
-        return true;
-    }
+        try {
+            // Check counts
+            const currentGlobal = parseInt(await this.redis.get(globalKey) || '0');
+            const currentAsset = await this.redis.scard(assetKey);
 
-    /**
-     * Register a new trade
-     */
-    registerTrade(asset, tradeId) {
-        if (!this.activeTrades.has(asset)) {
-            this.activeTrades.set(asset, new Set());
-        }
-        this.activeTrades.get(asset).add(tradeId);
-        this.totalTrades++;
-        console.log(`[CorrelationManager] Registered trade ${tradeId} for ${asset}. Total: ${this.totalTrades}`);
-    }
-
-    /**
-     * Deregister a closed trade
-     */
-    deregisterTrade(asset, tradeId) {
-        if (this.activeTrades.has(asset)) {
-            const set = this.activeTrades.get(asset);
-            if (set.delete(tradeId)) {
-                this.totalTrades--;
-                console.log(`[CorrelationManager] Deregistered trade ${tradeId} for ${asset}. Total: ${this.totalTrades}`);
+            if (currentGlobal >= this.maxGlobalConcurrent) {
+                console.warn(`[CorrelationManager] Global trade limit reached (${currentGlobal}/${this.maxGlobalConcurrent})`);
+                return false;
             }
+
+            if (currentAsset >= this.maxConcurrentPerAsset) {
+                console.warn(`[CorrelationManager] Asset limit reached for ${asset} (${currentAsset}/${this.maxConcurrentPerAsset})`);
+                return false;
+            }
+
+            return true;
+        } catch (e) {
+            console.error('[CorrelationManager] Redis check failed:', e);
+            return false; // Fail safe
+        }
+    }
+
+    /**
+     * Register a new trade (Redis Persisted)
+     */
+    async registerTrade(asset, tradeId) {
+        if (!messageQueue.isReady() || !this.redis) return;
+
+        const globalKey = 'risk:global_trades';
+        const assetKey = `risk:asset_trades:${asset}`;
+        const tradeKey = `risk:trade:${tradeId}`; // Metadata
+
+        try {
+            const multi = this.redis.multi();
+            multi.incr(globalKey);
+            multi.sadd(assetKey, tradeId);
+            // Auto-expire metadata after 24h to keep DB clean
+            multi.set(tradeKey, JSON.stringify({ asset, registeredAt: Date.now() }), 'EX', 86400);
+            await multi.exec();
+
+            console.log(`[CorrelationManager] Registered trade ${tradeId} for ${asset}`);
+        } catch (e) {
+            console.error('[CorrelationManager] Register failed:', e);
+        }
+    }
+
+    /**
+     * Deregister a closed trade (Redis Persisted)
+     */
+    async deregisterTrade(asset, tradeId) {
+        if (!messageQueue.isReady() || !this.redis) return;
+
+        const globalKey = 'risk:global_trades';
+        const assetKey = `risk:asset_trades:${asset}`;
+
+        // If asset is unknown (e.g. restart), try to recover from tradeKey? 
+        // For now assume passed asset is correct (TradeExecutor tracks it)
+
+        try {
+            const multi = this.redis.multi();
+            multi.decr(globalKey);
+            multi.srem(assetKey, tradeId);
+            multi.del(`risk:trade:${tradeId}`);
+
+            // Safety: ensure global counter doesn't go below 0
+            // decr handles it, but semantic check is good. Redis handles atomic decr provided we are consistent.
+
+            await multi.exec();
+            console.log(`[CorrelationManager] Deregistered trade ${tradeId} for ${asset}`);
+        } catch (e) {
+            console.error('[CorrelationManager] Deregister failed:', e);
         }
     }
 }

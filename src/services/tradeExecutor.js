@@ -185,7 +185,7 @@ class TradeExecutor {
 
       // ==================== RISK ENGINE CHECK ====================
       // Centralized verification of Rate Limits, Correlation, and Session Safety
-      const riskCheck = riskEngine.checkRisk(sessionId, sessionData, signal);
+      const riskCheck = await riskEngine.checkRisk(sessionId, sessionData, signal);
 
       if (!riskCheck.allowed) {
         console.warn(`[TradeExecutor] 🛑 Risk Blocked: ${riskCheck.reason} (${riskCheck.detail})`);

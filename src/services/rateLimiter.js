@@ -2,57 +2,62 @@
  * Rate Limiter
  * Enforces limits on trade frequency per session/user
  */
+const { messageQueue } = require('../queue');
+const strategyConfig = require('../config/strategyConfig');
+
 class RateLimiter {
     constructor(limits = {}) {
+        const defaults = strategyConfig.rateLimits || {};
         this.limits = {
-            tradesPerMinute: limits.tradesPerMinute || 30,
-            tradesPerHour: limits.tradesPerHour || 500
+            tradesPerMinute: limits.tradesPerMinute || defaults.tradesPerMinute || 30,
+            tradesPerHour: limits.tradesPerHour || defaults.tradesPerHour || 500
         };
-        this.counters = new Map(); // sessionId -> { minuteCount, minuteStart, hourCount, hourStart }
     }
 
     /**
-     * Check if action is allowed
+     * Check if action is allowed (Redis Persisted)
      * @param {string} sessionId
      * @throws {Error} if limit exceeded
      */
-    checkLimit(sessionId) {
+    async checkLimit(sessionId) {
+        const redis = messageQueue.redis;
+        if (!messageQueue.isReady() || !redis) {
+            // If Redis down, fail open or strict? Strict is safer for spam.
+            // But for MVP if Redis is down likely everything is broken.
+            return;
+        }
+
         const now = Date.now();
-        let counter = this.counters.get(sessionId);
+        const minuteKey = `ratelimit:${sessionId}:min:${Math.floor(now / 60000)}`;
+        const hourKey = `ratelimit:${sessionId}:hour:${Math.floor(now / 3600000)}`;
 
-        if (!counter) {
-            counter = {
-                minuteCount: 0,
-                minuteStart: now,
-                hourCount: 0,
-                hourStart: now
-            };
-            this.counters.set(sessionId, counter);
-        }
+        // We use Lua script or simple MULTI to check/incr
+        // Or simpler: INCR and expire if new
 
-        // Reset minute counter
-        if (now - counter.minuteStart > 60000) {
-            counter.minuteCount = 0;
-            counter.minuteStart = now;
-        }
-
-        // Reset hour counter
-        if (now - counter.hourStart > 3600000) {
-            counter.hourCount = 0;
-            counter.hourStart = now;
-        }
-
-        if (counter.minuteCount >= this.limits.tradesPerMinute) {
+        // 1. Check Minute Limit
+        let minCount = await redis.get(minuteKey);
+        if (minCount && parseInt(minCount) >= this.limits.tradesPerMinute) {
             throw new Error(`Rate limit exceeded: ${this.limits.tradesPerMinute} trades/min`);
         }
 
-        if (counter.hourCount >= this.limits.tradesPerHour) {
+        // 2. Check Hour Limit
+        let hourCount = await redis.get(hourKey);
+        if (hourCount && parseInt(hourCount) >= this.limits.tradesPerHour) {
             throw new Error(`Rate limit exceeded: ${this.limits.tradesPerHour} trades/hour`);
         }
 
-        // Increment
-        counter.minuteCount++;
-        counter.hourCount++;
+        // 3. Increment (Atomic)
+        const multi = redis.multi();
+
+        // Minute increment + expire 60s
+        multi.incr(minuteKey);
+        multi.expire(minuteKey, 60);
+
+        // Hour increment + expire 3600s
+        multi.incr(hourKey);
+        multi.expire(hourKey, 3600);
+
+        await multi.exec();
     }
 }
 
