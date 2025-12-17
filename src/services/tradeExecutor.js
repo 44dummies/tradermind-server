@@ -968,8 +968,11 @@ class TradeExecutor {
       const monitorId = `${tradeResult.contractId}_${tradeResult.accountId}`;
 
       // Stop monitor (Unsubscribe and remove listener)
+      let wsToUse = null;
+
       if (this.activeMonitors.has(monitorId)) {
         const monitor = this.activeMonitors.get(monitorId);
+        wsToUse = monitor.ws; // Capture WS for sell order before deletion
 
         // CLEAR INTERVAL (Memory Leak Fix)
         if (monitor.timeStopInterval) {
@@ -980,17 +983,13 @@ class TradeExecutor {
         if (monitor.ws && monitor.handler) {
           monitor.ws.removeListener('message', monitor.handler);
 
-          // Targeted Unsubscribe
           if (monitor.subscriptionId) {
-            monitor.ws.send(JSON.stringify({ forget: monitor.subscriptionId }));
-            // No need to log excessively, just fire and forget the forget command
-          } else {
-            // Fallback if no ID (should be rare/legacy)
-            // ...
+            try {
+              monitor.ws.send(JSON.stringify({ forget: monitor.subscriptionId }));
+            } catch (e) {/* ignore */ }
           }
         }
 
-        // Remove from map
         this.activeMonitors.delete(monitorId);
 
         // PERSISTENCE: Remove from Redis
@@ -1001,20 +1000,23 @@ class TradeExecutor {
         }
 
         // CORRELATION: Free up slot
-        riskEngine.deregisterTrade({ contractId: tradeResult.contractId, market: tradeResult.market });
+        await riskEngine.deregisterTrade({ contractId: tradeResult.contractId, market: tradeResult.market });
       }
 
       // Sell contract if still open
-      const ws = this.activeConnections.get(tradeResult.derivAccountId);
-      if (ws) {
+      // Use the WS from the monitor we just closed
+      if (wsToUse && wsToUse.readyState === WebSocket.OPEN) {
         try {
-          await this.sendRequest(ws, {
+          console.log(`[TradeExecutor] Attempting close sell for ${tradeResult.contractId}`);
+          await this.sendRequest(wsToUse, {
             sell: tradeResult.contractId,
             price: 0 // Market price
           });
         } catch (error) {
           console.error('[TradeExecutor] Sell error:', error);
         }
+      } else {
+        console.warn(`[TradeExecutor] Could not sell ${tradeResult.contractId} - No active WS connection found.`);
       }
 
       // Update trade record
