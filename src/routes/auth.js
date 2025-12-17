@@ -276,6 +276,7 @@ router.post('/refresh', async (req, res) => {
 
     const decoded = verifyRefreshToken(refreshToken);
     if (!decoded) {
+      console.warn('[Auth Debug] ❌ Refresh failed: Token verification failed (Invalid signature or expired)');
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
@@ -283,8 +284,16 @@ router.post('/refresh', async (req, res) => {
       where: { id: decoded.userId }
     });
 
-    if (!user || user.refreshToken !== refreshToken) {
-      return res.status(401).json({ error: 'Invalid refresh token' });
+    if (!user) {
+      console.warn(`[Auth Debug] ❌ Refresh failed: User not found for ID ${decoded.userId}`);
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    if (user.refreshToken !== refreshToken) {
+      console.warn(`[Auth Debug] ❌ Refresh failed: Token mismatch for user ${decoded.username} (${decoded.userId})`);
+      console.warn(`[Auth Debug] Expected: ${user.refreshToken?.substring(0, 10)}...`);
+      console.warn(`[Auth Debug] Received: ${refreshToken.substring(0, 10)}...`);
+      return res.status(401).json({ error: 'Refresh token mismatch (possible rotation issue)' });
     }
 
     // Generate tokens with role
