@@ -42,20 +42,15 @@ class ConnectionManager {
         // Check if existing connection is alive
         if (connection) {
             if (connection.ws.readyState === WebSocket.OPEN) {
-                connection.lastUsed = now;
                 connection.accountIds.add(accountId);
                 return connection.ws;
-            } else if (connection.ws.readyState === WebSocket.CONNECTING) {
-                // Wait for it to open
-                return new Promise((resolve, reject) => {
-                    // Simple poll for simplicity, or we could add listeners
-                    // For robust implementation, we should probably attach a once listener
-                    // but seeing as this is high throughput, let's just create new if not OPEN/CONNECTING properly
-                    // actually better to wait a bit
-                });
             }
 
-            // Dead connection, clean up
+            // If not OPEN, treat as dead/connecting-forever and replace
+            console.warn(`[ConnectionManager] Found connection in state ${connection.ws.readyState}, creating new one.`);
+            try { connection.ws.terminate(); } catch (e) { }
+
+            // Clean up old pool entry
             this.pool.delete(token);
         }
 
@@ -99,6 +94,7 @@ class ConnectionManager {
             });
 
             ws.on('error', (err) => {
+                console.error(`[ConnectionManager] WebSocket error (authorized: ${isAuthorized}):`, err.message);
                 if (!isAuthorized) reject(err);
             });
 
