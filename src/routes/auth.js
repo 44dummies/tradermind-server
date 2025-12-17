@@ -260,41 +260,50 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Get refresh token: Prioritize cookie (browser shared state) over body (potentially stale local state)
-    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+    // Get all potential tokens (Cookie and Body)
+    const candidates = [req.cookies?.refreshToken, req.body?.refreshToken].filter(Boolean);
+    const uniqueCandidates = [...new Set(candidates)];
 
-    // DEBUG LOGGING
-    console.log('[Auth Debug] Refresh attempt');
-    console.log('[Auth Debug] Cookies present:', Object.keys(req.cookies || {}));
-    console.log('[Auth Debug] Refresh Token found:', !!refreshToken);
-    console.log('[Auth Debug] Source:', req.cookies?.refreshToken ? 'Cookie' : (req.body?.refreshToken ? 'Body' : 'None'));
+    console.log(`[Auth Debug] Refresh candidates: ${uniqueCandidates.length}`);
 
-    if (!refreshToken) {
+    if (uniqueCandidates.length === 0) {
       console.warn('[Auth Debug] ❌ No refresh token found in cookies or body');
       return res.status(401).json({ error: 'Refresh token is required' });
     }
 
-    const decoded = verifyRefreshToken(refreshToken);
-    if (!decoded) {
-      console.warn('[Auth Debug] ❌ Refresh failed: Token verification failed (Invalid signature or expired)');
-      return res.status(401).json({ error: 'Invalid or expired refresh token' });
-    }
+    let user = null;
+    let validToken = null;
+    let decodeError = false;
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    });
+    // Try to find ONE valid token that matches DB
+    for (const token of uniqueCandidates) {
+      const decoded = verifyRefreshToken(token);
+      if (!decoded) {
+        decodeError = true;
+        continue;
+      }
+
+      const tempUser = await prisma.user.findUnique({ where: { id: decoded.userId } });
+
+      if (tempUser && tempUser.refreshToken === token) {
+        user = tempUser;
+        validToken = token;
+        console.log(`[Auth Debug] ✅ Valid match found via ${token === req.cookies?.refreshToken ? 'Cookie' : 'Body'}`);
+        break;
+      } else if (tempUser) {
+        console.warn(`[Auth Debug] ⚠️ Token mismatch for user ${tempUser.username}`);
+      }
+    }
 
     if (!user) {
-      console.warn(`[Auth Debug] ❌ Refresh failed: User not found for ID ${decoded.userId}`);
-      return res.status(401).json({ error: 'User not found' });
+      const msg = decodeError ? 'Invalid or expired refresh token' : 'Refresh token mismatch (possible rotation issue)';
+      console.warn(`[Auth Debug] ❌ Refresh failed: ${msg}`);
+      return res.status(401).json({ error: msg });
     }
 
-    if (user.refreshToken !== refreshToken) {
-      console.warn(`[Auth Debug] ❌ Refresh failed: Token mismatch for user ${decoded.username} (${decoded.userId})`);
-      console.warn(`[Auth Debug] Expected: ${user.refreshToken?.substring(0, 10)}...`);
-      console.warn(`[Auth Debug] Received: ${refreshToken.substring(0, 10)}...`);
-      return res.status(401).json({ error: 'Refresh token mismatch (possible rotation issue)' });
-    }
+    // Reuse validToken for rotation logic (user is already set)
+    const decoded = { userId: user.id, username: user.username }; // Mock decoded for legacy flow if needed, but we have 'user'
+
 
     // Generate tokens with role
     const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
