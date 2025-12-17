@@ -232,7 +232,8 @@ class BotManager {
 
   async stopBot() {
     if (!this.state.isRunning) {
-      throw new Error('Bot is not running');
+      console.log('[BotManager] Bot is already stopped. Stop request ignored.');
+      return this.getState();
     }
 
     const sessionId = this.state.activeSessionId;

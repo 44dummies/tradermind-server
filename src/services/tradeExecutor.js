@@ -1556,8 +1556,8 @@ class TradeExecutor {
 
   getStats() {
     return {
-      activeConnections: this.activeConnections.size,
-      activeMonitors: this.activeMonitors.size
+      activeConnections: connectionManager ? connectionManager.activeConnections?.size || 0 : 0,
+      activeMonitors: this.activeMonitors ? this.activeMonitors.size : 0
     };
   }
 
