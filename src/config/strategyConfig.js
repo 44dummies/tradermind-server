@@ -1,5 +1,11 @@
 // Default strategy configuration
 module.exports = {
+  // Core System
+  minStake: 0.35,
+  rateLimitDelay: 500,
+  connectionTimeout: 30000,
+  requestTimeout: 15000,
+
   // Tier 1 (Core): R_100, R_75, R_50
   // Tier 2 (Exp):  R_25
   markets: ['R_100', 'R_75', 'R_50', 'R_25'],

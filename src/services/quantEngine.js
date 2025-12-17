@@ -50,6 +50,55 @@ function detectRegime(entropy, trendStrength, stability) {
     return 'TRANSITION';
 }
 
+class QuantEngine {
+    constructor() {
+        this.strategies = new Map();
+    }
+
+    /**
+     * Calculate Kelly Criterion Stake
+     * f = (bp - q) / b = p(b+1) - 1 / b
+     * where:
+     * f = fraction of bankroll
+     * b = odds received (payout - 1)
+     * p = probability of win
+     * q = probability of loss (1 - p)
+     * 
+     * @param {number} bankroll - Current available balance
+     * @param {number} winRate - Historical win rate (0.0 - 1.0)
+     * @param {number} payoutRatio - Payout ratio (e.g. 0.95 for 95%)
+     * @param {number} fractional - Safety multiplier (default 0.25)
+     */
+    calculateKellyStake(bankroll, winRate, payoutRatio, fractional = 0.25) {
+        if (winRate <= 0.5) return 0; // Don't trade if edge is negative (simplified)
+
+        // b in formula is net odds (profit / stake)
+        // Deriv payouts are usually ~95% -> b = 0.95
+        const b = payoutRatio;
+        const p = winRate;
+        const q = 1 - p;
+
+        // Full Kelly
+        const f = (p * (b + 1) - 1) / b;
+
+        // Safety: Fractional Kelly
+        const safeF = f * fractional;
+
+        if (safeF <= 0) return 0;
+
+        // Calculate raw stake
+        let stake = bankroll * safeF;
+
+        // Cap at reasonable max (e.g. 5% of bankroll) to prevent ruin from variance
+        const maxRisk = bankroll * 0.05;
+        return Math.min(stake, maxRisk);
+    }
+
+    /**
+     * Evaluate signal quality based on market conditions
+     */
+}
+
 /**
  * Get regime trading recommendation
  */

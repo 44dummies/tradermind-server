@@ -3,6 +3,8 @@ const signalWorker = require('./signalWorker');
 const tradeExecutor = require('./tradeExecutor');
 const quantMemory = require('./quantMemory');
 const tickCollector = require('./tickCollector');
+const notificationService = require('./notificationService');
+const sessionManager = require('./sessionManager');
 
 class BotManager {
   constructor() {
@@ -154,6 +156,9 @@ class BotManager {
       });
     }
 
+    // Send Notification
+    await notificationService.notifySessionStart(sessionId, session.name || session.session_name);
+
     // Start components
     this.state.isRunning = true;
     this.state.isPaused = false;
@@ -253,10 +258,28 @@ class BotManager {
         })
         .eq('id', sessionId);
 
-      if (this.io) {
-        this.io.emit('session_status', {
-          session: { id: sessionId, status: 'completed', ended_at: new Date().toISOString() }
+    }
+
+    // Notify completion with stats
+    if (sessionId) {
+      try {
+        const { stats, session } = await sessionManager.getSessionStats(sessionId);
+        const winRate = stats.totalTrades > 0 ? ((stats.totalTrades - stats.openTrades - stats.closedTrades + stats.closedTrades /* logic fix: just count wins */) / stats.totalTrades * 100).toFixed(1) : 0;
+
+        // Improve stats calculation query in sessionManager or just calc here if needed
+        // Assuming sessionManager stats are basic. Let's filter trades for win rate.
+        const { data: trades } = await supabase.from('trades').select('profit').eq('session_id', sessionId);
+        const wins = trades?.filter(t => t.profit > 0).length || 0;
+        const total = trades?.length || 0;
+        const realWinRate = total > 0 ? ((wins / total) * 100).toFixed(1) : '0.0';
+
+        await notificationService.notifySessionCompleted(sessionId, session?.name || 'Trading Session', {
+          totalTrades: total,
+          winRate: realWinRate,
+          totalProfit: stats.totalPL
         });
+      } catch (err) {
+        console.error('[BotManager] Failed to send stop notification:', err);
       }
     }
 

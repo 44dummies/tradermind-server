@@ -434,14 +434,34 @@ class NotificationService {
   }
 
   /**
-   * Send session invite
+   * Notify session start
    */
-  async sendSessionInvite(userId, sessionId, sessionType) {
-    return this.sendToUser(userId, {
-      type: 'session_invite',
-      title: 'New Session Invitation',
-      message: `You've been invited to a ${sessionType} trading session`,
-      data: { sessionId, sessionType }
+  async notifySessionStart(sessionId, sessionName) {
+    return this.sendToSession(sessionId, {
+      type: 'session_started',
+      title: 'Bot Started 🚀',
+      message: `The trading bot for session "${sessionName}" has started! Good luck!`,
+      data: { sessionId, sessionName }
+    });
+  }
+
+  /**
+   * Notify session completed
+   */
+  async notifySessionCompleted(sessionId, sessionName, stats) {
+    const { totalTrades, winRate, totalProfit } = stats;
+    const profitSign = totalProfit >= 0 ? '+' : '';
+    const emoji = totalProfit >= 0 ? '💰' : '📉';
+
+    return this.sendToSession(sessionId, {
+      type: 'session_completed',
+      title: `Session Ended ${emoji}`,
+      message: `Session "${sessionName}" has ended. Result: ${profitSign}$${totalProfit.toFixed(2)} (${winRate}% Win Rate)`,
+      data: {
+        sessionId,
+        sessionName,
+        stats
+      }
     });
   }
 }

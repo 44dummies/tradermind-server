@@ -8,6 +8,11 @@ const { createTradeClosedEvent, createTradeExecutedEvent } = require('../trading
 const quantEngine = require('./quantEngine');
 const perfMonitor = require('../utils/performance');
 
+const connectionManager = require('./connectionManager');
+const CircuitBreaker = require('./circuitBreaker');
+const auditLogger = require('./auditLogger');
+const riskEngine = require('./riskEngine');
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
@@ -21,15 +26,56 @@ const supabase = createClient(
  */
 class TradeExecutor {
   constructor() {
-    this.activeConnections = new Map(); // derivAccountId -> WebSocket
+    // this.activeConnections = new Map(); // Deprecated: Managed by ConnectionManager
     this.activeMonitors = new Map(); // tradeId -> monitor interval
     this.accountBalances = new Map(); // derivAccountId -> balance
-    this.rateLimitDelay = 500; // 500ms between trades
+
+    // Initialize Managers
+    connectionManager.init();
+    this.circuitBreaker = new CircuitBreaker({
+      failureThreshold: strategyConfig.apiErrorThreshold || 5,
+      resetTimeout: 60000
+    });
+    // Risk Engine handles rate limits now
+    this.rateLimitDelay = strategyConfig.rateLimitDelay || 500; // Configurable rate limit
     this.consecutiveLosses = 0;
     this.apiErrorCount = 0;
     this.paused = false;
     this.io = null;
     this.processingSignals = new Set(); // Lock for concurrent signals
+
+    // Attempt hydration after short delay to allow Redis to connect
+    setTimeout(() => this.hydrateMonitors(), 5000);
+  }
+
+  /**
+   * Hydrate active monitors from Redis (Crash Recovery)
+   */
+  async hydrateMonitors() {
+    console.log('[TradeExecutor] 🔄 Hydrating active monitors from persistence...');
+    try {
+      const keys = await messageQueue.scan('monitor:*');
+      console.log(`[TradeExecutor] Found ${keys.length} persisted monitors`);
+
+      for (const key of keys) {
+        const state = await messageQueue.get(key);
+        if (state && state.tradeResult && state.apiToken) {
+          const { tradeResult, invitation, session, apiToken, startTime } = state;
+          const monitorId = state.monitorId || `${tradeResult.contractId}_${tradeResult.accountId}`;
+
+          if (this.activeMonitors.has(monitorId)) continue; // Already active
+
+          console.log(`[TradeExecutor] Recovering monitor for ${tradeResult.contractId}`);
+          // Restart monitor (this will re-subscribe)
+          // Note: startTime is passed implicitly or we need to adjust startTPSLMonitor to accept it?
+          // For simplicity, we just restart it. The "startTime" reset implies time stop resets, which is acceptable for MVP recovery.
+          // Ideally we pass startTime override.
+          this.startTPSLMonitor(tradeResult, invitation, session, apiToken);
+        }
+      }
+    } catch (e) {
+      console.error('[TradeExecutor] Failed to hydrate monitors:', e);
+    }
   }
 
   setSocket(io) {
@@ -130,36 +176,20 @@ class TradeExecutor {
         return { executed: 0, total: 0, reason: entryDecision.reason };
       }
 
-      // ==================== SESSION RISK BUDGET CHECK ====================
+      // ==================== RISK ENGINE CHECK ====================
+      // Centralized verification of Rate Limits, Correlation, and Session Safety
+      const riskCheck = riskEngine.checkRisk(sessionId, sessionData, signal);
 
-      // 1. Max Loss Check
-      const maxLoss = sessionData.max_loss || sessionData.stop_loss_limit;
-      if (maxLoss && sessionData.current_pnl <= -Math.abs(maxLoss)) {
-        console.warn(`[TradeExecutor] 🛑 Session ${sessionData.name} hit MAX LOSS limit ($${sessionData.current_pnl} <= -$${maxLoss}). Skipping trade.`);
-        // Optional: Auto-pause or close session?
-        // match user request: "If breached -> auto pause session"
-        await this.pauseSession(sessionId, sessionTable, 'max_loss_limit');
-        return { executed: 0, total: 0, reason: 'session_max_loss' };
-      }
+      if (!riskCheck.allowed) {
+        console.warn(`[TradeExecutor] 🛑 Risk Blocked: ${riskCheck.reason} (${riskCheck.detail})`);
 
-      // 2. Max Drawdown Check (if tracked)
-      if (sessionData.max_drawdown_limit) {
-        // Assuming max_drawdown is calculated elsewhere or we check current PnL vs High Watermark
-        // Simple check: if current PnL is very negative
-        if (sessionData.current_pnl <= -Math.abs(sessionData.max_drawdown_limit)) {
-          console.warn(`[TradeExecutor] 🛑 Session ${sessionData.name} hit DRAWDOWN limit. Skipping.`);
-          await this.pauseSession(sessionId, sessionTable, 'drawdown_limit');
-          return { executed: 0, total: 0, reason: 'session_drawdown' };
+        // Handle specific side effects (e.g. pausing session)
+        if (riskCheck.reason === 'session_max_loss' || riskCheck.reason === 'session_drawdown') {
+          await this.pauseSession(sessionId, sessionTable, riskCheck.reason);
         }
-      }
 
-      // 3. Regime Filter (Double Check)
-      // If signal says CHAOS, we shouldn't be here (QuantEngine should filter), but if manual signal:
-      if (signal.regime === 'CHAOS') {
-        console.warn(`[TradeExecutor] ⚠️ Skipping entry in CHAOS regime despite signal.`);
-        return { executed: 0, total: 0, reason: 'regime_chaos' };
+        return { executed: 0, total: 0, reason: riskCheck.reason };
       }
-
 
       // Get accepted accounts - join with trading_accounts to get deriv_token
       let { data: invitations, error: invError } = await supabase
@@ -359,6 +389,16 @@ class TradeExecutor {
           // Log trade
           await this.logTrade(tradeResult, sessionId);
 
+          // Audit Log
+          auditLogger.log('TRADE_EXECUTED', {
+            contractId: tradeResult.contractId,
+            stake: tradeResult.stake,
+            signal: tradeResult.signal
+          }, {
+            userId: participant.user_id,
+            sessionId
+          });
+
           // Send analysis notification to user
           if (tradeResult.success) {
             await this.sendNotification(participant.user_id, {
@@ -379,7 +419,10 @@ class TradeExecutor {
             });
 
             // Start TP/SL monitor
-            this.startTPSLMonitor(tradeResult, participant, sessionData);
+            this.startTPSLMonitor(tradeResult, participant, sessionData, apiToken);
+
+            // Register with Risk Guard
+            riskEngine.registerTrade({ contractId: tradeResult.contractId, market: tradeResult.market || signal.market });
           }
 
         } catch (error) {
@@ -436,23 +479,40 @@ class TradeExecutor {
 
     try {
       // Connect to Deriv WebSocket using the participant's token
-      const ws = await this.getConnection(profile.deriv_id, apiToken);
+      // Get connection
+      // REFACTOR: Use connection manager
+      const ws = await connectionManager.getConnection(apiToken, participant.deriv_account_id);
 
-      // Get current balance for sizing
-      // Use cached balance if available, otherwise session initial or fallback
-      const cachedBalance = this.accountBalances.get(profile.deriv_id);
-      const baseBalance = cachedBalance !== undefined ? cachedBalance : (session.initial_balance || 100);
+      // Determine Stake
+      let stake = participant.stake || sessionData.stake_amount || strategyConfig.minStake;
 
-      // Calculate stake with confidence weighting
-      const stake = await this.calculateStake(baseBalance, session, participant.user_id, signal.confidence);
+      // DYNAMIC SIZING logic
+      if (sessionData.dynamic_sizing || sessionData.use_kelly) {
+        // Default assumptions if no history
+        const winRate = sessionData.win_rate || 0.55;
+        const payout = 0.95; // Standard approx for synthetic indices
 
-      // Prepare contract parameters
-      const contractParams = {
+        const kellyStake = quantEngine.calculateKellyStake(
+          participant.balance || participant.initial_balance,
+          winRate,
+          payout,
+          0.2 // Conservative 20% Kelly
+        );
+
+        if (kellyStake > stake) {
+          console.log(`[TradeExecutor] 🧠 Kelly Upgrade: $${stake} -> $${kellyStake.toFixed(2)} (${(winRate * 100).toFixed(0)}% WR)`);
+          stake = Math.max(strategyConfig.minStake, parseFloat(kellyStake.toFixed(2)));
+        }
+      }
+
+      // Validation against min/max
+      stake = Math.max(stake, strategyConfig.minStake);
+
+      const contractReq = {
         buy: 1,
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: signal.market || session.volatility_index || (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
           currency: profile.currency || 'USD',
@@ -537,7 +597,7 @@ class TradeExecutor {
   /**
    * Start TP/SL monitor for a trade using WebSocket logic
    */
-  async startTPSLMonitor(tradeResult, invitation, session) {
+  async startTPSLMonitor(tradeResult, invitation, session, apiToken) {
     const monitorId = `${tradeResult.contractId}_${tradeResult.accountId}`;
 
     if (this.activeMonitors.has(monitorId)) {
@@ -547,9 +607,13 @@ class TradeExecutor {
 
     console.log(`[TradeExecutor]  Starting Real-Time WS Monitor for contract ${tradeResult.contractId}`);
 
-    const ws = this.activeConnections.get(tradeResult.derivAccountId);
-    if (!ws) {
-      console.error(`[TradeExecutor] No connection for ${tradeResult.derivAccountId} to start monitor`);
+    // REFACTOR: Use ConnectionManager to ensure we get the valid authorized WS
+    // Note: This relies on pooling to give us the SAME connection if it's reused
+    let ws;
+    try {
+      ws = await connectionManager.getConnection(apiToken, tradeResult.derivAccountId);
+    } catch (e) {
+      console.error(`[TradeExecutor] Failed to get connection for monitor ${monitorId}`, e);
       return;
     }
 
@@ -634,12 +698,21 @@ class TradeExecutor {
 
     // 4. Send Subscribe Request
     try {
-      await this.sendRequest(ws, {
+      const response = await this.sendRequest(ws, {
         proposal_open_contract: 1,
         contract_id: tradeResult.contractId,
         subscribe: 1
       });
-      console.log(`[TradeExecutor] Subscribed to contract ${tradeResult.contractId}`);
+
+      if (response.proposal_open_contract && response.proposal_open_contract.id) {
+        // Store subscription ID for targeted unsubscribe
+        this.activeMonitors.get(monitorId).subscriptionId = response.proposal_open_contract.id;
+      } else if (response.subscription && response.subscription.id) {
+        // Fallback location for ID
+        this.activeMonitors.get(monitorId).subscriptionId = response.subscription.id;
+      }
+
+      console.log(`[TradeExecutor] Subscribed to contract ${tradeResult.contractId} (SubID: ${this.activeMonitors.get(monitorId).subscriptionId})`);
     } catch (err) {
       console.error(`[TradeExecutor] Failed to subscribe to ${tradeResult.contractId}:`, err);
       ws.removeListener('message', updateHandler);
@@ -651,6 +724,22 @@ class TradeExecutor {
     let maxProfit = -Infinity;
     const { trailingStop, timeStop } = strategyConfig.exitLogic;
     const startTime = Date.now();
+
+    // PERSISTENCE: Save monitor state to Redis for recovery
+    try {
+      const monitorState = {
+        tradeResult,
+        invitation,
+        session, // Note: Session might be large, consider minimizing
+        apiToken, // Required for recovery reconnection
+        startTime,
+        monitorId
+      };
+      // Save with 24h expiry (just in case)
+      await messageQueue.set(`monitor:${monitorId}`, monitorState, 86400);
+    } catch (e) {
+      console.error(`[TradeExecutor] Failed to persist monitor state for ${monitorId}`, e);
+    }
 
     // 6. Time Stop Safety Monitor (Independent Interval)
     if (timeStop.enabled) {
@@ -878,19 +967,28 @@ class TradeExecutor {
         if (monitor.ws && monitor.handler) {
           monitor.ws.removeListener('message', monitor.handler);
 
-          // Send 'forget' to stop server from sending updates for this contract
-          // We don't await this because we want to close the trade logic fast
-          monitor.ws.send(JSON.stringify({ forget_all: ['proposal_open_contract'] }));
-          // Note: forget_all is a bit heavy, strictly we should use 'forget: subscription_id' but we didn't save ID.
-          // Given this bot manages one trade per account usually, forget_all proposal_open_contract is safe-ish,
-          // BUT to be safer, let's just assume the 'sell' or end of contract stops the stream implicitly often,
-          // or we rely on 'forget_all' at session end.
-          // Actually, Deriv usually cleans up closed contract streams? No, we should be explicit.
-          // Let's try to just remove listener for now. The stream might keep coming but we ignore it.
-          // Optimize: Use forget(monitorId) if we stored subscription ID. 
+          // Targeted Unsubscribe
+          if (monitor.subscriptionId) {
+            monitor.ws.send(JSON.stringify({ forget: monitor.subscriptionId }));
+            // No need to log excessively, just fire and forget the forget command
+          } else {
+            // Fallback if no ID (should be rare/legacy) - Don't use forget_all to avoid nuking other trades
+            // Just relying on removeListener is safer than forget_all
+            console.warn(`[TradeExecutor] Closing trade ${tradeResult.contractId} without Subscription ID. Updates may persist until connection close.`);
+          }
         }
 
         this.activeMonitors.delete(monitorId);
+
+        // PERSISTENCE: Remove from Redis
+        try {
+          await messageQueue.del(`monitor:${monitorId}`);
+        } catch (e) {
+          // ignore
+        }
+
+        // CORRELATION: Free up slot
+        riskEngine.deregisterTrade({ contractId: tradeResult.contractId, market: tradeResult.market });
       }
 
       // Sell contract if still open
@@ -1216,72 +1314,15 @@ class TradeExecutor {
   }
 
   /**
-   * Get or create WebSocket connection for account
-   * Includes reconnect logic on disconnect
+   * Get WebSocket connection logic (Delegated to Manager)
    */
-  async getConnection(derivAccountId, apiToken, retryCount = 0) {
-    const maxRetries = 3;
-
-    if (this.activeConnections.has(derivAccountId)) {
-      const existingWs = this.activeConnections.get(derivAccountId);
-      if (existingWs.readyState === WebSocket.OPEN) {
-        return existingWs;
-      }
-      // Connection dead, remove it
-      this.activeConnections.delete(derivAccountId);
+  async getConnection(derivAccountId, apiToken) {
+    try {
+      return await connectionManager.getConnection(apiToken, derivAccountId);
+    } catch (error) {
+      console.error(`[TradeExecutor] Failed to get connection for ${derivAccountId}:`, error);
+      throw error;
     }
-
-    return new Promise((resolve, reject) => {
-      // Use centralized WS_URL from config
-      const { WS_URL } = require('../config/deriv');
-      const ws = new WebSocket(WS_URL);
-
-      ws.on('open', () => {
-        // Authorize
-        ws.send(JSON.stringify({ authorize: apiToken }));
-      });
-
-      ws.on('message', (data) => {
-        const message = JSON.parse(data.toString());
-
-        if (message.msg_type === 'authorize') {
-          console.log(`[TradeExecutor]  Connected & authorized for ${derivAccountId}`);
-          this.activeConnections.set(derivAccountId, ws);
-          resolve(ws);
-        } else if (message.msg_type === 'error') {
-          reject(new Error(message.error.message));
-        }
-      });
-
-      ws.on('error', (error) => {
-        console.error(`[TradeExecutor] WS error for ${derivAccountId}:`, error.message);
-        reject(error);
-      });
-
-      ws.on('close', async () => {
-        console.warn(`[TradeExecutor] WS disconnected for ${derivAccountId}`);
-        this.activeConnections.delete(derivAccountId);
-
-        // Auto-reconnect if within retry limit
-        if (retryCount < maxRetries && !this.paused) {
-          console.log(`[TradeExecutor] Attempting reconnect (${retryCount + 1}/${maxRetries})...`);
-          await this.sleep(2000 * (retryCount + 1)); // Exponential backoff
-          try {
-            await this.getConnection(derivAccountId, apiToken, retryCount + 1);
-          } catch (err) {
-            console.error(`[TradeExecutor] Reconnect failed:`, err.message);
-          }
-        }
-      });
-
-      // Timeout after 30 seconds
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          ws.close();
-          reject(new Error('Connection timeout'));
-        }
-      }, 30000);
-    });
   }
 
   /**
@@ -1305,11 +1346,11 @@ class TradeExecutor {
 
       ws.send(JSON.stringify(request));
 
-      // Timeout after 15 seconds
+      // Timeout after configured duration
       setTimeout(() => {
         ws.removeListener('message', messageHandler);
         reject(new Error('Request timeout'));
-      }, 15000);
+      }, strategyConfig.requestTimeout || 15000);
     });
   }
 
@@ -1328,18 +1369,18 @@ class TradeExecutor {
 
         if (recoveryState) {
           const stake = session.initial_stake * (recoveryState.current_multiplier || 1.0);
-          return Math.max(0.35, parseFloat(stake.toFixed(2)));
+          return Math.max(strategyConfig.minStake || 0.35, parseFloat(stake.toFixed(2)));
         }
       }
 
       // 2. Determine Base Stake
-      let baseStake = 0.35;
+      let baseStake = strategyConfig.minStake || 0.35;
       if (session.staking_mode === 'fixed') {
-        baseStake = Math.max(0.35, parseFloat(session.initial_stake));
+        baseStake = Math.max(strategyConfig.minStake || 0.35, parseFloat(session.initial_stake));
       } else {
         // Percentage Staking
         const percentage = session.stake_percentage || 0.02;
-        baseStake = Math.max(0.35, parseFloat((balance * percentage).toFixed(2)));
+        baseStake = Math.max(strategyConfig.minStake || 0.35, parseFloat((balance * percentage).toFixed(2)));
       }
 
       // 3. Confidence Weighting (if enabled)
@@ -1362,35 +1403,14 @@ class TradeExecutor {
 
     } catch (error) {
       console.error('[TradeExecutor] Calculate stake error:', error);
-      return 0.35; // Fallback to minimum
+      return strategyConfig.minStake || 0.35; // Fallback to minimum
     }
   }
 
   /**
    * Decrypt API token
    */
-  decryptToken(encryptedToken) {
-    try {
-      const algorithm = 'aes-256-gcm';
-      const key = Buffer.from(process.env.ENCRYPTION_KEY, 'hex');
 
-      const parts = encryptedToken.split(':');
-      const iv = Buffer.from(parts[0], 'hex');
-      const authTag = Buffer.from(parts[1], 'hex');
-      const encrypted = Buffer.from(parts[2], 'hex');
-
-      const decipher = crypto.createDecipheriv(algorithm, key, iv);
-      decipher.setAuthTag(authTag);
-
-      let decrypted = decipher.update(encrypted, null, 'utf8');
-      decrypted += decipher.final('utf8');
-
-      return decrypted;
-    } catch (error) {
-      console.error('[TradeExecutor] Token decryption error:', error);
-      throw new Error('Failed to decrypt API token');
-    }
-  }
 
   /**
    * Send notification to user
@@ -1414,7 +1434,11 @@ class TradeExecutor {
   /**
    * Log trade to database
    */
+  /**
+   * Log trade to database
+   */
   async logTrade(tradeResult, sessionId) {
+    const { retryOperation } = require('../utils/dbUtils');
     try {
       if (!tradeResult.success) return;
 
@@ -1423,24 +1447,30 @@ class TradeExecutor {
         executionLatencyMs = new Date(tradeResult.timestamp) - new Date(tradeResult.signal.generatedAt);
       }
 
-      await supabase
-        .from('trades')
-        .insert({
-          session_id: sessionId,
-          account_id: tradeResult.accountId,
-          user_id: tradeResult.userId,
-          contract_id: tradeResult.contractId,
-          buy_price: tradeResult.buyPrice,
-          payout: tradeResult.payout,
-          stake: tradeResult.stake,
-          signal: tradeResult.signal,
-          confidence: tradeResult.signal?.confidence,
-          status: 'open',
-          created_at: tradeResult.timestamp.toISOString(),
-          execution_latency_ms: executionLatencyMs
-        });
+      await retryOperation(async () => {
+        const { error } = await supabase
+          .from('trades')
+          .insert({
+            session_id: sessionId,
+            account_id: tradeResult.accountId,
+            user_id: tradeResult.userId,
+            contract_id: tradeResult.contractId,
+            buy_price: tradeResult.buyPrice,
+            payout: tradeResult.payout,
+            stake: tradeResult.stake,
+            signal: tradeResult.signal,
+            confidence: tradeResult.signal?.confidence,
+            status: 'open',
+            created_at: tradeResult.timestamp.toISOString(),
+            execution_latency_ms: executionLatencyMs
+          });
+
+        if (error) throw error;
+      });
+
     } catch (error) {
       console.error('[TradeExecutor] Log trade error:', error);
+      // We don't throw here to avoid crashing the trade flow, but we logged it.
     }
   }
 

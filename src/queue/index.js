@@ -235,6 +235,55 @@ class MessageQueue {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+
+    /**
+     * KV Store: Set value
+     */
+    async set(key, value, ttlSec = null) {
+        if (!this.isConnected) return null;
+        if (typeof value === 'object') value = JSON.stringify(value);
+
+        if (ttlSec) {
+            return await this.redis.set(key, value, 'EX', ttlSec);
+        }
+        return await this.redis.set(key, value);
+    }
+
+    /**
+     * KV Store: Get value
+     */
+    async get(key) {
+        if (!this.isConnected) return null;
+        const val = await this.redis.get(key);
+        try {
+            return JSON.parse(val);
+        } catch (e) {
+            return val;
+        }
+    }
+
+    /**
+     * KV Store: Delete key
+     */
+    async del(key) {
+        if (!this.isConnected) return null;
+        return await this.redis.del(key);
+    }
+
+    /**
+     * KV Store: Scan keys
+     */
+    async scan(pattern) {
+        if (!this.isConnected) return [];
+        const keys = [];
+        let cursor = '0';
+        do {
+            const [nextCursor, batch] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+            cursor = nextCursor;
+            keys.push(...batch);
+        } while (cursor !== '0');
+        return keys;
+    }
 }
 
 // Singleton instance
