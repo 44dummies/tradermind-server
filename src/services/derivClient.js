@@ -265,21 +265,70 @@ class DerivClient {
     }
 
     /**
-     * Get account balance
+     * Get account balance (Cached + Backoff)
      */
     async getBalance(accountId, apiToken) {
-        const api = await this.getConnection(accountId, apiToken);
-        const response = await api.balance();
+        // 1. Check Cache (15s default)
+        const cacheKey = `balance:${accountId}`;
+        const { messageQueue } = require('../queue'); // Lazy load to avoid circular deps if any
 
-        if (response.error) {
-            throw new Error(response.error.message);
+        if (messageQueue.isReady()) {
+            try {
+                const cached = await messageQueue.get(cacheKey);
+                // messageQueue.get returns valid object or null
+                if (cached) {
+                    return cached;
+                }
+            } catch (e) {
+                console.warn(`[DerivClient] Cache read error for ${accountId}:`, e.message);
+            }
         }
 
-        return {
-            balance: response.balance.balance,
-            currency: response.balance.currency,
-            loginid: response.balance.loginid
+        // 2. Fetch with Backoff
+        const fetchRemote = async (retryCount = 0) => {
+            try {
+                const api = await this.getConnection(accountId, apiToken);
+                const response = await api.balance();
+
+                if (response.error) {
+                    if (response.error.code === 'RateLimit' && retryCount < 5) {
+                        const delay = 1000 * Math.pow(2, retryCount);
+                        console.warn(`[DerivClient] Rate limit hit for ${accountId}. Retrying in ${delay}ms...`);
+                        await new Promise(r => setTimeout(r, delay));
+                        return fetchRemote(retryCount + 1);
+                    }
+                    throw new Error(response.error.message);
+                }
+
+                const balanceData = {
+                    balance: response.balance.balance,
+                    currency: response.balance.currency,
+                    loginid: response.balance.loginid
+                };
+
+                // 3. Set Cache
+                if (messageQueue.isReady()) {
+                    // cache for 15 seconds
+                    try {
+                        await messageQueue.redis.set(cacheKey, JSON.stringify(balanceData), 'EX', 15);
+                    } catch (e) { /* ignore cache write errors */ }
+                }
+
+                return balanceData;
+
+            } catch (error) {
+                // If simple connection error, maybe retry? For now let's strict fail on non-RateLimit
+                if (error.message && error.message.includes('RateLimit') && retryCount < 5) {
+                    const delay = 1000 * Math.pow(2, retryCount);
+                    console.warn(`[DerivClient] Rate limit/Connection error for ${accountId}. Retrying in ${delay}ms...`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return fetchRemote(retryCount + 1);
+                }
+                throw error;
+            }
         };
+
+        return fetchRemote();
     }
 
     /**

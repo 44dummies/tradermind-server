@@ -121,8 +121,10 @@ async function syncUserBalances(userId, io) {
     for (const account of accounts) {
       if (!account.deriv_token) continue;
 
-      // Use verifyDerivToken to fetch latest balance
-      verifyDerivToken(account.deriv_token).then(async (info) => {
+      // Use optimized getBalance (Cached + Backoff + Reused Connection)
+      try {
+        const info = await derivClient.getBalance(account.deriv_account_id, account.deriv_token);
+        
         if (info.balance !== account.balance) {
           await updateAccount(account.id, {
             balance: info.balance,
@@ -145,7 +147,9 @@ async function syncUserBalances(userId, io) {
             });
           }
         }
-      }).catch(err => console.error(`Failed to sync balance for ${account.deriv_account_id}:`, err.message));
+      } catch (err) {
+         console.error(`Failed to sync balance for ${account.deriv_account_id}:`, err.message);
+      }
     }
   } catch (error) {
     console.error('Error syncing user balances:', error);
