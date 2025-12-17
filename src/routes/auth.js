@@ -307,18 +307,50 @@ router.post('/refresh', async (req, res) => {
 
     // Generate tokens with role
     const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
-    const tokens = generateTokens(user.id, user.username, userRole, user.isAdmin || false);
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: tokens.refreshToken }
-    });
+    // Decoded token from earlier check
+    const currentExp = verifyRefreshToken(validToken)?.exp;
+    const now = Math.floor(Date.now() / 1000);
+    const ONE_DAY = 24 * 60 * 60;
 
-    // Set new refresh token as HttpOnly cookie
-    res.cookie('refreshToken', tokens.refreshToken, COOKIE_OPTIONS);
+    let newRefreshToken = validToken;
+    let newAccessToken = '';
+
+    // If token expires in less than 24h, Rotate it. Otherwise, reuse it (Sticky Session)
+    if (currentExp && (currentExp - now) < ONE_DAY) {
+      console.log('[Auth Debug] Refresh token expiring soon, rotating...');
+      const tokens = generateTokens(user.id, user.username, userRole, user.isAdmin || false);
+      newAccessToken = tokens.accessToken;
+      newRefreshToken = tokens.refreshToken;
+
+      // Only update DB if we rotated
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: newRefreshToken }
+      });
+    } else {
+      console.log('[Auth Debug] Refresh token valid for >24h, reusing (Sticky)');
+      // Only generate new Access Token
+      const { generateToken } = require('../services/auth'); // Lazy load or assume available
+      // Manually construct payload since generateToken is simple
+      const jwt = require('jsonwebtoken');
+      const JWT_SECRET = process.env.JWT_SECRET;
+      const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
+      newAccessToken = jwt.sign(
+        { userId: user.id, username: user.username, role: userRole, is_admin: user.isAdmin || false },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      // No DB update needed
+    }
+
+    // Set token as HttpOnly cookie (always set to ensure expiry is extended/refreshed in browser)
+    res.cookie('refreshToken', newRefreshToken, COOKIE_OPTIONS);
 
     // Return new tokens (including refresh token for fallback)
-    res.json({ accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
+    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({ error: 'Token refresh failed' });
