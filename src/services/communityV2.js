@@ -43,7 +43,7 @@ async function checkRateLimit(userId, actionType, maxActions, windowMinutes) {
 
   if (error) {
     console.error('Rate limit check error:', error);
-    return true; 
+    return true;
   }
 
   return data;
@@ -53,27 +53,27 @@ function sanitizeText(text) {
   if (!text) return '';
   return text
     .trim()
-    .replace(/<[^>]*>/g, '') 
-    .replace(/javascript:/gi, '') 
-    .replace(/on\w+=/gi, ''); 
+    .replace(/<[^>]*>/g, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+=/gi, '');
 }
 
 async function transformPost(post, currentUserId = null) {
   const author = await getUserProfile(post.user_id);
 
-  
+
   let liked = false;
   if (currentUserId) {
-    
+
     let { data: likeData, error } = await supabase
       .from('community_post_likes')
       .select('id')
       .eq('post_id', post.id)
       .eq('user_id', currentUserId)
       .single();
-    
+
     if (error && error.code === '42P01') {
-      
+
       const { data: voteData } = await supabase
         .from('post_votes')
         .select('id, vote_value')
@@ -86,7 +86,7 @@ async function transformPost(post, currentUserId = null) {
     }
   }
 
-  
+
   const likeCount = post.like_count ?? ((post.upvotes || 0) - (post.downvotes || 0));
   const commentCount = post.comment_count ?? 0;
 
@@ -133,14 +133,14 @@ async function transformComment(comment) {
 }
 
 async function createPost(userId, data) {
-  
+
   try {
     const canPost = await checkRateLimit(userId, 'create_post', 5, 10);
     if (!canPost) {
       return { success: false, error: 'Rate limit exceeded. Please wait before posting again.' };
     }
   } catch (e) {
-    
+
   }
 
   const content = sanitizeText(data.content);
@@ -164,10 +164,10 @@ async function createPost(userId, data) {
     return { success: false, error: 'Invalid post type' };
   }
 
-  
+
   let post, error;
-  
-  
+
+
   const result = await supabase
     .from('community_posts')
     .insert({
@@ -184,7 +184,7 @@ async function createPost(userId, data) {
     })
     .select()
     .single();
-    
+
   post = result.data;
   error = result.error;
 
@@ -207,23 +207,23 @@ async function getFeed(options = {}) {
       userId = null
     } = options;
 
-    
+
     let query = supabase
       .from('community_posts')
       .select('id, user_id, content, title, category, upvotes, downvotes, created_at, updated_at', { count: 'exact' });
 
-    
+
     if (category && category !== 'all') {
       query = query.eq('category', category);
     }
 
-    
+
     switch (sortBy) {
       case 'top':
         query = query.order('upvotes', { ascending: false, nullsFirst: false });
         break;
       case 'trending':
-        
+
         query = query
           .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
           .order('upvotes', { ascending: false, nullsFirst: false });
@@ -233,7 +233,7 @@ async function getFeed(options = {}) {
         query = query.order('created_at', { ascending: false });
     }
 
-    
+
     const offset = (page - 1) * limit;
     query = query.range(offset, offset + limit - 1);
 
@@ -244,7 +244,7 @@ async function getFeed(options = {}) {
       return { posts: [], pagination: { page, limit, total: 0, totalPages: 0, hasMore: false } };
     }
 
-    
+
     const transformedPosts = await Promise.all(
       (posts || []).map(post => transformPost(post, userId))
     );
@@ -283,7 +283,7 @@ async function getPost(postId, userId = null) {
     return null;
   }
 
-  
+
   await supabase
     .from('community_posts')
     .update({ view_count: (post.view_count || 0) + 1 })
@@ -322,16 +322,16 @@ async function deletePost(userId, postId) {
 async function likePost(userId, postId, liked) {
   try {
     if (liked) {
-      
+
       const { error } = await supabase
         .from('community_post_likes')
         .insert({ post_id: postId, user_id: userId });
 
-      if (error && error.code !== '23505') { 
+      if (error && error.code !== '23505') {
         throw error;
       }
     } else {
-      
+
       await supabase
         .from('community_post_likes')
         .delete()
@@ -339,7 +339,7 @@ async function likePost(userId, postId, liked) {
         .eq('user_id', userId);
     }
 
-    
+
     const { data: post } = await supabase
       .from('community_posts')
       .select('like_count')
@@ -384,7 +384,7 @@ async function getComments(postId, options = {}) {
 }
 
 async function addComment(userId, postId, content) {
-  
+
   const canComment = await checkRateLimit(userId, 'add_comment', 20, 5);
   if (!canComment) {
     return { success: false, error: 'Rate limit exceeded. Please wait before commenting again.' };
@@ -400,7 +400,7 @@ async function addComment(userId, postId, content) {
     return { success: false, error: 'Comment is too long (max 2000 characters)' };
   }
 
-  
+
   const { data: post, error: postError } = await supabase
     .from('community_posts')
     .select('id')
@@ -431,7 +431,7 @@ async function addComment(userId, postId, content) {
 
   const transformedComment = await transformComment(comment);
 
-  
+
   const { data: updatedPost } = await supabase
     .from('community_posts')
     .select('comment_count')
@@ -521,7 +521,7 @@ async function getOnlineUsers(limit = 50) {
 
 async function uploadPostImage(userId, file) {
   const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-  const maxSize = 2 * 1024 * 1024; 
+  const maxSize = 2 * 1024 * 1024;
 
   if (!allowedTypes.includes(file.mimetype)) {
     return { success: false, error: 'Invalid file type. Only JPG, PNG, and WebP allowed.' };
@@ -597,8 +597,8 @@ async function uploadPostFile(userId, file) {
     .from('community-files')
     .getPublicUrl(data.path);
 
-  return { 
-    success: true, 
+  return {
+    success: true,
     url: urlData.publicUrl,
     fileName: file.originalname,
     fileType: file.mimetype,
@@ -609,7 +609,7 @@ async function uploadPostFile(userId, file) {
 // Get all media (images and files) shared in community
 async function getSharedMedia(options = {}) {
   const { page = 1, limit = 50, type = 'all' } = options;
-  
+
   try {
     // Get posts with images
     let imageQuery = supabase
@@ -640,7 +640,7 @@ async function getSharedMedia(options = {}) {
     // Transform to media items
     const mediaItems = await Promise.all((posts || []).map(async (post) => {
       const author = await getUserProfile(post.user_id);
-      
+
       if (post.image_url) {
         return {
           id: `img_${post.id}`,
@@ -698,15 +698,33 @@ async function getSharedMedia(options = {}) {
 async function initializeCommunityStorage() {
   try {
     const { data: buckets } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some(b => b.name === 'community-files');
-    
-    if (!bucketExists) {
+    // Check/Create community-files bucket
+    const fileBucket = buckets?.find(b => b.name === 'community-files');
+    if (!fileBucket) {
       await supabase.storage.createBucket('community-files', {
         public: true,
-        fileSizeLimit: 10 * 1024 * 1024 // 10MB
+        fileSizeLimit: 10 * 1024 * 1024, // 10MB
+        allowedMimeTypes: null // Allow all
       });
       console.log('[Community] Created community-files bucket');
+    } else if (!fileBucket.public) {
+      // Optional: Update to public if not
+      await supabase.storage.updateBucket('community-files', { public: true });
     }
+
+    // Check/Create post-images bucket
+    const imgBucket = buckets?.find(b => b.name === 'post-images');
+    if (!imgBucket) {
+      await supabase.storage.createBucket('post-images', {
+        public: true,
+        fileSizeLimit: 2 * 1024 * 1024, // 2MB
+        allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+      });
+      console.log('[Community] Created post-images bucket');
+    } else if (!imgBucket.public) {
+      await supabase.storage.updateBucket('post-images', { public: true });
+    }
+
   } catch (error) {
     console.error('[Community] Failed to initialize storage:', error);
   }

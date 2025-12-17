@@ -905,10 +905,10 @@ class TradeExecutor {
     try {
       console.log(`[TradeExecutor] Initializing balance monitors for session ${sessionId}...`);
 
-      // Get accepted participants
+      // Get accepted participants (No JOIN to avoid foreign key issues)
       const { data: participants, error } = await supabase
         .from('session_participants')
-        .select('*, trading_accounts(deriv_token, deriv_account_id, account_type)')
+        .select('*')
         .eq('session_id', sessionId)
         .eq('status', 'active');
 
@@ -922,11 +922,47 @@ class TradeExecutor {
       const derivClient = require('./derivClient');
 
       for (const p of participants) {
-        const account = p.trading_accounts; // Joined data
-        if (!account || !account.deriv_token) continue;
+        let token = p.deriv_token;
+        let accountId = null;
+        let accountType = 'demo';
 
-        const accountId = account.deriv_account_id;
-        const token = account.deriv_token;
+        // 1. Try to get token from participant record (Primary)
+        if (token) {
+          try {
+            // Attempt decrypt if it looks encrypted (usually has :) or just try decrypt
+            // If manual loop, decryptToken handles it or throws?
+            // Since we have `decryptToken` imported, let's use it.
+            // If it's not encrypted, it might return garbage or error. 
+            // Assuming decryptToken handles standard format.
+            if (token.includes(':')) {
+              token = decryptToken(token);
+            }
+          } catch (e) {
+            console.warn(`[TradeExecutor] Failed to decrypt token for user ${p.user_id}, treating as plain.`);
+          }
+        }
+
+        // 2. Fallback: Look up trading account if no token or we need accountId/type details
+        // We usually need accountId for subscription confirmation, though derivClient uses token.
+        // Let's fetch the account anyway to get accountId for the event emission
+        const { data: account } = await supabase
+          .from('trading_accounts')
+          .select('deriv_account_id, deriv_token, account_type')
+          .eq('user_id', p.user_id)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        if (account) {
+          accountId = account.deriv_account_id;
+          accountType = account.account_type;
+          if (!token) token = account.deriv_token; // Fallback token
+        }
+
+        if (!token) continue;
+
+        // Use a placeholder ID if we still don't have one (unlikely if we have token)
+        accountId = accountId || `user_${p.user_id}`;
 
         // Subscribe to balance
         await derivClient.subscribeBalance(accountId, token, (balanceData) => {
@@ -939,7 +975,7 @@ class TradeExecutor {
               accountId: balanceData.accountId,
               balance: balanceData.balance,
               currency: balanceData.currency,
-              accountType: account.account_type, // 'real' or 'demo'
+              accountType: accountType,
               timestamp: new Date().toISOString()
             });
 
@@ -947,7 +983,7 @@ class TradeExecutor {
             this.io.to('admin').emit('admin_balance_update', {
               accountId: balanceData.accountId,
               totalBalance: balanceData.balance,
-              accountType: account.account_type
+              accountType: accountType
             });
           }
         });

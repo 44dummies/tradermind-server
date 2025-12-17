@@ -330,32 +330,35 @@ router.get('/:id/participants', async (req, res) => {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        // Get participants with user profile data
-        const { data: participants, error } = await supabase
+        // Get participants
+        const { data: participantsData, error } = await supabase
             .from('session_participants')
-            .select(`
-                id,
-                user_id,
-                session_id,
-                tp,
-                sl,
-                status,
-                current_pnl,
-                initial_balance,
-                accepted_at,
-                removed_at,
-                removal_reason,
-                user_profiles (
-                    id,
-                    deriv_id,
-                    username,
-                    fullname
-                )
-            `)
+            .select('*')
             .eq('session_id', id)
             .order('accepted_at', { ascending: false });
 
         if (error) throw error;
+
+        // Manually fetch user profiles to avoid JOIN issues
+        const userIds = (participantsData || []).map(p => p.user_id).filter(Boolean);
+        let profilesMap = {};
+
+        if (userIds.length > 0) {
+            const { data: profiles } = await supabase
+                .from('user_profiles')
+                .select('id, deriv_id, username, fullname')
+                .in('id', userIds);
+
+            (profiles || []).forEach(p => {
+                profilesMap[p.id] = p;
+            });
+        }
+
+        // Merge profiles
+        const participants = (participantsData || []).map(p => ({
+            ...p,
+            user_profiles: profilesMap[p.user_id] || { username: 'Unknown User' }
+        }));
 
         // Calculate aggregate stats
         const stats = {

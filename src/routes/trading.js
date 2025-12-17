@@ -307,6 +307,13 @@ router.post('/sessions', authMiddleware, async (req, res) => {
   try {
     const session = await trading.createSession(req.userId, req.body);
     await trading.logActivity('session_created', `Session "${session.name}" created`, { adminId: req.userId, sessionId: session.id });
+
+    // Broadcast new session
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('session_update', session);
+    }
+
     res.status(201).json({ success: true, data: session });
   } catch (error) {
     console.error('Error creating session:', error);
@@ -317,6 +324,13 @@ router.post('/sessions', authMiddleware, async (req, res) => {
 router.put('/sessions/:id', authMiddleware, async (req, res) => {
   try {
     const session = await trading.updateSession(req.params.id, req.body);
+
+    // Broadcast update
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('session_update', session);
+    }
+
     res.json({ success: true, data: session });
   } catch (error) {
     console.error('Error updating session:', error);
@@ -328,6 +342,13 @@ router.delete('/sessions/:id', authMiddleware, async (req, res) => {
   try {
     await trading.deleteSession(req.params.id);
     await trading.logActivity('session_deleted', 'Session deleted', { adminId: req.userId, sessionId: req.params.id });
+
+    // Broadcast delete (as status=cancelled to trigger removal in frontend)
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('session_update', { id: req.params.id, status: 'cancelled' });
+    }
+
     res.json({ success: true, message: 'Session deleted' });
   } catch (error) {
     console.error('Error deleting session:', error);
