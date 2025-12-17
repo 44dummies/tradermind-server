@@ -974,7 +974,7 @@ class TradeExecutor {
         const monitor = this.activeMonitors.get(monitorId);
         wsToUse = monitor.ws; // Capture WS for sell order before deletion
 
-        // CLEAR INTERVAL (Memory Leak Fix)
+        // Clear Time Stop interval
         if (monitor.timeStopInterval) {
           clearInterval(monitor.timeStopInterval);
         }

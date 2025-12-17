@@ -479,11 +479,22 @@ class SessionManager {
   async getSessionStats(sessionId) {
     try {
       // Get session
-      const { data: session } = await supabase
+      // Get session (Try V2 first)
+      const { data: v2Session } = await supabase
+        .from('trading_sessions_v2')
+        .select('*')
+        .eq('id', sessionId)
+        .maybeSingle();
+
+      const { data: v1Session } = !v2Session ? await supabase
         .from('trading_sessions')
         .select('*')
         .eq('id', sessionId)
-        .single();
+        .single() : { data: null };
+
+      const session = v2Session || v1Session;
+
+      if (!session) throw new Error('Session not found for stats');
 
       // Get invitations
       const { data: invitations } = await supabase

@@ -260,8 +260,8 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Get refresh token: Prioritize body (explicit fallback) over cookie (maybe stale/blocked)
-    const refreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
+    // Get refresh token: Prioritize cookie (browser shared state) over body (potentially stale local state)
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
     // DEBUG LOGGING
     console.log('[Auth Debug] Refresh attempt');
