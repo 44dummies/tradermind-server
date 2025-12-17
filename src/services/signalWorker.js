@@ -208,7 +208,23 @@ class SignalWorker {
         }
 
       } catch (err) {
-        console.error(`[SignalWorker] Error processing tick for ${market}:`, err);
+        // Circuit Breaker / Error Throttling
+        this.errorCount = (this.errorCount || 0) + 1;
+        const now = Date.now();
+
+        // Log only if infrequent or new error type
+        if ((now - (this.lastErrorLogTime || 0)) > 30000) {
+          console.error(`[SignalWorker] ⚠ Tick processing error for ${market} (Count: ${this.errorCount}):`, err.message);
+          this.lastErrorLogTime = now;
+        }
+
+        // If error flood, cool down
+        if (this.errorCount > 10) {
+          const pauseMs = config.timeouts?.workerPause || 10000;
+          console.warn(`[SignalWorker] High error rate detected. Pausing signal generation for ${pauseMs / 1000}s.`);
+          this.lastTickTime.set(market, now + pauseMs); // Artificial delay
+          this.errorCount = 0; // Reset
+        }
       }
     }
 

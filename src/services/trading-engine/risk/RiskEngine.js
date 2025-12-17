@@ -3,6 +3,7 @@ const indicators = require('./Indicators');
 const config = require('../config');
 
 // Defensive defaults in case config.risk is undefined
+// Defensive defaults in case config.risk is undefined
 const riskConfig = config.risk || {
     maxDailyLoss: 50,
     maxDrawdown: 0.15,

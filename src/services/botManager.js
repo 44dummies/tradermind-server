@@ -174,11 +174,21 @@ class BotManager {
     tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
 
     // Start signal worker (pass sessionTable so worker knows where to check status if needed)
-    signalWorker.updateSessionStatus(statusToSet);
-    await signalWorker.start(sessionId, session.markets || ['R_100'], process.env.DERIV_API_TOKEN, sessionTable);
+    try {
+      signalWorker.updateSessionStatus(statusToSet);
+      await signalWorker.start(sessionId, session.markets || [strategyConfig.system.defaultMarket], process.env.DERIV_API_TOKEN, sessionTable);
+    } catch (err) {
+      console.error('[BotManager] ⚠ Failed to start SignalWorker:', err.message);
+      this.state.errors.push(`SignalWorker: ${err.message}`);
+    }
 
     // Start Real-time Account Monitoring (Balances)
-    tradeExecutor.monitorSessionAccounts(sessionId, sessionTable);
+    try {
+      tradeExecutor.monitorSessionAccounts(sessionId, sessionTable);
+    } catch (err) {
+      console.error('[BotManager] ⚠ Failed to start Account Monitor:', err.message);
+      this.state.errors.push(`AccountMonitor: ${err.message}`);
+    }
 
     // Session Auto-Stop Timer
     if (session.duration_minutes && session.duration_minutes > 0) {

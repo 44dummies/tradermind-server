@@ -6,6 +6,16 @@ module.exports = {
   connectionTimeout: 30000,
   requestTimeout: 15000,
 
+  // System Defaults (Refactored)
+  system: {
+    defaultMarket: 'R_100',
+    fallbackMarket: 'R_100',
+    retryAttempts: 3
+  },
+  timeouts: {
+    workerPause: 10000, // Circuit breaker pause
+  },
+
   // Tier 1 (Core): R_100, R_75, R_50
   // Tier 2 (Exp):  R_25
   markets: ['R_100', 'R_75', 'R_50', 'R_25'],
@@ -19,6 +29,17 @@ module.exports = {
     enabled: true,
     maxDrawdownPct: 15
   },
+  risk: {
+    // Consolidated Risk Settings
+    enabled: true,
+    maxDailyLoss: 50,
+    maxDrawdownPct: 15,
+    maxExposure: 1000,
+    maxConsecutiveLosses: 5,
+    maxGlobalConcurrent: 10,
+    maxConcurrentPerAsset: 3
+  },
+  // Legacy support for parts of the system using riskGuard
   riskGuard: {
     maxGlobalConcurrent: 10,
     maxConcurrentPerAsset: 3

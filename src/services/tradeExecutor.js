@@ -171,7 +171,7 @@ class TradeExecutor {
         min_balance: session.min_balance || session.minimum_balance || 0,
         default_tp: session.default_tp || session.profit_threshold,
         default_sl: session.default_sl || session.loss_threshold,
-        markets: session.markets || (session.volatility_index ? [session.volatility_index] : ['R_100'])
+        markets: session.markets || (session.volatility_index ? [session.volatility_index] : [strategyConfig.system.defaultMarket])
       };
 
       console.log(`[TradeExecutor] Session: ${sessionData.name} (Table: ${sessionTable}, Type: ${sessionData.type || 'N/A'}, MinBal: $${sessionData.min_balance}, TP: $${sessionData.default_tp}, SL: $${sessionData.default_sl})`);
@@ -520,7 +520,7 @@ class TradeExecutor {
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: signal.market || (session.markets && session.markets[0]) || 'R_100',
+          symbol: signal.market || (session.markets && session.markets[0]) || strategyConfig.system.defaultMarket,
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
           currency: profile.currency || 'USD',
@@ -549,7 +549,7 @@ class TradeExecutor {
           type: 'open',
           sessionId: session.id,  // Add session ID for filtering
           contractId: contract.contract_id,
-          market: session.markets ? session.markets[0] : 'R_100', // Assuming single market for now
+          market: session.markets ? session.markets[0] : strategyConfig.system.defaultMarket, // Assuming single market for now
           signal: signal.side,
           side: signal.side,
           stake: stake,
@@ -564,7 +564,7 @@ class TradeExecutor {
         const executedEvent = createTradeExecutedEvent(
           {
             contract_id: contract.contract_id,
-            symbol: session.markets ? session.markets[0] : 'R_100',
+            symbol: session.markets ? session.markets[0] : strategyConfig.system.defaultMarket,
             direction: signal.side,
             stake: stake,
             entry_price: contract.buy_price,

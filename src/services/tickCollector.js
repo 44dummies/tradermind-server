@@ -183,9 +183,18 @@ class TickCollector extends EventEmitter {
       if (message.tick) {
         this.handleTick(message);
       } else if (message.error) {
-        // Subscription error - log and retry
+        // Subscription error - quiet retry
         const market = message.echo_req?.ticks;
-        console.error(`[TickCollector] ❌ Tick subscription error for ${market}:`, message.error);
+
+        // Rate limit error logs (once per minute per market)
+        const now = Date.now();
+        const lastLog = this.lastErrorLog?.get(market) || 0;
+
+        if (now - lastLog > 60000) {
+          console.warn(`[TickCollector] ⚠ Tick subscription issue for ${market}: ${message.error.code} (Retrying...)`);
+          if (!this.lastErrorLog) this.lastErrorLog = new Map();
+          this.lastErrorLog.set(market, now);
+        }
 
         // Remove failed subscription and retry after delay
         if (market) {
@@ -194,7 +203,7 @@ class TickCollector extends EventEmitter {
           // Retry after 3 seconds
           setTimeout(() => {
             if (this.connected && !this.subscriptions.has(market)) {
-              console.log(`[TickCollector] 🔄 Retrying subscription to ${market}...`);
+              // console.log(`[TickCollector] 🔄 Retrying subscription to ${market}...`); // Silenced retry log
               this.subscribeTicks(market);
             }
           }, 3000);
