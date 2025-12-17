@@ -61,15 +61,22 @@ class TradeExecutor {
         const state = await messageQueue.get(key);
         if (state && state.tradeResult && state.apiToken) {
           const { tradeResult, invitation, session, apiToken, startTime } = state;
-          const monitorId = state.monitorId || `${tradeResult.contractId}_${tradeResult.accountId}`;
+
+          // Validate required fields for recovery
+          if (!tradeResult.contractId || (!tradeResult.accountId && !tradeResult.derivAccountId)) {
+            console.warn('[TradeExecutor] ⚠️ Skipping malformed monitor state:', key);
+            continue;
+          }
+
+          // Ensure robust ID construction
+          const accountId = tradeResult.accountId || tradeResult.derivAccountId;
+          const monitorId = state.monitorId || `${tradeResult.contractId}_${accountId}`;
 
           if (this.activeMonitors.has(monitorId)) continue; // Already active
 
-          console.log(`[TradeExecutor] Recovering monitor for ${tradeResult.contractId}`);
-          // Restart monitor (this will re-subscribe)
-          // Note: startTime is passed implicitly or we need to adjust startTPSLMonitor to accept it?
-          // For simplicity, we just restart it. The "startTime" reset implies time stop resets, which is acceptable for MVP recovery.
-          // Ideally we pass startTime override.
+          console.log(`[TradeExecutor] Recovering monitor for ${tradeResult.contractId} (Account: ${accountId})`);
+
+          // Restart monitor
           this.startTPSLMonitor(tradeResult, invitation, session, apiToken);
         }
       }
@@ -513,6 +520,7 @@ class TradeExecutor {
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
+          symbol: signal.market || (session.markets && session.markets[0]) || 'R_100',
           duration: session.duration || 1,
           duration_unit: session.duration_unit || 't',
           currency: profile.currency || 'USD',
@@ -522,7 +530,7 @@ class TradeExecutor {
       };
 
       // Execute buy
-      const buyResponse = await this.sendRequest(ws, contractParams);
+      const buyResponse = await this.sendRequest(ws, contractReq);
 
       if (buyResponse.error) {
         throw new Error(buyResponse.error.message);
@@ -963,6 +971,11 @@ class TradeExecutor {
       if (this.activeMonitors.has(monitorId)) {
         const monitor = this.activeMonitors.get(monitorId);
 
+        // CLEAR INTERVAL (Memory Leak Fix)
+        if (monitor.timeStopInterval) {
+          clearInterval(monitor.timeStopInterval);
+        }
+
         // Remove the specific message handler
         if (monitor.ws && monitor.handler) {
           monitor.ws.removeListener('message', monitor.handler);
@@ -972,12 +985,12 @@ class TradeExecutor {
             monitor.ws.send(JSON.stringify({ forget: monitor.subscriptionId }));
             // No need to log excessively, just fire and forget the forget command
           } else {
-            // Fallback if no ID (should be rare/legacy) - Don't use forget_all to avoid nuking other trades
-            // Just relying on removeListener is safer than forget_all
-            console.warn(`[TradeExecutor] Closing trade ${tradeResult.contractId} without Subscription ID. Updates may persist until connection close.`);
+            // Fallback if no ID (should be rare/legacy)
+            // ...
           }
         }
 
+        // Remove from map
         this.activeMonitors.delete(monitorId);
 
         // PERSISTENCE: Remove from Redis
@@ -1488,20 +1501,17 @@ class TradeExecutor {
     console.log('[TradeExecutor] Disconnecting all connections...');
 
     // Clear all monitors
-    for (const [id, interval] of this.activeMonitors) {
-      clearInterval(interval);
+    for (const [id, monitor] of this.activeMonitors) {
+      if (monitor.timeStopInterval) clearInterval(monitor.timeStopInterval);
+      // Remove listeners if needed
+      if (monitor.ws && monitor.handler) {
+        monitor.ws.removeListener('message', monitor.handler);
+      }
     }
     this.activeMonitors.clear();
 
-    // Close all WebSocket connections
-    for (const [id, ws] of this.activeConnections) {
-      try {
-        ws.close();
-      } catch (error) {
-        console.error(`[TradeExecutor] Error closing connection ${id}:`, error);
-      }
-    }
-    this.activeConnections.clear();
+    // Close all WebSocket connections via Manager
+    connectionManager.disconnectAll();
 
     console.log('[TradeExecutor] All connections closed');
   }
