@@ -275,15 +275,15 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Use HttpOnly cookie ONLY - no body token to prevent mismatch
-    const refreshTokenFromCookie = req.cookies?.refreshToken;
+    // Simple approach: body token only (sessionStorage on frontend)
+    const refreshToken = req.body?.refreshToken;
 
-    if (!refreshTokenFromCookie) {
-      console.debug('[Auth] No refresh token in cookie, likely new session');
-      return res.status(401).json({ error: 'No refresh token - please log in' });
+    if (!refreshToken) {
+      console.debug('[Auth] No refresh token in body');
+      return res.status(401).json({ error: 'Refresh token required' });
     }
 
-    const decoded = verifyRefreshToken(refreshTokenFromCookie);
+    const decoded = verifyRefreshToken(refreshToken);
     if (!decoded) {
       console.debug('[Auth] Invalid/expired refresh token');
       return res.status(401).json({ error: 'Invalid or expired refresh token' });
@@ -296,10 +296,8 @@ router.post('/refresh', async (req, res) => {
     }
 
     // Check token matches DB
-    if (user.refreshToken !== refreshTokenFromCookie) {
-      console.warn(`[Auth] Token mismatch for ${user.username} - clearing and requiring re-login`);
-      // Clear the mismatched cookie to force fresh login
-      res.clearCookie('refreshToken', { path: '/' });
+    if (user.refreshToken !== refreshToken) {
+      console.warn(`[Auth] Token mismatch for ${user.username}`);
       return res.status(401).json({ error: 'Session expired - please log in again' });
     }
 
@@ -307,12 +305,12 @@ router.post('/refresh', async (req, res) => {
     const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
 
     // Check if token needs rotation (expiring within 24h)
-    const tokenPayload = verifyRefreshToken(refreshTokenFromCookie);
+    const tokenPayload = verifyRefreshToken(refreshToken);
     const currentExp = tokenPayload?.exp;
     const now = Math.floor(Date.now() / 1000);
     const ONE_DAY = 24 * 60 * 60;
 
-    let newRefreshToken = refreshTokenFromCookie;
+    let newRefreshToken = refreshToken;
     let newAccessToken = '';
 
     // If token expires in less than 24h, Rotate it. Otherwise, reuse it (Sticky Session)
@@ -328,8 +326,7 @@ router.post('/refresh', async (req, res) => {
         data: { refreshToken: newRefreshToken }
       });
     } else {
-      console.debug('[Auth] Refresh token valid for >24h, reusing (Sticky)');
-      // Only generate new Access Token
+      console.debug('[Auth] Refresh token valid, generating new access token only');
       const jwt = require('jsonwebtoken');
       const JWT_SECRET = process.env.JWT_SECRET;
       const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
@@ -341,11 +338,8 @@ router.post('/refresh', async (req, res) => {
       );
     }
 
-    // Set token as HttpOnly cookie
-    res.cookie('refreshToken', newRefreshToken, COOKIE_OPTIONS);
-
-    // Return new access token only (refresh is in cookie)
-    res.json({ accessToken: newAccessToken });
+    // Return both tokens in body (frontend stores in sessionStorage)
+    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({ error: 'Token refresh failed' });
