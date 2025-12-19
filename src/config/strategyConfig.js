@@ -21,8 +21,8 @@ module.exports = {
   markets: ['R_100', 'R_75', 'R_50', 'R_25'],
   tickWindow: 50, // number of recent ticks to analyze
   digitFrequencyDepth: 20,
-  minConfidence: 0.58,
-  smartDelayMs: 1500,
+  minConfidence: 0.45, // LOWERED for faster execution (was 0.58)
+  smartDelayMs: 500, // REDUCED delay (was 1500)
   maxLossStreak: 5,
   apiErrorThreshold: 5,
   drawdownGuard: {
