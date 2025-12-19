@@ -93,6 +93,10 @@ const db = {
       if (data.email) dbData.email = data.email;
       if (data.avatarUrl) dbData.profile_photo = data.avatarUrl;
       if (data.traderLevel) dbData.performance_tier = data.traderLevel;
+      // CRITICAL: Map refreshToken for auth to work
+      if (data.refreshToken !== undefined) dbData.refresh_token = data.refreshToken;
+      // Map isAdmin for admin access to work
+      if (data.isAdmin !== undefined) dbData.is_admin = data.isAdmin;
 
       let query = supabase.from('user_profiles').update(dbData);
       if (where.id) query = query.eq('id', where.id);
