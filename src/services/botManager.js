@@ -44,11 +44,11 @@ class BotManager {
     try {
       console.log('[BotManager] 🔄 Checking for active sessions to recover...');
 
-      // Check for 'active' sessions in v2 table
+      // Check for 'running' sessions in v2 table (constraint only allows pending/running/completed)
       const { data: v2Session, error: v2Error } = await supabase
         .from('trading_sessions_v2')
         .select('*')
-        .eq('status', 'active')
+        .eq('status', 'running')
         .maybeSingle();
 
       if (v2Error) {
@@ -56,7 +56,7 @@ class BotManager {
       }
 
       if (v2Session) {
-        console.log(`[BotManager] 🔄 RECOVERING Active V2 session: ${v2Session.id}`);
+        console.log(`[BotManager] 🔄 RECOVERING Running V2 session: ${v2Session.id}`);
         await this.startBot(v2Session.id);
         return;
       }
