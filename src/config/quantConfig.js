@@ -31,13 +31,13 @@ module.exports = {
     // ==================== CONFIDENCE AND VOTING ====================
     confidence: {
         // Stable regime minimum confidence to trade
-        stableMin: 0.25,
+        stableMin: 0.20, // LOWERED for faster entries (was 0.25)
         // Transition regime minimum confidence
-        transitionMin: 0.40,
+        transitionMin: 0.30, // LOWERED (was 0.40)
         // Contradiction threshold (voteRatio below this = reject)
-        contradictionRatio: 0.15,
+        contradictionRatio: 0.10, // LOWERED (was 0.15)
         // Minimum number of agreeing factors to trade
-        minFactors: 2
+        minFactors: 1 // LOWERED from 2 for faster entry
     },
 
     // ==================== DIGIT EXHAUSTION ====================
@@ -89,17 +89,17 @@ module.exports = {
     // ==================== WARMUP ====================
     warmup: {
         // Minimum digits before trading
-        minDigits: 25
+        minDigits: 15 // REDUCED warmup for faster start (was 25)
     },
 
     // ==================== LEARNING WEIGHTS ====================
     learning: {
         // Minimum weight (worst performers)
-        minWeight: 0.3,
+        minWeight: 0.2, // LOWERED (was 0.3)
         // Maximum weight (best performers)
-        maxWeight: 2.0,
+        maxWeight: 2.5, // INCREASED for sharper learning
         // Minimum trades before adjusting weights
-        minTradesForAdjustment: 20
+        minTradesForAdjustment: 5 // REDUCED for faster learning (was 20)
     },
 
     // ==================== CIRCULAR DELTA ====================
