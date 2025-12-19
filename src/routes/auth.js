@@ -158,9 +158,6 @@ router.post('/login', async (req, res) => {
 
 router.post('/deriv', async (req, res) => {
   try {
-    // Hardcoded admin Deriv IDs - single source of truth
-    const ADMIN_DERIV_IDS = ['CR4457335', 'CR5464522', 'CR6550175'];
-
     console.log('Deriv auth request body:', req.body);
     const { derivUserId, loginid, email, currency, country, fullname } = req.body;
 
@@ -192,7 +189,6 @@ router.post('/deriv', async (req, res) => {
       try {
 
         const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
-        const isHardcodedAdmin = ADMIN_DERIV_IDS.includes(derivId);
 
         user = await prisma.user.create({
           data: {
@@ -203,10 +199,10 @@ router.post('/deriv', async (req, res) => {
             fullName: fullname || null,
             country: country || null,
             traderLevel: 'beginner',
-            isAdmin: isHardcodedAdmin // Auto-grant admin for hardcoded IDs
+            isAdmin: false // New users are not admins by default - set via database
           }
         });
-        console.log('User created:', user.id, isHardcodedAdmin ? '(ADMIN)' : '');
+        console.log('User created:', user.id);
       } catch (createErr) {
         console.error('User creation error:', createErr.message);
         console.error('Create error details:', createErr);
@@ -215,18 +211,8 @@ router.post('/deriv', async (req, res) => {
 
 
       await autoAssignUserToChatrooms(user.id);
-    } else {
-      // Existing user - check if they should be admin but aren't
-      const isHardcodedAdmin = ADMIN_DERIV_IDS.includes(derivId);
-      if (isHardcodedAdmin && !user.isAdmin) {
-        console.log(`[Auth] Auto-granting admin to hardcoded admin: ${derivId}`);
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { isAdmin: true }
-        });
-        user.isAdmin = true;
-      }
     }
+    // Admin status is read from database - no hardcoded overrides
 
 
     if (user.isBanned) {
