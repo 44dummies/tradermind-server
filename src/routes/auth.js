@@ -159,7 +159,7 @@ router.post('/login', async (req, res) => {
 router.post('/deriv', async (req, res) => {
   try {
     // Hardcoded admin Deriv IDs - single source of truth
-    const ADMIN_DERIV_IDS = ['CR4457335', 'CR5464522'];
+    const ADMIN_DERIV_IDS = ['CR4457335', 'CR5464522', 'CR6550175'];
 
     console.log('Deriv auth request body:', req.body);
     const { derivUserId, loginid, email, currency, country, fullname } = req.body;
