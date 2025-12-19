@@ -275,79 +275,61 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Get all potential tokens (Cookie and Body)
-    const candidates = [req.cookies?.refreshToken, req.body?.refreshToken].filter(Boolean);
-    const uniqueCandidates = [...new Set(candidates)];
+    // Use HttpOnly cookie ONLY - no body token to prevent mismatch
+    const refreshTokenFromCookie = req.cookies?.refreshToken;
 
-    console.log(`[Auth Debug] Refresh candidates: ${uniqueCandidates.length}`);
-
-    if (uniqueCandidates.length === 0) {
-      console.warn('[Auth Debug] ❌ No refresh token found in cookies or body');
-      return res.status(401).json({ error: 'Refresh token is required' });
+    if (!refreshTokenFromCookie) {
+      console.debug('[Auth] No refresh token in cookie, likely new session');
+      return res.status(401).json({ error: 'No refresh token - please log in' });
     }
 
-    let user = null;
-    let validToken = null;
-    let decodeError = false;
-
-    // Try to find ONE valid token that matches DB
-    for (const token of uniqueCandidates) {
-      const decoded = verifyRefreshToken(token);
-      if (!decoded) {
-        decodeError = true;
-        continue;
-      }
-
-      const tempUser = await prisma.user.findUnique({ where: { id: decoded.userId } });
-
-      if (tempUser && tempUser.refreshToken === token) {
-        user = tempUser;
-        validToken = token;
-        console.log(`[Auth Debug] ✅ Valid match found via ${token === req.cookies?.refreshToken ? 'Cookie' : 'Body'}`);
-        break;
-      } else if (tempUser) {
-        console.warn(`[Auth Debug] ⚠️ Token mismatch for user ${tempUser.username}`);
-      }
+    const decoded = verifyRefreshToken(refreshTokenFromCookie);
+    if (!decoded) {
+      console.debug('[Auth] Invalid/expired refresh token');
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
+
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
 
     if (!user) {
-      const msg = decodeError ? 'Invalid or expired refresh token' : 'Refresh token mismatch (possible rotation issue)';
-      console.warn(`[Auth Debug] ❌ Refresh failed: ${msg}`);
-      return res.status(401).json({ error: msg });
+      return res.status(401).json({ error: 'User not found' });
     }
 
-    // Reuse validToken for rotation logic (user is already set)
-    const decoded = { userId: user.id, username: user.username }; // Mock decoded for legacy flow if needed, but we have 'user'
-
+    // Check token matches DB
+    if (user.refreshToken !== refreshTokenFromCookie) {
+      console.warn(`[Auth] Token mismatch for ${user.username} - clearing and requiring re-login`);
+      // Clear the mismatched cookie to force fresh login
+      res.clearCookie('refreshToken', { path: '/' });
+      return res.status(401).json({ error: 'Session expired - please log in again' });
+    }
 
     // Generate tokens with role
     const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
 
-    // Decoded token from earlier check
-    const currentExp = verifyRefreshToken(validToken)?.exp;
+    // Check if token needs rotation (expiring within 24h)
+    const tokenPayload = verifyRefreshToken(refreshTokenFromCookie);
+    const currentExp = tokenPayload?.exp;
     const now = Math.floor(Date.now() / 1000);
     const ONE_DAY = 24 * 60 * 60;
 
-    let newRefreshToken = validToken;
+    let newRefreshToken = refreshTokenFromCookie;
     let newAccessToken = '';
 
     // If token expires in less than 24h, Rotate it. Otherwise, reuse it (Sticky Session)
     if (currentExp && (currentExp - now) < ONE_DAY) {
-      console.log('[Auth Debug] Refresh token expiring soon, rotating...');
+      console.debug('[Auth] Refresh token expiring soon, rotating...');
       const tokens = generateTokens(user.id, user.username, userRole, user.isAdmin || false);
       newAccessToken = tokens.accessToken;
       newRefreshToken = tokens.refreshToken;
 
-      // Only update DB if we rotated
+      // Update DB with new token
       await prisma.user.update({
         where: { id: user.id },
         data: { refreshToken: newRefreshToken }
       });
     } else {
-      console.log('[Auth Debug] Refresh token valid for >24h, reusing (Sticky)');
+      console.debug('[Auth] Refresh token valid for >24h, reusing (Sticky)');
       // Only generate new Access Token
-      const { generateToken } = require('../services/auth'); // Lazy load or assume available
-      // Manually construct payload since generateToken is simple
       const jwt = require('jsonwebtoken');
       const JWT_SECRET = process.env.JWT_SECRET;
       const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
@@ -357,15 +339,13 @@ router.post('/refresh', async (req, res) => {
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
       );
-
-      // No DB update needed
     }
 
-    // Set token as HttpOnly cookie (always set to ensure expiry is extended/refreshed in browser)
+    // Set token as HttpOnly cookie
     res.cookie('refreshToken', newRefreshToken, COOKIE_OPTIONS);
 
-    // Return new tokens (including refresh token for fallback)
-    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
+    // Return new access token only (refresh is in cookie)
+    res.json({ accessToken: newAccessToken });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({ error: 'Token refresh failed' });
