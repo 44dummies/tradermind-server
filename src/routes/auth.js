@@ -213,6 +213,18 @@ router.post('/deriv', async (req, res) => {
       await autoAssignUserToChatrooms(user.id);
     }
     // Admin status is read from database - no hardcoded overrides
+    // OPTIONAL: Environment variable override for emergency admin access
+    const envAdminIds = process.env.ADMIN_DERIV_IDS?.split(',').map(id => id.trim()) || [];
+    const isEnvAdmin = envAdminIds.includes(derivId);
+    if (isEnvAdmin && !user.isAdmin) {
+      console.log(`[Auth] Environment variable override: granting admin to ${derivId}`);
+      user.isAdmin = true;
+      // Also update in database for persistence
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { isAdmin: true }
+      });
+    }
 
 
     if (user.isBanned) {
