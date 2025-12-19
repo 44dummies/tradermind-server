@@ -223,10 +223,11 @@ router.post('/deriv', async (req, res) => {
     const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
     const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
 
-    // Update user status
+    // Update user status AND sync refresh token to prevent mismatch
     await prisma.user.update({
       where: { id: user.id },
       data: {
+        refreshToken, // CRITICAL: Always sync refresh token to DB on login
         isOnline: true,
         lastSeen: new Date(),
         country: country || user.country
