@@ -49,6 +49,8 @@ class BotManager {
         .from('trading_sessions_v2')
         .select('*')
         .eq('status', 'running')
+        .order('started_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (v2Error) {
