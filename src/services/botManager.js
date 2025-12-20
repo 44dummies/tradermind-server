@@ -399,5 +399,6 @@ class BotManager {
       return this.getState();
     }
   }
+}
 
 module.exports = new BotManager();
