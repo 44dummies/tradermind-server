@@ -40,14 +40,21 @@ router.get('/available', async (req, res) => {
 
         const { data: sessions, error } = await query;
 
-        if (error) throw error;
+        if (error) {
+            console.error('[Sessions] Get available sessions DB error:', error);
+            throw error;
+        }
 
         // Check which sessions user has already joined
-        const { data: participations } = await supabase
+        const { data: participations, error: partError } = await supabase
             .from('session_participants')
             .select('session_id')
             .eq('user_id', userId)
             .in('status', ['active', 'pending']);
+
+        if (partError) {
+            console.error('[Sessions] Get participations DB error:', partError);
+        }
 
         const joinedSessionIds = (participations || []).map(p => p.session_id);
 
@@ -58,8 +65,8 @@ router.get('/available', async (req, res) => {
 
         res.json({ sessions: availableSessions });
     } catch (error) {
-        console.error('Get available sessions error:', error);
-        res.status(500).json({ error: 'Failed to fetch available sessions' });
+        console.error('[Sessions] Get available sessions catch error:', error);
+        res.status(500).json({ error: 'Failed to fetch available sessions', details: error.message });
     }
 });
 
@@ -69,7 +76,10 @@ router.get('/available', async (req, res) => {
  */
 router.get('/status', async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized: User ID missing' });
+        }
 
         const { data: participation, error } = await supabase
             .from('session_participants')
@@ -79,7 +89,10 @@ router.get('/status', async (req, res) => {
             .limit(1)
             .maybeSingle();
 
-        if (error) throw error;
+        if (error) {
+            console.error('[Sessions] Get status DB error:', error);
+            throw error;
+        }
 
         if (!participation) {
             return res.json({
@@ -105,8 +118,8 @@ router.get('/status', async (req, res) => {
             removalReason: participation.removal_reason
         });
     } catch (error) {
-        console.error('Get session status error:', error);
-        res.status(500).json({ error: 'Failed to fetch session status' });
+        console.error('[Sessions] Get session status catch error:', error);
+        res.status(500).json({ error: 'Failed to fetch session status', details: error.message });
     }
 });
 
@@ -131,34 +144,40 @@ router.post('/:sessionId/accept', async (req, res) => {
  */
 async function handleAcceptSession(req, res, sessionId) {
     try {
-        // Resolve user UUID from profile if needed (in case req.user.id is the deriv ID)
-        let userId = req.user.id;
+        console.log('[Sessions] Attempting to accept session. User context:', {
+            id: req.user?.id,
+            username: req.user?.username,
+            derivId: req.user?.derivId
+        });
 
-        // Check if userId is a UVUID or CR ID
+        // Resolve user UUID from profile if needed (in case req.user.id is the deriv ID)
+        let userId = req.user?.id;
+
+        if (!userId) {
+            throw new Error('User context missing ID');
+        }
+
+        // Check if userId is NOT a UUID (e.g. it's a username or CR ID)
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
-            const { data: userProfile } = await supabase
+            const lookupValue = req.user.derivId || req.user.username;
+            console.log(`[Sessions] Resolving UUID for ${lookupValue}`);
+
+            const { data: userProfile, error: profileErr } = await supabase
                 .from('user_profiles')
                 .select('id')
-                .eq('deriv_id', req.user.derivId || req.user.username)
-                .single();
+                .or(`deriv_id.eq."${lookupValue}",username.eq."${lookupValue}"`)
+                .maybeSingle();
 
-            if (userProfile) {
+            if (profileErr) {
+                console.error('[Sessions] Profile resolution error:', profileErr);
+                throw profileErr;
+            }
+
+            if (userProfile?.id) {
                 userId = userProfile.id;
             } else {
-                // Fallback: check auth.users directly via supabase client 
-                // (though routes use anon-proxy-client usually)
-                const { data: authUser } = await supabase
-                    .from('user_profiles')
-                    .select('id')
-                    .eq('username', req.user.username)
-                    .single();
-
-                if (authUser) {
-                    userId = authUser.id;
-                } else {
-                    console.warn('[Sessions] Could not resolve UUID for user:', req.user.username);
-                    // Continue with req.user.id if it's already a UUID or if we must
-                }
+                console.warn(`[Sessions] Could not resolve UUID for: ${lookupValue}`);
+                throw new Error(`User profile not found for ${lookupValue}`);
             }
         }
         const { tp, sl } = req.body;
@@ -280,8 +299,8 @@ async function handleAcceptSession(req, res, sessionId) {
             participation: data
         });
     } catch (error) {
-        console.error('Accept session error:', error);
-        res.status(500).json({ error: 'Failed to join session' });
+        console.error('[Sessions] Accept session catch error:', error);
+        res.status(500).json({ error: 'Failed to join session', details: error.message });
     }
 }
 
