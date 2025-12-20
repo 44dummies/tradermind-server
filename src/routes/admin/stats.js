@@ -261,7 +261,7 @@ router.get('/markets', async (req, res) => {
 
         let query = supabase
             .from('trading_activity_logs')
-            .select('metadata, action')
+            .select('user_id, action_details, action_type')
             .in('action_type', ['trade_won', 'trade_lost']);
 
         if (sessionId) {
@@ -324,7 +324,7 @@ router.get('/strategies', async (req, res) => {
 
         let query = supabase
             .from('trading_activity_logs')
-            .select('metadata, action')
+            .select('user_id, action_details, action_type')
             .in('action_type', ['trade_won', 'trade_lost']);
 
         if (sessionId) {

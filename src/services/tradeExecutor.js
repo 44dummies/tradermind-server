@@ -85,6 +85,8 @@ class TradeExecutor {
     }
   }
 
+
+
   setSocket(io) {
     this.io = io;
   }
@@ -1549,7 +1551,7 @@ class TradeExecutor {
     this.activeMonitors.clear();
 
     // Close all WebSocket connections via Manager
-    connectionManager.disconnectAll();
+    connectionManager.shutdown();
 
     console.log('[TradeExecutor] All connections closed');
   }

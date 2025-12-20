@@ -30,7 +30,7 @@ router.get('/available', async (req, res) => {
         let query = supabase
             .from('trading_sessions_v2')
             .select('id, name, type, min_balance, default_tp, default_sl, status, created_at')
-            .in('status', ['pending', 'active'])
+            .in('status', ['pending', 'active', 'running'])
             .order('created_at', { ascending: false });
 
         // Filter recovery sessions for eligible users only
