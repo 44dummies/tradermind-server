@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "@deriv/deriv-api": "^1.0.15",
