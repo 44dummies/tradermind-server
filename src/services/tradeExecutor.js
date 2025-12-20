@@ -378,7 +378,7 @@ class TradeExecutor {
           profile.deriv_id = tradingAccount.deriv_account_id;
         }
 
-        // Calculate stake for this participant - use min_balance as stake (set by admin)
+        // Calculate stake for this participant - strictly use min_balance as stake if available (User Goal #9)
         const baseStake = sessionData.min_balance || sessionData.initial_stake || 0.35;
 
         // Default TP/SL is 50% of stake if not set by user or session
