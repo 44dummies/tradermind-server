@@ -33,17 +33,17 @@ router.get('/', async (req, res) => {
     try {
         const { sessionId, startDate, endDate, timeRange } = req.query;
 
-        // Calculate date range based on timeRange
+        // Calculate date range based on timeRange (Default to 30d to ensure speed)
         let dateFilter = null;
-        if (timeRange) {
-            const now = new Date();
-            if (timeRange === '24h') {
-                dateFilter = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-            } else if (timeRange === '7d') {
-                dateFilter = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-            } else if (timeRange === '30d') {
-                dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-            }
+        const range = timeRange || '30d'; // Default to 30 days if no range specified
+
+        const now = new Date();
+        if (range === '24h') {
+            dateFilter = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        } else if (range === '7d') {
+            dateFilter = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        } else if (range === '30d') {
+            dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
         }
 
         // Build query for trades from activity logs
