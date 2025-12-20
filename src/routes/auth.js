@@ -275,11 +275,11 @@ router.post('/deriv', async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    // Simple approach: body token only (sessionStorage on frontend)
-    const refreshToken = req.body?.refreshToken;
+    // Simple approach: body token preferred, fallback to cookie
+    const refreshToken = req.body?.refreshToken || req.cookies?.refreshToken;
 
     if (!refreshToken) {
-      console.debug('[Auth] No refresh token in body');
+      console.debug('[Auth] No refresh token in body or cookies');
       return res.status(401).json({ error: 'Refresh token required' });
     }
 
