@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { validateEnv } = require('./config/validateEnv');
 validateEnv(); // Throws if missing required vars
+console.log('[System] Server configuration reloaded at ' + new Date().toISOString());
 
 const express = require('express');
 const http = require('http');

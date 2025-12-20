@@ -160,9 +160,9 @@ class TradeExecutor {
         throw new Error('Session not found');
       }
 
-      // Check if session is active in code (more flexible)
-      if (session.status !== 'active') {
-        console.log(`[TradeExecutor] Session ${session.name || session.session_name} status is '${session.status}', not 'active'. Skipping.`);
+      // Check if session is active in code (more flexible - support active/running)
+      if (session.status !== 'active' && session.status !== 'running') {
+        console.log(`[TradeExecutor] Session ${session.name || session.session_name} status is '${session.status}', not 'active/running'. Skipping.`);
         return { executed: 0, total: 0, reason: `session_${session.status}` };
       }
 
@@ -359,6 +359,9 @@ class TradeExecutor {
         // Store effective values for trade execution
         participant.effectiveTp = effectiveTp;
         participant.effectiveSl = effectiveSl;
+
+        // Ensure we have deriv_account_id for the connection manager
+        participant.deriv_account_id = profile.deriv_id || tradingAccount?.deriv_account_id;
 
         validAccounts.push({
           participant,

@@ -742,34 +742,64 @@ async function startBot() {
   const state = botManager.getState();
   if (state.isRunning) return { success: false, message: 'Bot already running' };
 
-  // 1. Try to find a RUNNING session first
-  let { data: session, error } = await supabase
-    .from('trading_sessions')
+  // 1. Try to find a RUNNING session first (Check V2 then V1)
+  let { data: session } = await supabase
+    .from('trading_sessions_v2')
     .select('*')
-    .eq('status', 'active')
+    .eq('status', 'running')
     .order('created_at', { ascending: false })
     .limit(1)
     .single();
 
+  if (!session) {
+    const { data: v1 } = await supabase
+      .from('trading_sessions')
+      .select('*')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    session = v1;
+  }
+
   // 2. If no running session, try to find a PENDING session and auto-start it
   if (!session) {
-    const { data: pendingSession } = await supabase
-      .from('trading_sessions')
+    const { data: pendingV2 } = await supabase
+      .from('trading_sessions_v2')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    if (pendingSession) {
+    if (pendingV2) {
       // Auto-promote to running
       await supabase
-        .from('trading_sessions')
-        .update({ status: 'active', started_at: new Date().toISOString() })
-        .eq('id', pendingSession.id);
+        .from('trading_sessions_v2')
+        .update({ status: 'running', started_at: new Date().toISOString() })
+        .eq('id', pendingV2.id);
 
-      session = pendingSession;
-      await logActivity('system', `Auto-started pending session: ${session.session_name || session.name}`);
+      session = pendingV2;
+      session.status = 'running';
+      await logActivity('system', `Auto-started pending V2 session: ${session.name}`);
+    } else {
+      const { data: pendingV1 } = await supabase
+        .from('trading_sessions')
+        .select('*')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingV1) {
+        await supabase
+          .from('trading_sessions')
+          .update({ status: 'active', started_at: new Date().toISOString() })
+          .eq('id', pendingV1.id);
+        session = pendingV1;
+        session.status = 'active';
+        await logActivity('system', `Auto-started pending V1 session: ${session.session_name || session.name}`);
+      }
     }
   }
 

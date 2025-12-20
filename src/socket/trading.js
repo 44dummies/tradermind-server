@@ -17,7 +17,7 @@ const userTradingSockets = new Map(); // userId -> Set of socket ids
  */
 function setupTradingHandlers(io, socket) {
   const userId = socket.userId;
-  
+
   // Track user's trading socket
   if (!userTradingSockets.has(userId)) {
     userTradingSockets.set(userId, new Set());
@@ -31,26 +31,26 @@ function setupTradingHandlers(io, socket) {
    */
   socket.on('trading:joinSession', async (data) => {
     const { sessionId } = data;
-    
+
     try {
-      // Verify user has access to this session
-      const { data: invitation } = await supabase
-        .from('session_invitations')
+      // Verify user has access to this session in v2 system
+      const { data: participation } = await supabase
+        .from('session_participants')
         .select('*')
         .eq('session_id', sessionId)
         .eq('user_id', userId)
-        .eq('status', 'accepted')
+        .eq('status', 'active')
         .single();
 
       const { data: session } = await supabase
-        .from('trading_sessions')
+        .from('trading_sessions_v2')
         .select('admin_id')
         .eq('id', sessionId)
         .single();
 
-      if (!invitation && session?.admin_id !== userId) {
-        socket.emit('trading:error', { 
-          message: 'Not authorized to join this session' 
+      if (!participation && session?.admin_id !== userId) {
+        socket.emit('trading:error', {
+          message: 'Not authorized to join this session'
         });
         return;
       }
@@ -64,9 +64,9 @@ function setupTradingHandlers(io, socket) {
       }
       tradingConnections.get(sessionId).add(socket.id);
 
-      socket.emit('trading:joinedSession', { 
+      socket.emit('trading:joinedSession', {
         sessionId,
-        message: 'Successfully joined session' 
+        message: 'Successfully joined session'
       });
 
       // Notify others in session
@@ -90,9 +90,9 @@ function setupTradingHandlers(io, socket) {
   socket.on('trading:leaveSession', (data) => {
     const { sessionId } = data;
     const roomId = `trading:${sessionId}`;
-    
+
     socket.leave(roomId);
-    
+
     // Remove from tracking
     if (tradingConnections.has(sessionId)) {
       tradingConnections.get(sessionId).delete(socket.id);
@@ -116,9 +116,9 @@ function setupTradingHandlers(io, socket) {
   socket.on('trading:subscribeTicks', async (data) => {
     const { volatilityIndex, sessionId } = data;
     const tickRoom = `ticks:${volatilityIndex}`;
-    
+
     socket.join(tickRoom);
-    
+
     socket.emit('trading:ticksSubscribed', {
       volatilityIndex,
       message: `Subscribed to ${volatilityIndex} ticks`
@@ -133,9 +133,9 @@ function setupTradingHandlers(io, socket) {
   socket.on('trading:unsubscribeTicks', (data) => {
     const { volatilityIndex } = data;
     const tickRoom = `ticks:${volatilityIndex}`;
-    
+
     socket.leave(tickRoom);
-    
+
     socket.emit('trading:ticksUnsubscribed', {
       volatilityIndex,
       message: `Unsubscribed from ${volatilityIndex} ticks`
@@ -149,7 +149,7 @@ function setupTradingHandlers(io, socket) {
    */
   socket.on('trading:executeTrade', async (data) => {
     const { sessionId, accountId, contractType, stake, prediction } = data;
-    
+
     try {
       // Verify user owns this account
       const { data: account } = await supabase
@@ -160,8 +160,8 @@ function setupTradingHandlers(io, socket) {
         .single();
 
       if (!account) {
-        socket.emit('trading:error', { 
-          message: 'Account not found or not authorized' 
+        socket.emit('trading:error', {
+          message: 'Account not found or not authorized'
         });
         return;
       }
@@ -202,10 +202,10 @@ function setupTradingHandlers(io, socket) {
    */
   socket.on('trading:startBot', async (data) => {
     const { sessionId, accountId } = data;
-    
+
     try {
       const result = await trading.startBot(userId, sessionId, accountId);
-      
+
       socket.emit('trading:botStarted', {
         sessionId,
         status: 'running',
@@ -231,10 +231,10 @@ function setupTradingHandlers(io, socket) {
    */
   socket.on('trading:stopBot', async (data) => {
     const { sessionId } = data;
-    
+
     try {
       const result = await trading.stopBot(userId, sessionId);
-      
+
       socket.emit('trading:botStopped', {
         sessionId,
         status: 'stopped',
@@ -262,7 +262,7 @@ function setupTradingHandlers(io, socket) {
    */
   socket.on('trading:markNotificationRead', async (data) => {
     const { notificationId } = data;
-    
+
     try {
       await supabase
         .from('trading_notifications')

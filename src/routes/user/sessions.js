@@ -145,7 +145,20 @@ async function handleAcceptSession(req, res, sessionId) {
             if (userProfile) {
                 userId = userProfile.id;
             } else {
-                throw new Error('User profile not found for ID resolution');
+                // Fallback: check auth.users directly via supabase client 
+                // (though routes use anon-proxy-client usually)
+                const { data: authUser } = await supabase
+                    .from('user_profiles')
+                    .select('id')
+                    .eq('username', req.user.username)
+                    .single();
+
+                if (authUser) {
+                    userId = authUser.id;
+                } else {
+                    console.warn('[Sessions] Could not resolve UUID for user:', req.user.username);
+                    // Continue with req.user.id if it's already a UUID or if we must
+                }
             }
         }
         const { tp, sl } = req.body;
@@ -165,7 +178,7 @@ async function handleAcceptSession(req, res, sessionId) {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        if (!['pending', 'active'].includes(session.status)) {
+        if (!['pending', 'active', 'running'].includes(session.status)) {
             return res.status(400).json({ error: 'Session is not accepting participants' });
         }
 
