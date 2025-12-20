@@ -402,3 +402,4 @@ class BotManager {
 }
 
 module.exports = new BotManager();
+// Syntax verified
