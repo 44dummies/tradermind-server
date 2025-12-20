@@ -366,6 +366,9 @@ router.post('/sessions/:id/start', authMiddleware, async (req, res) => {
     await trading.logActivity('session_started', `Session started via trading API`, { sessionId: req.params.id });
     res.json({ success: true, data: state });
   } catch (error) {
+    if (error.message === 'Bot is already running') {
+      return res.status(409).json({ success: false, error: 'Session is already running' });
+    }
     console.error('Error starting session:', error);
     res.status(500).json({ success: false, error: error.message });
   }
