@@ -156,6 +156,8 @@ class BotManager {
       this.io.emit('session_status', {
         session: { id: sessionId, status: statusToSet, started_at: new Date().toISOString() }
       });
+      // Emit generic bot status for dashboard
+      this.io.emit('bot_status', this.getState());
     }
 
     // Send Notification
@@ -274,6 +276,10 @@ class BotManager {
     }
 
     // Notify completion with stats
+    // Emit bot status update
+    if (this.io) {
+      this.io.emit('bot_status', this.getState());
+    }
     if (sessionId) {
       try {
         const { stats, session } = await sessionManager.getSessionStats(sessionId);
@@ -319,6 +325,7 @@ class BotManager {
         this.io.emit('session_status', {
           session: { id: this.state.activeSessionId, status: 'paused' }
         });
+        this.io.emit('bot_status', this.getState());
       }
     }
     return this.getState();
@@ -344,6 +351,7 @@ class BotManager {
         this.io.emit('session_status', {
           session: { id: this.state.activeSessionId, status: statusToSet }
         });
+        this.io.emit('bot_status', this.getState());
       }
     }
     return this.getState();
@@ -382,16 +390,14 @@ class BotManager {
         })
         .eq('id', sessionId);
 
+      // Emit bot status update (Dashboard expects this)
       if (this.io) {
-        this.io.emit('session_status', {
-          session: { id: sessionId, status: 'cancelled', ended_at: new Date().toISOString() }
-        });
+        this.io.emit('bot_status', this.getState());
       }
-    }
 
-    console.log(`[BotManager] EMERGENCY STOP executed. Reason: ${reason}`);
-    return this.getState();
+      console.log(`[BotManager] EMERGENCY STOP executed. Reason: ${reason}`);
+      return this.getState();
+    }
   }
-}
 
 module.exports = new BotManager();

@@ -52,6 +52,7 @@ function setupSocketHandlers(io) {
 
     socket.userId = decoded.id || decoded.derivId;
     socket.username = decoded.fullName || decoded.email || 'Anonymous';
+    socket.role = decoded.role || (decoded.is_admin ? 'admin' : 'user');
     next();
   });
 
@@ -143,6 +144,16 @@ function setupSocketHandlers(io) {
       } catch (err) {
         console.error('Join room error:', err);
         socket.emit('error', { code: 'JOIN_ERROR', message: 'Failed to join room' });
+      }
+    });
+
+    // Admin Room Join (Secure)
+    socket.on('joinAdminRoom', () => {
+      if (socket.role === 'admin' || socket.role === 'ADMIN') {
+        socket.join('admin');
+        console.log(`Admin ${socket.username} joined 'admin' room`);
+      } else {
+        console.warn(`User ${socket.username} attempted to join admin room without permission.`);
       }
     });
 
