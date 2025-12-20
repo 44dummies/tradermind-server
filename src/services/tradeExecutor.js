@@ -80,8 +80,70 @@ class TradeExecutor {
           this.startTPSLMonitor(tradeResult, invitation, session, apiToken);
         }
       }
+      // 2. Reconcile orphaned intents (CTO Phase 2)
+      await this.reconcileOrphanedIntents();
     } catch (e) {
       console.error('[TradeExecutor] Failed to hydrate monitors:', e);
+    }
+  }
+
+  /**
+   * Reconcile trades that were stuck in 'pending_intent' status (Crash Recovery)
+   */
+  async reconcileOrphanedIntents() {
+    console.log('[TradeExecutor] 🔍 Reconciling orphaned trade intents...');
+    try {
+      // Find intents older than 2 minutes that never got a contract ID
+      const { data: orphanedIntents, error } = await supabase
+        .from('trades')
+        .select('*, sessions:session_id(*)')
+        .eq('status', 'pending_intent')
+        .lt('created_at', new Date(Date.now() - 120000).toISOString());
+
+      if (error) throw error;
+      if (!orphanedIntents || orphanedIntents.length === 0) {
+        console.log('[TradeExecutor] ✅ No orphaned intents found');
+        return;
+      }
+
+      console.log(`[TradeExecutor] ⚠️ Found ${orphanedIntents.length} orphaned intents. Attempting recovery...`);
+
+      for (const intent of orphanedIntents) {
+        try {
+          // 1. Get account token
+          const { data: account } = await supabase
+            .from('trading_accounts')
+            .select('encrypted_token')
+            .eq('account_id', intent.account_id)
+            .single();
+
+          if (!account) {
+            await supabase.from('trades').update({ status: 'failed_intent', metadata: { error: 'account_not_found' } }).eq('id', intent.id);
+            continue;
+          }
+
+          // 2. Decrypt token (assuming decryptToken is available or we use derivClient's connection)
+          // For now, let's mark them as 'stale_intent' to prevent infinite retries/clogging
+          // A more advanced version would use Statement API to find the trade.
+
+          console.log(`[TradeExecutor] Marking intent ${intent.id} as stale (Recovered from crash)`);
+          await supabase
+            .from('trades')
+            .update({
+              status: 'stale_intent',
+              metadata: {
+                recovered_at: new Date().toISOString(),
+                original_status: 'pending_intent'
+              }
+            })
+            .eq('id', intent.id);
+
+        } catch (intentErr) {
+          console.error(`[TradeExecutor] Failed to reconcile intent ${intent.id}:`, intentErr);
+        }
+      }
+    } catch (e) {
+      console.error('[TradeExecutor] Reconciliation logic error:', e);
     }
   }
 
@@ -380,84 +442,11 @@ class TradeExecutor {
         };
       }
 
-      // Execute trades for all valid accounts
-      const tradeResults = [];
+      // Execute trades for all valid accounts using parallel batches (CTO Phase 3)
+      const tradeResults = await this.executeParallelBatches(validAccounts, signal, sessionData, sessionId, lockKey);
 
-      for (const { participant, profile, apiToken } of validAccounts) {
-        try {
-          // Rate limiting
-          await this.sleep(this.rateLimitDelay);
-
-          const tradeResult = await this.executeSingleTrade(
-            participant,
-            profile,
-            apiToken,
-            signal,
-            sessionData
-          );
-
-          tradeResults.push(tradeResult);
-
-          // Log trade
-          await this.logTrade(tradeResult, sessionId);
-
-          // Audit Log
-          auditLogger.log('TRADE_EXECUTED', {
-            contractId: tradeResult.contractId,
-            stake: tradeResult.stake,
-            signal: tradeResult.signal
-          }, {
-            userId: participant.user_id,
-            sessionId
-          });
-
-          // Send analysis notification to user
-          if (tradeResult.success) {
-            await this.sendNotification(participant.user_id, {
-              type: 'trade_executed',
-              message: ` Trade Executed: ${tradeResult.signal.side} ${tradeResult.signal.digit}`,
-              data: {
-                contractId: tradeResult.contractId,
-                signal: tradeResult.signal.side,
-                digit: tradeResult.signal.digit,
-                confidence: `${(tradeResult.signal.confidence * 100).toFixed(1)}%`,
-                stake: tradeResult.stake,
-                payout: tradeResult.payout,
-                takeProfit: tradeResult.takeProfit,
-                stopLoss: tradeResult.stopLoss,
-                timestamp: tradeResult.timestamp
-              },
-              sessionId
-            });
-
-            // Start TP/SL monitor
-            this.startTPSLMonitor(tradeResult, participant, sessionData, apiToken);
-
-            // Register with Risk Guard
-            riskEngine.registerTrade({ contractId: tradeResult.contractId, market: tradeResult.market || signal.market });
-          }
-
-        } catch (error) {
-          console.error(`[TradeExecutor] Trade failed for user ${profile.deriv_id}:`, error);
-
-          tradeResults.push({
-            success: false,
-            participantId: participant.id,
-            userId: participant.user_id,
-            derivAccountId: profile.deriv_id,
-            error: error.message
-          });
-
-          await this.sendNotification(participant.user_id, {
-            type: 'trade_failed',
-            message: `Trade execution failed: ${error.message}`,
-            sessionId
-          });
-        }
-      }
-
-      const successCount = tradeResults.filter(r => r.success).length;
-      console.log(`[TradeExecutor]  Executed ${successCount}/${validAccounts.length} trades successfully`);
+      const successCount = tradeResults.filter(r => r && r.success).length;
+      console.log(`[TradeExecutor] 🏁 Finalizing execution for ${validAccounts.length} participants. Success: ${successCount}`);
 
       return {
         success: true,
@@ -466,6 +455,7 @@ class TradeExecutor {
         results: tradeResults,
         invalidAccounts
       };
+
 
     } catch (error) {
       console.error('[TradeExecutor] Multi-account trade error:', error);
@@ -485,7 +475,7 @@ class TradeExecutor {
   /**
    * Execute single trade for one participant
    */
-  async executeSingleTrade(participant, profile, apiToken, signal, session) {
+  async executeSingleTrade(participant, profile, apiToken, signal, sessionData, intentId = null) {
     const perfId = `trade_exec_${profile.deriv_id}_${signal.market}_${Date.now()}`;
     perfMonitor.start(perfId);
 
@@ -1493,7 +1483,7 @@ class TradeExecutor {
   /**
    * Log trade to database
    */
-  async logTrade(tradeResult, sessionId) {
+  async logTrade(tradeResult, sessionId, intentId = null) {
     const { retryOperation } = require('../utils/dbUtils');
     try {
       if (!tradeResult.success) return;
@@ -1504,23 +1494,42 @@ class TradeExecutor {
       }
 
       await retryOperation(async () => {
-        const { error } = await supabase
-          .from('trades')
-          .insert({
-            session_id: sessionId,
-            account_id: tradeResult.accountId,
-            user_id: tradeResult.userId,
-            contract_id: tradeResult.contractId,
-            buy_price: tradeResult.buyPrice,
-            payout: tradeResult.payout,
-            stake: tradeResult.stake,
-            signal: tradeResult.signal,
-            confidence: tradeResult.signal?.confidence,
-            status: 'open',
-            created_at: tradeResult.timestamp.toISOString(),
-            execution_latency_ms: executionLatencyMs
-          });
+        let query;
 
+        if (intentId) {
+          // Update existing intent record
+          query = supabase
+            .from('trades')
+            .update({
+              contract_id: tradeResult.contractId,
+              buy_price: tradeResult.buyPrice,
+              payout: tradeResult.payout,
+              stake: tradeResult.stake,
+              status: 'open',
+              execution_latency_ms: executionLatencyMs
+            })
+            .eq('id', intentId);
+        } else {
+          // Fallback to insert if no intentId provided
+          query = supabase
+            .from('trades')
+            .insert({
+              session_id: sessionId,
+              account_id: tradeResult.accountId || tradeResult.derivAccountId,
+              user_id: tradeResult.userId,
+              contract_id: tradeResult.contractId,
+              buy_price: tradeResult.buyPrice,
+              payout: tradeResult.payout,
+              stake: tradeResult.stake,
+              signal: tradeResult.signal,
+              confidence: tradeResult.signal?.confidence,
+              status: 'open',
+              created_at: (tradeResult.timestamp || new Date()).toISOString(),
+              execution_latency_ms: executionLatencyMs
+            });
+        }
+
+        const { error } = await query;
         if (error) throw error;
       });
 
@@ -1595,6 +1604,7 @@ class TradeExecutor {
       console.error('[TradeExecutor] Pause session error:', err);
     }
   }
+
   /**
    * Evaluate Entry Quality
    * Acts as a risk governor based on session performance and signal context
@@ -1639,6 +1649,140 @@ class TradeExecutor {
     }
 
     return { allow: true };
+  }
+
+  /**
+   * Refactored multi-account loop to use parallel batches
+   */
+  async executeParallelBatches(validAccounts, signal, sessionData, sessionId, lockKey) {
+    const batchSize = strategyConfig.system?.batchSize || 10;
+    const tradeResults = [];
+
+    for (let i = 0; i < validAccounts.length; i += batchSize) {
+      const batch = validAccounts.slice(i, i + batchSize);
+      console.log(`[TradeExecutor] 🚀 Executing batch ${Math.floor(i / batchSize) + 1} (${batch.length} accounts)`);
+
+      const batchPromises = batch.map(async ({ participant, profile, apiToken }) => {
+        try {
+          // 1. Log Intent first (CTO Hardening: Atomicity)
+          const intentId = await this.logIntent(participant, sessionId, signal);
+
+          // 2. Execute Trade
+          const tradeResult = await this.executeSingleTrade(
+            participant,
+            profile,
+            apiToken,
+            signal,
+            sessionData,
+            intentId
+          );
+
+          // 3. Post-Execution Workflow
+          if (tradeResult.success) {
+            // Update trade with contract ID
+            await this.logTrade(tradeResult, sessionId, intentId);
+
+            // Audit Log
+            auditLogger.log('TRADE_EXECUTED', {
+              contractId: tradeResult.contractId,
+              stake: tradeResult.stake,
+              signal: tradeResult.signal
+            }, {
+              userId: participant.user_id,
+              sessionId
+            });
+
+            // Send notification
+            await this.sendNotification(participant.user_id, {
+              type: 'trade_executed',
+              message: ` Trade Executed: ${tradeResult.signal.side} ${tradeResult.signal.digit}`,
+              data: {
+                contractId: tradeResult.contractId,
+                signal: tradeResult.signal.side,
+                digit: tradeResult.signal.digit,
+                confidence: `${(tradeResult.signal.confidence * 100).toFixed(1)}%`,
+                stake: tradeResult.stake,
+                payout: tradeResult.payout,
+                takeProfit: tradeResult.takeProfit,
+                stopLoss: tradeResult.stopLoss,
+                timestamp: tradeResult.timestamp
+              },
+              sessionId
+            });
+
+            // Start Monitor
+            this.startTPSLMonitor(tradeResult, participant, sessionData, apiToken);
+
+            // Register with Risk Guard
+            riskEngine.registerTrade({ contractId: tradeResult.contractId, market: tradeResult.market || signal.market });
+          } else {
+            // Log failed trade attempt
+            tradeResult.success = false;
+            tradeResult.userId = participant.user_id;
+            tradeResult.error = tradeResult.error || 'Execution failed';
+          }
+
+          return tradeResult;
+        } catch (error) {
+          console.error(`[TradeExecutor] Batch trade error for user ${participant.user_id}:`, error);
+          return { success: false, userId: participant.user_id, error: error.message };
+        }
+      });
+
+      const results = await Promise.all(batchPromises);
+      tradeResults.push(...results);
+
+      // Brief pause between batches to avoid overloading the gateway or Redis
+      if (i + batchSize < validAccounts.length) {
+        await this.sleep(strategyConfig.system?.batchDelay || 500);
+      }
+    }
+
+    return tradeResults;
+  }
+
+  /**
+   * Log a trade intent before sending to Deriv
+   */
+  async logIntent(participant, sessionId, signal) {
+    try {
+      const { data, error } = await supabase
+        .from('trades')
+        .insert({
+          session_id: sessionId,
+          account_id: participant.deriv_account_id,
+          user_id: participant.user_id,
+          status: 'pending_intent',
+          signal: signal,
+          stake: 0,
+          created_at: new Date().toISOString()
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        console.warn('[TradeExecutor] Intent logging DB error:', error.message);
+        return null; // Don't block trade if DB is just slow, but we've warned
+      }
+      return data.id;
+    } catch (err) {
+      console.error('[TradeExecutor] Intent logging fatal error:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Update trade intent with real contract ID
+   */
+  async updateTradeWithContract(tradeId, contractId) {
+    try {
+      await supabase
+        .from('trades')
+        .update({ contract_id: contractId, status: 'open' })
+        .eq('id', tradeId);
+    } catch (err) {
+      console.error('[TradeExecutor] Failed to update trade intent:', err.message);
+    }
   }
 }
 

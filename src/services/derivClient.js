@@ -16,9 +16,10 @@ const WS_ENDPOINT = 'ws.derivws.com';
 
 class DerivClient {
     constructor() {
-        this.connections = new Map(); // accountId -> { api, authorized }
+        this.connections = new Map(); // accountId -> { api, connection, authorized, dispatch }
         this.tickSubscriptions = new Map(); // symbol -> subscription
         this.balanceSubscriptions = new Map(); // accountId -> subscription
+        this.contractListeners = new Map(); // contractId -> callback
         this.reconnectAttempts = new Map();
         this.maxReconnectAttempts = 5;
     }
@@ -62,10 +63,32 @@ class DerivClient {
 
                     console.log(`[DerivClient]  Authorized account ${authResponse.authorize.loginid}`);
 
+                    // Central dispatcher for this connection (CTO Phase 3: Resource Engineering)
+                    const dispatch = (data) => {
+                        try {
+                            const msg = JSON.parse(data.toString());
+
+                            // 1. Balance updates
+                            if (msg.msg_type === 'balance' && this.balanceListeners?.has(accountId)) {
+                                this.balanceListeners.get(accountId)(msg.balance);
+                            }
+
+                            // 2. Contract updates
+                            if (msg.proposal_open_contract && this.contractListeners?.has(msg.proposal_open_contract.contract_id)) {
+                                this.contractListeners.get(msg.proposal_open_contract.contract_id)(msg.proposal_open_contract);
+                            }
+
+                            // ... add more as needed
+                        } catch (e) { /* silent parse fail */ }
+                    };
+
+                    connection.on('message', dispatch);
+
                     this.connections.set(accountId, {
                         api,
                         connection,
                         authorized: true,
+                        dispatch, // Keep reference to remove if needed
                         loginid: authResponse.authorize.loginid,
                         balance: authResponse.authorize.balance,
                         currency: authResponse.authorize.currency
@@ -215,25 +238,9 @@ class DerivClient {
             // Store subscription
             this.balanceSubscriptions.set(accountId, subscription);
 
-            // Get connection to listen for stream
-            const connData = this.connections.get(accountId);
-            if (connData && connData.connection) {
-                connData.connection.on('message', (data) => {
-                    try {
-                        const msg = JSON.parse(data.toString());
-                        if (msg.msg_type === 'balance' && msg.balance) {
-                            callback({
-                                accountId,
-                                balance: msg.balance.balance,
-                                currency: msg.balance.currency,
-                                loginid: msg.balance.loginid
-                            });
-                        }
-                    } catch (e) {
-                        // Ignore parse errors
-                    }
-                });
-            }
+            // Store callback in central dispatcher lookup
+            if (!this.balanceListeners) this.balanceListeners = new Map();
+            this.balanceListeners.set(accountId, callback);
 
             console.log(`[DerivClient] 💰 Subscribed to balance updates for ${accountId}`);
             return subscription;
@@ -247,20 +254,14 @@ class DerivClient {
      * Unsubscribe from balance updates
      */
     async unsubscribeBalance(accountId) {
-        if (this.balanceSubscriptions.has(accountId)) {
-            try {
-                // We don't explicitly close the stream usually as it shar es connection, 
-                // but we can send forget. For now just removing listener reference essentially.
-                // ideally we should send { forget: subscription_id } but deriv-api basic handles subscriptions?
-                // actually DerivAPIBasic subscribe returns an observable usually? 
-                // In our case we are manually handling messages on connection too.
-
-                // For simplicity/safety with shared connection:
+        try {
+            if (this.balanceSubscriptions.has(accountId)) {
                 this.balanceSubscriptions.delete(accountId);
+                this.balanceListeners?.delete(accountId);
                 console.log(`[DerivClient] Unsubscribed balance for ${accountId}`);
-            } catch (e) {
-                console.error(`[DerivClient] Error unsubscribing balance for ${accountId}:`, e);
             }
+        } catch (e) {
+            console.error(`[DerivClient] Error unsubscribing balance for ${accountId}:`, e);
         }
     }
 
@@ -382,24 +383,21 @@ class DerivClient {
     async subscribeToContract(accountId, apiToken, contractId, callback) {
         const api = await this.getConnection(accountId, apiToken);
 
-        const conn = this.connections.get(accountId);
-        if (!conn) throw new Error('No connection found');
+        // Store in global contract listener map (CTO Phase 3)
+        this.contractListeners.set(contractId, callback);
 
-        conn.connection.on('message', (data) => {
-            try {
-                const msg = JSON.parse(data.toString());
-                if (msg.proposal_open_contract && msg.proposal_open_contract.contract_id === contractId) {
-                    callback(msg.proposal_open_contract);
-                }
-            } catch (e) {
-                // Ignore parse errors
-            }
-        });
-
-        // Request contract updates
+        // Request contract updates (Subscribes on Deriv side)
         await api.send({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
 
-        console.log(`[DerivClient]  Monitoring contract ${contractId}`);
+        console.log(`[DerivClient] 📡 Monitoring contract ${contractId}`);
+    }
+
+    /**
+     * Unsubscribe from contract updates
+     */
+    async unsubscribeFromContract(contractId) {
+        this.contractListeners.delete(contractId);
+        // Note: We could send { forget: sub_id } but for now we just stop processing messages
     }
 
     /**

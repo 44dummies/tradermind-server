@@ -4,11 +4,11 @@ const { supabase } = require('../db/supabase');
 const botManager = require('../services/botManager');
 const signalWorker = require('../services/signalWorker');
 
-// Middleware (auth handled at API gateway level for now)
-const requireAuth = (req, res, next) => next();
+const { authMiddleware } = require('../middleware/auth');
+const isAdmin = require('../middleware/isAdmin');
 
 // GET /api/trading-v2/status
-router.get('/status', requireAuth, (req, res) => {
+router.get('/status', authMiddleware, isAdmin, (req, res) => {
     const state = botManager.getState();
     res.json({
         connected: state.isRunning,
@@ -22,7 +22,7 @@ router.get('/status', requireAuth, (req, res) => {
 
 // GET /api/trading-v2/metrics
 // Real data from Supabase trades table
-router.get('/metrics', requireAuth, async (req, res) => {
+router.get('/metrics', authMiddleware, isAdmin, async (req, res) => {
     try {
         // Get recent trades for metrics
         const { data: trades, error } = await supabase
@@ -64,7 +64,7 @@ router.get('/metrics', requireAuth, async (req, res) => {
             hourlyData.push({
                 time: new Date(hourStart).toISOString(),
                 balance: runningBalance,
-                equity: runningBalance + (Math.random() * 20), // Small variance for equity
+                equity: runningBalance, // Historical equity matches balance at hour close
                 trades: hourTrades.length
             });
         }
@@ -78,8 +78,16 @@ router.get('/metrics', requireAuth, async (req, res) => {
             .reduce((sum, t) => sum + t.profit_loss, 0));
         const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : grossProfit > 0 ? 'Infinity' : '0.00';
 
+        // Market distribution analysis
+        const marketDist = {};
+        tradeList.forEach(t => {
+            const m = t.signal?.market || 'Unknown';
+            marketDist[m] = (marketDist[m] || 0) + 1;
+        });
+
         res.json({
             metrics: hourlyData,
+            distribution: marketDist,
             summary: {
                 totalTrades,
                 winRate: parseFloat(winRate),
@@ -97,7 +105,7 @@ router.get('/metrics', requireAuth, async (req, res) => {
 
 // GET /api/trading-v2/logs
 // Get recent trading activity logs from Supabase
-router.get('/logs', requireAuth, async (req, res) => {
+router.get('/logs', authMiddleware, isAdmin, async (req, res) => {
     try {
         const { data: logs, error } = await supabase
             .from('trading_activity_logs')
@@ -127,7 +135,7 @@ router.get('/logs', requireAuth, async (req, res) => {
 
 // GET /api/trading-v2/signals
 // Get recent signal analysis from signalWorker
-router.get('/signals', requireAuth, (req, res) => {
+router.get('/signals', authMiddleware, isAdmin, (req, res) => {
     const stats = signalWorker.getLatestStats();
     res.json({
         markets: Object.keys(stats),
