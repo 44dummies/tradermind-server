@@ -10,19 +10,45 @@ const { supabase } = require('../../db/supabase');
 const { encryptToken, isEncrypted } = require('../../utils/encryption');
 
 /**
+ * Helper to resolve Supabase UUID from either the ID in the token 
+ * or the deriv_id/username.
+ */
+async function resolveUserId(user) {
+    if (!user?.id) return null;
+
+    // If it's already a UUID, return it
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id)) {
+        return user.id;
+    }
+
+    // Otherwise lookup in profile
+    const lookupValue = user.derivId || user.username || user.id;
+    const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('id')
+        .or(`deriv_id.eq."${lookupValue}",username.eq."${lookupValue}"`)
+        .maybeSingle();
+
+    return profile?.id || null;
+}
+
+/**
  * GET /user/sessions/available
  * Get available sessions to join
  */
 router.get('/available', async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = await resolveUserId(req.user);
+        if (!userId) {
+            return res.status(401).json({ error: 'User profile not found' });
+        }
 
         // Get user's recovery eligibility
         const { data: settings } = await supabase
             .from('user_trading_settings')
             .select('can_join_recovery')
             .eq('user_id', userId)
-            .single();
+            .maybeSingle();
 
         const canJoinRecovery = settings?.can_join_recovery || false;
 
@@ -76,9 +102,9 @@ router.get('/available', async (req, res) => {
  */
 router.get('/status', async (req, res) => {
     try {
-        const userId = req.user?.id;
+        const userId = await resolveUserId(req.user);
         if (!userId) {
-            return res.status(401).json({ error: 'Unauthorized: User ID missing' });
+            return res.status(401).json({ error: 'User profile not found' });
         }
 
         const { data: participation, error } = await supabase
@@ -150,36 +176,11 @@ async function handleAcceptSession(req, res, sessionId) {
             derivId: req.user?.derivId
         });
 
-        // Resolve user UUID from profile if needed (in case req.user.id is the deriv ID)
-        let userId = req.user?.id;
-
+        const userId = await resolveUserId(req.user);
         if (!userId) {
-            throw new Error('User context missing ID');
+            throw new Error('User profile not found for ID resolution');
         }
 
-        // Check if userId is NOT a UUID (e.g. it's a username or CR ID)
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
-            const lookupValue = req.user.derivId || req.user.username;
-            console.log(`[Sessions] Resolving UUID for ${lookupValue}`);
-
-            const { data: userProfile, error: profileErr } = await supabase
-                .from('user_profiles')
-                .select('id')
-                .or(`deriv_id.eq."${lookupValue}",username.eq."${lookupValue}"`)
-                .maybeSingle();
-
-            if (profileErr) {
-                console.error('[Sessions] Profile resolution error:', profileErr);
-                throw profileErr;
-            }
-
-            if (userProfile?.id) {
-                userId = userProfile.id;
-            } else {
-                console.warn(`[Sessions] Could not resolve UUID for: ${lookupValue}`);
-                throw new Error(`User profile not found for ${lookupValue}`);
-            }
-        }
         const { tp, sl } = req.body;
 
         if (!sessionId) {
@@ -310,7 +311,10 @@ async function handleAcceptSession(req, res, sessionId) {
  */
 router.post('/leave', async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = await resolveUserId(req.user);
+        if (!userId) {
+            return res.status(401).json({ error: 'User profile not found' });
+        }
         const { sessionId } = req.body;
 
         const { data, error } = await supabase
