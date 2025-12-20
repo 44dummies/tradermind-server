@@ -146,6 +146,15 @@ router.post('/', async (req, res) => {
         const io = req.app.get('io');
         if (io) {
             io.emit('session_update', { session: data });
+
+            // Broadcast new session notification to all users
+            io.emit('new_session', {
+                type: 'new_session',
+                message: `New trading session available: ${data.name}`,
+                sessionId: data.id,
+                markets: data.markets,
+                timestamp: new Date().toISOString()
+            });
         }
 
         res.status(201).json({ session: data });
