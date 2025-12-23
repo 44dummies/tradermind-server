@@ -312,6 +312,16 @@ class TradeExecutor {
         const sessionMode = sessionData.mode || 'demo';
         const accountType = sessionMode === 'real' ? 'real' : 'demo';
 
+        // Decrypt token if encrypted (format: iv:encryptedData)
+        if (derivToken && derivToken.includes(':')) {
+          try {
+            derivToken = decryptToken(derivToken);
+            console.log(`[TradeExecutor] Decrypted deriv_token for user ${participant.user_id}`);
+          } catch (decryptErr) {
+            console.warn(`[TradeExecutor] Failed to decrypt token for user ${participant.user_id}, treating as plain:`, decryptErr.message);
+          }
+        }
+
         // If no token in participant record (V1 flow), look up trading account matching session mode
         if (!derivToken) {
           const { data: account, error: accountErr } = await supabase
@@ -330,6 +340,17 @@ class TradeExecutor {
           if (account) {
             tradingAccount = account;
             derivToken = account.deriv_token;
+
+            // Decrypt token from trading_accounts if encrypted
+            if (derivToken && derivToken.includes(':')) {
+              try {
+                derivToken = decryptToken(derivToken);
+                console.log(`[TradeExecutor] Decrypted account token for user ${participant.user_id}`);
+              } catch (decryptErr) {
+                console.warn(`[TradeExecutor] Failed to decrypt account token for user ${participant.user_id}:`, decryptErr.message);
+              }
+            }
+
             console.log(`[TradeExecutor] Found ${accountType} account for user ${participant.user_id}: ${account.deriv_account_id}`);
           } else {
             // No matching account type found
@@ -515,9 +536,9 @@ class TradeExecutor {
         price: stake,
         parameters: {
           contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: signal.market || (session.markets && session.markets[0]) || strategyConfig.system.defaultMarket,
-          duration: session.duration || 1,
-          duration_unit: session.duration_unit || 't',
+          symbol: signal.market || (sessionData.markets && sessionData.markets[0]) || strategyConfig.system.defaultMarket,
+          duration: sessionData.duration || 1,
+          duration_unit: sessionData.duration_unit || 't',
           currency: profile.currency || 'USD',
           amount: stake,
           barrier: signal.digit.toString()
@@ -542,9 +563,9 @@ class TradeExecutor {
       if (this.io) {
         this.io.emit('trade_update', {
           type: 'open',
-          sessionId: session.id,  // Add session ID for filtering
+          sessionId: sessionData.id,  // Add session ID for filtering
           contractId: contract.contract_id,
-          market: session.markets ? session.markets[0] : strategyConfig.system.defaultMarket, // Assuming single market for now
+          market: sessionData.markets ? sessionData.markets[0] : strategyConfig.system.defaultMarket, // Assuming single market for now
           signal: signal.side,
           side: signal.side,
           stake: stake,
@@ -559,7 +580,7 @@ class TradeExecutor {
         const executedEvent = createTradeExecutedEvent(
           {
             contract_id: contract.contract_id,
-            symbol: session.markets ? session.markets[0] : strategyConfig.system.defaultMarket,
+            symbol: sessionData.markets ? sessionData.markets[0] : strategyConfig.system.defaultMarket,
             direction: signal.side,
             stake: stake,
             entry_price: contract.buy_price,
@@ -567,7 +588,7 @@ class TradeExecutor {
             participant_id: participant.id
           },
           {
-            sessionId: session.id,
+            sessionId: sessionData.id,
             userId: participant.user_id,
             correlationId: `trade-${contract.contract_id}`
           }
