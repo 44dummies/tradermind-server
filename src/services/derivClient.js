@@ -125,14 +125,53 @@ class DerivClient {
     }
 
     /**
-     * Execute a buy trade
+     * Get a contract proposal (quote)
      */
-    async buy(accountId, apiToken, contractParams) {
+    async getProposal(accountId, apiToken, contractParams) {
         const api = await this.getConnection(accountId, apiToken);
 
-        console.log(`[DerivClient]  Executing trade for ${accountId}:`, contractParams);
+        console.log(`[DerivClient] Requesting proposal for ${accountId}:`, contractParams);
 
-        const response = await api.buy(contractParams);
+        // proposal: 1 is required to get a proposal
+        const proposalRequest = {
+            proposal: 1,
+            ...contractParams
+        };
+
+        const response = await api.send(proposalRequest);
+
+        if (response.error) {
+            throw new Error(response.error.message);
+        }
+
+        console.log(`[DerivClient] Proposal received: ID ${response.proposal.id}, Payout: ${response.proposal.payout}`);
+
+        return response.proposal;
+    }
+
+    /**
+     * Execute a buy trade (Supports Direct Buy or Buy from Proposal)
+     */
+    async buy(accountId, apiToken, params) {
+        const api = await this.getConnection(accountId, apiToken);
+        let buyRequest;
+
+        // Check if we are buying from a proposal ID or direct parameters
+        if (typeof params === 'string') {
+            // Case 1: params is a proposal_id string
+            console.log(`[DerivClient] Executing trade for ${accountId} using Proposal ID: ${params}`);
+            buyRequest = { buy: params, price: 10000 }; // price is required by API but ignored for proposal buys usually, safe max
+        } else if (params.proposal_id) {
+            // Case 2: params is object with proposal_id
+            console.log(`[DerivClient] Executing trade for ${accountId} using Proposal ID: ${params.proposal_id}`);
+            buyRequest = { buy: params.proposal_id, price: params.price || 10000 };
+        } else {
+            // Case 3: Direct buy with parameters (Backward compatibility/Fallback)
+            console.log(`[DerivClient] Executing direct buy for ${accountId}:`, params);
+            buyRequest = { buy: 1, ...params };
+        }
+
+        const response = await api.buy(buyRequest);
 
         if (response.error) {
             throw new Error(response.error.message);

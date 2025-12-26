@@ -195,7 +195,8 @@ class SignalWorker {
 
         // Log signal result
         if (signal.shouldTrade) {
-          console.log(`[SignalWorker]  Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(signal.confidence * 100).toFixed(1)}%)`);
+          const confidence = signal.confidence || 0;
+          console.log(`[SignalWorker]  Signal generated: ${signal.side} digit ${signal.digit} (confidence: ${(confidence * 100).toFixed(1)}%)`);
         }
 
         const duration = perfMonitor.end(perfId);

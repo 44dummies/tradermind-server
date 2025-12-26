@@ -12,6 +12,7 @@ const connectionManager = require('./connectionManager');
 const CircuitBreaker = require('./circuitBreaker');
 const auditLogger = require('./auditLogger');
 const riskEngine = require('./riskEngine');
+const derivClient = require('./derivClient');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -501,12 +502,7 @@ class TradeExecutor {
     perfMonitor.start(perfId);
 
     try {
-      // Connect to Deriv WebSocket using the participant's token
-      // Get connection
-      // REFACTOR: Use connection manager
-      const ws = await connectionManager.getConnection(apiToken, participant.deriv_account_id);
-
-      // Determine Stake
+      // Determines Stake
       let stake = participant.stake || sessionData.stake_amount || strategyConfig.minStake;
 
       // DYNAMIC SIZING logic
@@ -531,46 +527,56 @@ class TradeExecutor {
       // Validation against min/max
       stake = Math.max(stake, strategyConfig.minStake);
 
-      const contractReq = {
-        buy: 1,
-        price: stake,
-        parameters: {
-          contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
-          symbol: signal.market || (sessionData.markets && sessionData.markets[0]) || strategyConfig.system.defaultMarket,
-          duration: sessionData.duration || 1,
-          duration_unit: sessionData.duration_unit || 't',
-          currency: profile.currency || 'USD',
-          amount: stake,
-          barrier: signal.digit.toString()
-        }
+      const contractParams = {
+        contract_type: signal.side === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER',
+        symbol: signal.market || (sessionData.markets && sessionData.markets[0]) || strategyConfig.system.defaultMarket,
+        duration: sessionData.duration || 1,
+        duration_unit: sessionData.duration_unit || 't',
+        currency: profile.currency || 'USD',
+        amount: stake,
+        barrier: signal.digit.toString()
       };
 
-      // Execute buy
-      const buyResponse = await this.sendRequest(ws, contractReq);
+      // 1. Get Proposal (Robustness Step)
+      const proposal = await derivClient.getProposal(participant.deriv_account_id, apiToken, contractParams);
 
-      if (buyResponse.error) {
-        throw new Error(buyResponse.error.message);
+      if (!proposal || !proposal.id) {
+        throw new Error('Failed to get valid proposal ID from Deriv');
       }
 
-      const contract = buyResponse.buy;
+      // Optional: Check payout/ask price here if strict limits needed
+      // const expectedPayout = stake * 1.9; // approx
+      // if (proposal.payout < expectedPayout) ...
+
+      // 2. Execute Buy using Proposal ID
+      const executeParams = {
+        proposal_id: proposal.id,
+        price: proposal.ask_price // Pass the ask price as the buy price (required by API)
+      };
+
+      const buyResult = await derivClient.buy(participant.deriv_account_id, apiToken, executeParams);
+
+      if (!buyResult.success) {
+        throw new Error('Buy execution failed');
+      }
 
       const duration = perfMonitor.end(perfId);
       perfMonitor.logLatency(`Trade execution for ${profile.deriv_id}`, duration, 2000);
 
-      console.log(`[TradeExecutor]  Trade executed for ${profile.deriv_id}: Contract ${contract.contract_id}`);
+      console.log(`[TradeExecutor]  Trade executed for ${profile.deriv_id}: Contract ${buyResult.contract_id}`);
 
       // Emit trade start event
       if (this.io) {
         this.io.emit('trade_update', {
           type: 'open',
-          sessionId: sessionData.id,  // Add session ID for filtering
-          contractId: contract.contract_id,
-          market: sessionData.markets ? sessionData.markets[0] : strategyConfig.system.defaultMarket, // Assuming single market for now
+          sessionId: sessionData.id,
+          contractId: buyResult.contract_id,
+          market: sessionData.markets ? sessionData.markets[0] : strategyConfig.system.defaultMarket,
           signal: signal.side,
           side: signal.side,
           stake: stake,
-          price: contract.buy_price,
-          payout: contract.payout,
+          price: buyResult.buy_price,
+          payout: buyResult.payout,
           timestamp: new Date().toISOString()
         });
       }
@@ -579,18 +585,18 @@ class TradeExecutor {
       if (messageQueue.isReady()) {
         const executedEvent = createTradeExecutedEvent(
           {
-            contract_id: contract.contract_id,
+            contract_id: buyResult.contract_id,
             symbol: sessionData.markets ? sessionData.markets[0] : strategyConfig.system.defaultMarket,
             direction: signal.side,
             stake: stake,
-            entry_price: contract.buy_price,
-            start_time: contract.start_time || Math.floor(Date.now() / 1000),
+            entry_price: buyResult.buy_price,
+            start_time: Math.floor(Date.now() / 1000), // Approximate if not returned
             participant_id: participant.id
           },
           {
             sessionId: sessionData.id,
             userId: participant.user_id,
-            correlationId: `trade-${contract.contract_id}`
+            correlationId: `trade-${buyResult.contract_id}`
           }
         );
         messageQueue.publish(TOPICS.TRADE_EXECUTED, executedEvent);
@@ -601,9 +607,9 @@ class TradeExecutor {
         participantId: participant.id,
         userId: participant.user_id,
         derivAccountId: profile.deriv_id,
-        contractId: contract.contract_id,
-        buyPrice: contract.buy_price,
-        payout: contract.payout,
+        contractId: buyResult.contract_id,
+        buyPrice: buyResult.buy_price,
+        payout: buyResult.payout,
         signal,
         stake,
         takeProfit: participant.effectiveTp || participant.tp,

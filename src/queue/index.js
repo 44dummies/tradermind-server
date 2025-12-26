@@ -35,7 +35,12 @@ class MessageQueue {
             this.redis = new Redis(redisUrl || 'redis://localhost:6379', {
                 maxRetriesPerRequest: 3,
                 retryDelayOnFailover: 100,
-                lazyConnect: true
+                connectTimeout: 10000, // 10s connection timeout
+                lazyConnect: true,
+                retryStrategy: (times) => {
+                    const delay = Math.min(times * 50, 2000);
+                    return delay;
+                }
             });
 
             await this.redis.connect();

@@ -18,9 +18,19 @@ class CorrelationManager {
      * @returns {Promise<boolean>}
      */
     async canEnterTrade(asset) {
+        // Retry logic for Redis availability
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+            if (messageQueue.isReady() && this.redis) break;
+            attempts++;
+            if (attempts < maxAttempts) await new Promise(r => setTimeout(r, 100 * attempts));
+        }
+
         if (!messageQueue.isReady() || !this.redis) {
-            console.warn('[CorrelationManager] Redis not ready, allowing trade (fail-open) or blocking? Blocking for safety.');
-            return false;
+            console.warn('[CorrelationManager] Redis not ready after retries. Blocking trades for safety.');
+            return false; // Fail safe (Closed)
         }
 
         const globalKey = 'risk:global_trades';
