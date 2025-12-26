@@ -177,12 +177,18 @@ router.post('/deriv', async (req, res) => {
 
       if (!verification.isValid) {
         console.warn(`[Auth] Token verification failed for ${derivId}: ${verification.error}`);
-        return res.status(401).json({ error: 'Invalid Deriv token' });
+        // Return specific error for debugging
+        return res.status(401).json({ error: 'Invalid Deriv token', details: verification.error });
       }
 
       if (verification.userData.loginid !== derivId) {
         console.warn(`[Auth] ID mismatch: Token belongs to ${verification.userData.loginid}, claimed ${derivId}`);
-        return res.status(403).json({ error: 'Token does not match claimed user ID' });
+        // Return specific mismatch error
+        return res.status(403).json({
+          error: 'Token does not match claimed user ID',
+          expected: derivId,
+          actual: verification.userData.loginid
+        });
       }
       console.log(`[Auth] Verified Deriv user: ${derivId}`);
     } else {

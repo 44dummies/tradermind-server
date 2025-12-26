@@ -489,11 +489,12 @@ class DerivClient {
             const api = new DerivAPIBasic({ connection });
             let timeout;
 
-            // Safety timeout (5s)
+            // Safety timeout (10s)
             timeout = setTimeout(() => {
-                connection.close();
-                resolve({ isValid: false, error: 'Authorization timeout' });
-            }, 5000);
+                try { connection.close(); } catch (e) { }
+                console.warn('[DerivClient] Token verification timed out');
+                resolve({ isValid: false, error: 'Authorization timeout (10s)' });
+            }, 10000);
 
             connection.on('open', async () => {
                 try {
