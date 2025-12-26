@@ -10,7 +10,8 @@ module.exports = {
   system: {
     defaultMarket: 'R_100',
     fallbackMarket: 'R_100',
-    retryAttempts: 3
+    retryAttempts: 3,
+    turboMode: false // Default to false (Robust Mode)
   },
   timeouts: {
     workerPause: 10000, // Circuit breaker pause

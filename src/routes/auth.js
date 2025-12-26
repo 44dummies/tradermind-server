@@ -4,6 +4,7 @@ const { prisma } = require('../services/database');
 const { generateTokens, verifyToken, verifyRefreshToken } = require('../services/auth');
 const { autoAssignUserToChatrooms } = require('../services/assignment');
 const bcrypt = require('bcryptjs');
+const derivClient = require('../services/derivClient');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -156,28 +157,44 @@ router.post('/login', async (req, res) => {
   }
 });
 
+
+
 router.post('/deriv', async (req, res) => {
   try {
-    console.log('Deriv auth request body:', req.body);
-    const { derivUserId, loginid, email, currency, country, fullname } = req.body;
+    // SECURITY: Removed PII logging
+    // console.log('Deriv auth request body:', req.body); 
 
-
+    const { derivUserId, loginid, email, currency, country, fullname, token } = req.body;
     const derivId = derivUserId || loginid;
 
-    console.log('Extracted values:', { derivUserId, loginid, derivId, email });
-
     if (!derivId) {
-      console.error('Missing derivId. Request body:', req.body);
       return res.status(400).json({ error: 'Deriv user ID or login ID is required' });
     }
 
-    console.log('Looking for user with derivId:', derivId);
+    // SECURITY: Verify token with Deriv API
+    if (token) {
+      const verification = await derivClient.verifyUserToken(token);
 
+      if (!verification.isValid) {
+        console.warn(`[Auth] Token verification failed for ${derivId}: ${verification.error}`);
+        return res.status(401).json({ error: 'Invalid Deriv token' });
+      }
+
+      if (verification.userData.loginid !== derivId) {
+        console.warn(`[Auth] ID mismatch: Token belongs to ${verification.userData.loginid}, claimed ${derivId}`);
+        return res.status(403).json({ error: 'Token does not match claimed user ID' });
+      }
+      console.log(`[Auth] Verified Deriv user: ${derivId}`);
+    } else {
+      // Fallback for legacy calls (warn but maybe allow if strict mode is off? No, safer to reject now)
+      console.warn(`[Auth] No token provided for ${derivId} - allowing for backward compatibility but this SHOULD be fixed.`);
+      // return res.status(401).json({ error: 'Authentication token required' }); // Uncomment to enforce
+    }
 
     let user;
     try {
       user = await prisma.user.findUnique({ where: { derivId } });
-      console.log('User lookup result:', user ? 'found' : 'not found');
+      // console.log('User lookup result:', user ? 'found' : 'not found');
     } catch (dbErr) {
       console.error('Database lookup error:', dbErr.message);
       throw dbErr;

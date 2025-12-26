@@ -537,24 +537,31 @@ class TradeExecutor {
         barrier: signal.digit.toString()
       };
 
-      // 1. Get Proposal (Robustness Step)
-      const proposal = await derivClient.getProposal(participant.deriv_account_id, apiToken, contractParams);
+      // 1. Get Proposal (Robustness or Turbo)
+      const isTurbo = strategyConfig.system.turboMode || sessionData.turbo_mode;
+      let executeParams;
 
-      if (!proposal || !proposal.id) {
-        throw new Error('Failed to get valid proposal ID from Deriv');
+      if (isTurbo) {
+        console.log(`[TradeExecutor] 🚀 Turbo Mode: Skipping proposal for ${profile.deriv_id}`);
+        // Direct buy params
+        executeParams = contractParams;
+      } else {
+        // Robust Mode: Get Proposal first
+        const proposal = await derivClient.getProposal(participant.deriv_account_id, apiToken, contractParams);
+
+        if (!proposal || !proposal.id) {
+          throw new Error('Failed to get valid proposal ID from Deriv');
+        }
+
+        executeParams = {
+          proposal_id: proposal.id,
+          price: proposal.ask_price
+        };
       }
 
-      // Optional: Check payout/ask price here if strict limits needed
-      // const expectedPayout = stake * 1.9; // approx
-      // if (proposal.payout < expectedPayout) ...
-
-      // 2. Execute Buy using Proposal ID
-      const executeParams = {
-        proposal_id: proposal.id,
-        price: proposal.ask_price // Pass the ask price as the buy price (required by API)
-      };
-
+      // 2. Execute Buy
       const buyResult = await derivClient.buy(participant.deriv_account_id, apiToken, executeParams);
+
 
       if (!buyResult.success) {
         throw new Error('Buy execution failed');

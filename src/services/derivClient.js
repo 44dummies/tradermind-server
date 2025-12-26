@@ -475,6 +475,60 @@ class DerivClient {
             accounts: Array.from(this.connections.keys())
         };
     }
+
+    /**
+     * Verify a user's token by attempting to authorize with it
+     * Uses a temporary connection to avoid polluting the pool
+     */
+    async verifyUserToken(token) {
+        return new Promise((resolve, reject) => {
+            const connection = new WebSocket(
+                `wss://${WS_ENDPOINT}/websockets/v3?app_id=${APP_ID}`
+            );
+
+            const api = new DerivAPIBasic({ connection });
+            let timeout;
+
+            // Safety timeout (5s)
+            timeout = setTimeout(() => {
+                connection.close();
+                resolve({ isValid: false, error: 'Authorization timeout' });
+            }, 5000);
+
+            connection.on('open', async () => {
+                try {
+                    const authResponse = await api.authorize(token);
+
+                    if (authResponse.error) {
+                        clearTimeout(timeout);
+                        connection.close();
+                        resolve({ isValid: false, error: authResponse.error.message });
+                        return;
+                    }
+
+                    const userData = {
+                        loginid: authResponse.authorize.loginid,
+                        email: authResponse.authorize.email,
+                        currency: authResponse.authorize.currency
+                    };
+
+                    clearTimeout(timeout);
+                    connection.close();
+                    resolve({ isValid: true, userData });
+
+                } catch (error) {
+                    clearTimeout(timeout);
+                    connection.close();
+                    resolve({ isValid: false, error: error.message });
+                }
+            });
+
+            connection.on('error', (err) => {
+                clearTimeout(timeout);
+                resolve({ isValid: false, error: err.message });
+            });
+        });
+    }
 }
 
 // Export singleton instance
