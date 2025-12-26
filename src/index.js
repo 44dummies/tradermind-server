@@ -140,7 +140,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    deploy_check: 'check-1'
+    deploy_check: 'check-2'
   });
 });
 
