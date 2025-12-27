@@ -1691,29 +1691,37 @@ class TradeExecutor {
   async executeParallelBatches(validAccounts, signal, sessionData, sessionId, lockKey) {
     const batchSize = strategyConfig.system?.batchSize || 10;
     const tradeResults = [];
+    const isTurbo = strategyConfig.system.turboMode || sessionData.turbo_mode;
 
     for (let i = 0; i < validAccounts.length; i += batchSize) {
       const batch = validAccounts.slice(i, i + batchSize);
-      console.log(`[TradeExecutor] 🚀 Executing batch ${Math.floor(i / batchSize) + 1} (${batch.length} accounts)`);
+      console.log(`[TradeExecutor] 🚀 Executing batch ${Math.floor(i / batchSize) + 1} (${batch.length} accounts) - Turbo: ${isTurbo}`);
 
       const batchPromises = batch.map(async ({ participant, profile, apiToken }) => {
         try {
-          // 1. Log Intent first (CTO Hardening: Atomicity)
-          const intentId = await this.logIntent(participant, sessionId, signal);
+          let intentId = null;
+          let tradeResult = null;
 
-          // 2. Execute Trade
-          const tradeResult = await this.executeSingleTrade(
-            participant,
-            profile,
-            apiToken,
-            signal,
-            sessionData,
-            intentId
-          );
+          if (isTurbo) {
+            // Turbo Mode: Parallel Execution (Optimistic)
+            // We launch both DB log and Trade Execution simultaneously to save RTT
+            const [id, result] = await Promise.all([
+              this.logIntent(participant, sessionId, signal),
+              this.executeSingleTrade(participant, profile, apiToken, signal, sessionData, null) // Pass null as intentId since we don't have it yet
+            ]);
+            intentId = id;
+            tradeResult = result;
+          } else {
+            // Robust Mode: Serial Execution (Atomicity)
+            // We ensure intent is logged BEFORE execution
+            intentId = await this.logIntent(participant, sessionId, signal);
+            tradeResult = await this.executeSingleTrade(participant, profile, apiToken, signal, sessionData, intentId);
+          }
 
           // 3. Post-Execution Workflow
           if (tradeResult.success) {
             // Update trade with contract ID
+            // If parallel, we pass the now-resolved intentId
             await this.logTrade(tradeResult, sessionId, intentId);
 
             // Audit Log
@@ -1766,9 +1774,10 @@ class TradeExecutor {
       const results = await Promise.all(batchPromises);
       tradeResults.push(...results);
 
-      // Brief pause between batches to avoid overloading the gateway or Redis
+      // Turbo: Reduced delay (100ms), Robust: Normal delay (500ms)
       if (i + batchSize < validAccounts.length) {
-        await this.sleep(strategyConfig.system?.batchDelay || 500);
+        const delay = isTurbo ? 100 : (strategyConfig.system?.batchDelay || 500);
+        await this.sleep(delay);
       }
     }
 

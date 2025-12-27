@@ -155,8 +155,13 @@ function bayesianDigitPredictor(freq, markovRow) {
         const prior = freq[d] || 0.1;
         // Likelihood: Markov transition probability
         const likelihood = markovRow[d] || 0.1;
+
+        // "Mhacker" Boost: If digit is hot (high prior), boost its likelihood slightly
+        // Represents "momentum" in digit distribution
+        const momentumBoost = prior > 0.15 ? 1.1 : 1.0;
+
         // Unnormalized posterior
-        const p = prior * likelihood;
+        const p = prior * likelihood * momentumBoost;
         posterior.push(p);
         sum += p;
     }

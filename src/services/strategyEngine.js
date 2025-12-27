@@ -274,15 +274,18 @@ function detectRecentBias(digitHistory, depth = quantConfig.bias.window) {
  * Select optimal digit using Bayesian posterior + frequency blend
  * score = posterior * alpha + (1 - freq) * (1 - alpha)
  */
+/**
+ * Select optimal digit using Bayesian posterior + frequency blend
+ * score = posterior * alpha + (1 - freq) * (1 - alpha)
+ * Enhanced with exponential weighting for candidates
+ */
 function selectOptimalDigit(side, posterior, freq) {
   const alpha = quantConfig.digitSelection.posteriorWeight;
 
   let candidates;
-  let offset = 0;
-
+  // Weighted candidate selection
   if (side === 'OVER') {
     candidates = [5, 6, 7, 8, 9];
-    offset = 5;
   } else {
     candidates = [0, 1, 2, 3, 4];
   }
@@ -292,8 +295,17 @@ function selectOptimalDigit(side, posterior, freq) {
 
   for (const digit of candidates) {
     const posteriorProb = posterior[digit] || 0.1;
+    // Lower frequency is better for "due" digits (mean reversion)
     const inverseFreq = 1 - (freq[digit] || 0.1);
-    const score = (posteriorProb * alpha) + (inverseFreq * (1 - alpha));
+
+    // Core Score
+    let score = (posteriorProb * alpha) + (inverseFreq * (1 - alpha));
+
+    // Bonus: If digit is 7, 8, 9 (for OVER) or 0, 1, 2 (for UNDER) -> slight structural edge in some indices
+    // This is a "Market Hacker" heuristic
+    if ((side === 'OVER' && digit >= 7) || (side === 'UNDER' && digit <= 2)) {
+      score *= 1.05;
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -402,10 +414,17 @@ function generateSignal({ market, tickHistory, digitHistory, overrides = {} }) {
   const voteDiff = Math.abs(votes.OVER - votes.UNDER);
   const voteRatio = totalWeight > 0 ? voteDiff / totalWeight : 0;
 
-  if (voteRatio < quantConfig.confidence.contradictionRatio && factors >= 2) {
+  // Stricter contradiction check for "Mhacker" precision
+  // If we have mixed signals (both OVER and UNDER votes > 0), require higher ratio
+  const hasMixedSignals = votes.OVER > 0.2 && votes.UNDER > 0.2;
+  const effectiveContradictionThreshold = hasMixedSignals
+    ? quantConfig.confidence.contradictionRatio * 1.2  // Require 20% more clarity if mixed
+    : quantConfig.confidence.contradictionRatio;
+
+  if (voteRatio < effectiveContradictionThreshold && factors >= 2) {
     return {
       shouldTrade: false,
-      reason: `Contradiction: O=${votes.OVER.toFixed(2)} vs U=${votes.UNDER.toFixed(2)}`,
+      reason: `Contradiction: O=${votes.OVER.toFixed(2)} vs U=${votes.UNDER.toFixed(2)} (Ratio: ${voteRatio.toFixed(2)} < ${effectiveContradictionThreshold.toFixed(2)})`,
       confidence: 0,
       entropy: entropy.value,
       contradiction: true
