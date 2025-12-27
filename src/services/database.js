@@ -25,6 +25,7 @@ const db = {
         data.isAdmin = data.is_admin || false;
         data.role = data.is_admin ? 'admin' : (data.role || 'user');
         data.isBanned = data.is_banned || false;
+        data.refreshToken = data.refresh_token;
       }
       return data;
     },

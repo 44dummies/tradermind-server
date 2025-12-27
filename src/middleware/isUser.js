@@ -8,36 +8,23 @@ const supabase = createClient(
 
 /**
  * Middleware to protect user routes
- * Verifies JWT and ensures user exists
+ * Relies on authMiddleware to verify JWT
  */
 const isUser = async (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization;
-
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        // req.userId should be set by authMiddleware
+        if (!req.userId) {
             return res.status(401).json({
                 success: false,
-                error: 'Unauthorized - No token provided'
+                error: 'Unauthorized - Auth required'
             });
         }
 
-        const token = authHeader.split(' ')[1];
-
-        // Verify JWT
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        if (!decoded || !decoded.userId) {
-            return res.status(401).json({
-                success: false,
-                error: 'Unauthorized - Invalid token'
-            });
-        }
-
-        // Get user profile
+        // Get user profile to ensure it exists and user isn't banned
         const { data: profile, error } = await supabase
             .from('user_profiles')
-            .select('is_admin, deriv_id, display_name, email')
-            .eq('id', decoded.userId)
+            .select('is_admin, deriv_id, display_name, email, is_banned')
+            .eq('id', req.userId)
             .single();
 
         if (error || !profile) {
@@ -48,35 +35,29 @@ const isUser = async (req, res, next) => {
             });
         }
 
-        // Attach user info to request
-        req.user = {
-            userId: decoded.userId,
-            isAdmin: profile.is_admin || false,
-            derivAccountId: profile.deriv_id,
-            displayName: profile.display_name,
-            email: profile.email
-        };
+        if (profile.is_banned) {
+            return res.status(403).json({
+                success: false,
+                error: 'Account suspended'
+            });
+        }
 
-        console.log(`[isUser]  User access granted for ${decoded.userId}`);
+        // Enrich req.user if not already enriched
+        if (!req.user || !req.user.derivId) {
+            req.user = {
+                ...(req.user || {}),
+                userId: req.userId,
+                isAdmin: profile.is_admin || false,
+                derivAccountId: profile.deriv_id,
+                displayName: profile.display_name,
+                email: profile.email
+            };
+        }
+
         next();
 
     } catch (error) {
         console.error('[isUser] Middleware error:', error);
-
-        if (error.name === 'JsonWebTokenError') {
-            return res.status(401).json({
-                success: false,
-                error: 'Unauthorized - Invalid token'
-            });
-        }
-
-        if (error.name === 'TokenExpiredError') {
-            return res.status(401).json({
-                success: false,
-                error: 'Unauthorized - Token expired'
-            });
-        }
-
         return res.status(500).json({
             success: false,
             error: 'Internal server error'
