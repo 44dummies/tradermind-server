@@ -17,11 +17,24 @@ const isAdmin = async (req, res, next) => {
 
     // Check is_admin in database - SINGLE SOURCE OF TRUTH
     // Use central client which handles service key correctly
-    const { data: profile, error } = await supabase
+    // Robustness: Check by id (likely UUID) first, then fallback to deriv_id
+    let { data: profile, error } = await supabase
       .from('user_profiles')
       .select('is_admin, deriv_id')
       .eq('id', req.userId)
-      .single();
+      .maybeSingle();
+
+    // Fallback: If not found by UUID, try by deriv_id
+    if (!profile && !error) {
+      const { data: fallbackProfile, error: fallbackError } = await supabase
+        .from('user_profiles')
+        .select('is_admin, deriv_id')
+        .eq('deriv_id', req.userId)
+        .maybeSingle();
+
+      profile = fallbackProfile;
+      error = fallbackError;
+    }
 
     if (error || !profile) {
       console.error('[isAdmin] Profile lookup failure:', error?.message || 'Profile not found', {
@@ -42,16 +55,21 @@ const isAdmin = async (req, res, next) => {
       });
     }
 
+    // IMPORTANT: Update userId and req.user to the standardized DB ID (UUID)
+    // This ensures downstream handlers use the internal ID regardless of token contents
+    req.userId = profile.id;
+
     // Attach user info to request
     req.user = {
       ...(req.user || {}),
-      userId: req.userId,
+      id: profile.id,
+      userId: profile.id,
       isAdmin: true,
       derivAccountId: profile.deriv_id,
       derivId: profile.deriv_id
     };
 
-    console.log(`[isAdmin] Admin access granted for ${req.userId}`);
+    console.log(`[isAdmin] Admin access granted for ${profile.id}`);
     next();
 
   } catch (error) {
