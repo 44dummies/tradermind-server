@@ -21,7 +21,7 @@ const isUser = async (req, res, next) => {
 
         let { data: profile, error } = await supabase
             .from('user_profiles')
-            .select('id, is_admin, deriv_id, display_name, email, is_banned')
+            .select('id, is_admin, deriv_id, display_name, email')
             .eq('id', req.userId)
             .maybeSingle();
 
@@ -34,7 +34,7 @@ const isUser = async (req, res, next) => {
             console.log(`[isUser] Profile not found by UUID, trying Deriv ID: ${req.userId}`);
             const { data: fallbackProfile, error: fallbackError } = await supabase
                 .from('user_profiles')
-                .select('id, is_admin, deriv_id, display_name, email, is_banned')
+                .select('id, is_admin, deriv_id, display_name, email')
                 .eq('deriv_id', req.userId)
                 .maybeSingle();
 
@@ -63,6 +63,7 @@ const isUser = async (req, res, next) => {
             });
         }
 
+        /* 
         if (profile.is_banned) {
             console.warn(`[isUser] Banned user attempted access: ${req.userId}`);
             return res.status(403).json({
@@ -70,6 +71,7 @@ const isUser = async (req, res, next) => {
                 error: 'Account suspended'
             });
         }
+        */
 
         // IMPORTANT: Update userId and req.user to the standardized DB ID (UUID)
         // This ensures downstream handlers use the internal ID regardless of token contents

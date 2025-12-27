@@ -24,7 +24,7 @@ const db = {
         data.avatarUrl = data.profile_photo;
         data.isAdmin = data.is_admin || false;
         data.role = data.is_admin ? 'admin' : (data.role || 'user');
-        data.isBanned = data.is_banned || false;
+        // data.isBanned = data.is_banned || false; // Column absent in DB
         data.refreshToken = data.refresh_token;
       }
       return data;
