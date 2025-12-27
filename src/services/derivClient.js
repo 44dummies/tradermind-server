@@ -22,6 +22,43 @@ class DerivClient {
         this.contractListeners = new Map(); // contractId -> callback
         this.reconnectAttempts = new Map();
         this.maxReconnectAttempts = 5;
+        this.pingInterval = null;
+        this.PING_MS = 30000;
+    }
+
+    /**
+     * Start background maintenance tasks
+     */
+    init() {
+        if (this.pingInterval) clearInterval(this.pingInterval);
+        this.pingInterval = setInterval(() => {
+            this.keepAlive();
+        }, this.PING_MS);
+        console.log('[DerivClient] Keep-alive routine started');
+    }
+
+    /**
+     * Send ping to all active connections
+     */
+    keepAlive() {
+        for (const [accountId, conn] of this.connections) {
+            if (conn.connection.readyState === WebSocket.OPEN) {
+                try {
+                    conn.api.send({ ping: 1 }).catch(() => { });
+                } catch (e) {
+                    // Ignore errors, closure handled by 'close' listener
+                }
+            }
+        }
+
+        // Also ping tick connections
+        for (const [symbol, sub] of this.tickSubscriptions) {
+            if (sub.connection.readyState === WebSocket.OPEN) {
+                try {
+                    sub.api.send({ ping: 1 }).catch(() => { });
+                } catch (e) { }
+            }
+        }
     }
 
     /**
@@ -125,27 +162,51 @@ class DerivClient {
     }
 
     /**
+     * Helper to send request with retry for RateLimit errors
+     */
+    async sendWithRetry(accountId, apiToken, method, params, retryCount = 0) {
+        const MAX_RETRIES = require('../config/strategyConfig').system?.retryAttempts || 3;
+
+        try {
+            const api = await this.getConnection(accountId, apiToken);
+            const response = await api[method](params);
+
+            if (response.error) {
+                if (response.error.code === 'RateLimit' && retryCount < MAX_RETRIES) {
+                    const delay = 1000 * Math.pow(2, retryCount);
+                    console.warn(`[DerivClient] Rate limit hit for ${accountId} during ${method}. Retrying in ${delay}ms...`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return this.sendWithRetry(accountId, apiToken, method, params, retryCount + 1);
+                }
+                throw new Error(response.error.message);
+            }
+
+            return response;
+        } catch (error) {
+            if (error.message.includes('RateLimit') && retryCount < MAX_RETRIES) {
+                const delay = 1000 * Math.pow(2, retryCount);
+                console.warn(`[DerivClient] Connection/RateLimit error during ${method}. Retrying in ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
+                return this.sendWithRetry(accountId, apiToken, method, params, retryCount + 1);
+            }
+            throw error;
+        }
+    }
+
+    /**
      * Get a contract proposal (quote)
      */
     async getProposal(accountId, apiToken, contractParams) {
-        const api = await this.getConnection(accountId, apiToken);
-
         console.log(`[DerivClient] Requesting proposal for ${accountId}:`, contractParams);
 
-        // proposal: 1 is required to get a proposal
         const proposalRequest = {
             proposal: 1,
             ...contractParams
         };
 
-        const response = await api.send(proposalRequest);
-
-        if (response.error) {
-            throw new Error(response.error.message);
-        }
+        const response = await this.sendWithRetry(accountId, apiToken, 'send', proposalRequest);
 
         console.log(`[DerivClient] Proposal received: ID ${response.proposal.id}, Payout: ${response.proposal.payout}`);
-
         return response.proposal;
     }
 
@@ -153,29 +214,21 @@ class DerivClient {
      * Execute a buy trade (Supports Direct Buy or Buy from Proposal)
      */
     async buy(accountId, apiToken, params) {
-        const api = await this.getConnection(accountId, apiToken);
         let buyRequest;
 
         // Check if we are buying from a proposal ID or direct parameters
         if (typeof params === 'string') {
-            // Case 1: params is a proposal_id string
             console.log(`[DerivClient] Executing trade for ${accountId} using Proposal ID: ${params}`);
-            buyRequest = { buy: params, price: 10000 }; // price is required by API but ignored for proposal buys usually, safe max
+            buyRequest = { buy: params, price: 10000 };
         } else if (params.proposal_id) {
-            // Case 2: params is object with proposal_id
             console.log(`[DerivClient] Executing trade for ${accountId} using Proposal ID: ${params.proposal_id}`);
             buyRequest = { buy: params.proposal_id, price: params.price || 10000 };
         } else {
-            // Case 3: Direct buy with parameters (Backward compatibility/Fallback)
             console.log(`[DerivClient] Executing direct buy for ${accountId}:`, params);
             buyRequest = { buy: 1, ...params };
         }
 
-        const response = await api.buy(buyRequest);
-
-        if (response.error) {
-            throw new Error(response.error.message);
-        }
+        const response = await this.sendWithRetry(accountId, apiToken, 'buy', buyRequest);
 
         console.log(`[DerivClient]  Trade executed: Contract ${response.buy.contract_id}`);
 

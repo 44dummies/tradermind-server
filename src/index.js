@@ -249,6 +249,9 @@ async function startServer() {
     startCronJobs();
     schedulerService.start();
 
+    const derivClient = require('./services/derivClient');
+    derivClient.init();
+
     const botManager = require('./services/botManager');
     try {
       await botManager.initialize(io);

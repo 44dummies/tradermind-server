@@ -9,22 +9,29 @@ const strategyConfig = require('../config/strategyConfig');
 class ConnectionManager {
     constructor() {
         this.pool = new Map(); // token -> { ws, accountIds: Set, lastUsed: timestamp }
+        this.pingInterval = null;
         this.cleanupInterval = null;
         this.CLEANUP_MS = 60000; // 1 minute
-        this.MAX_IDLE_MS = 60000; // Disconnect if idle for 1 minute
+        this.PING_MS = 30000;    // 30 seconds (Deriv recommends < 2 mins)
+        this.MAX_IDLE_MS = 120000; // 2 minutes (Compliant with Deriv's typical timeout)
     }
 
     /**
-     * Initialize cleanup routine
+     * Initialize management routines
      */
     init() {
         if (this.cleanupInterval) clearInterval(this.cleanupInterval);
+        if (this.pingInterval) clearInterval(this.pingInterval);
 
         this.cleanupInterval = setInterval(() => {
             this.cleanupIdleConnections();
         }, this.CLEANUP_MS);
 
-        console.log('[ConnectionManager] Initialized with cleanup routine');
+        this.pingInterval = setInterval(() => {
+            this.keepAlive();
+        }, this.PING_MS);
+
+        console.log('[ConnectionManager] Initialized with ping and cleanup routines');
     }
 
     /**
@@ -43,6 +50,7 @@ class ConnectionManager {
         if (connection) {
             if (connection.ws.readyState === WebSocket.OPEN) {
                 connection.accountIds.add(accountId);
+                connection.lastUsed = now; // Mark as used
                 return connection.ws;
             }
 
@@ -82,6 +90,11 @@ class ConnectionManager {
             ws.on('message', (data) => {
                 try {
                     const message = JSON.parse(data.toString());
+
+                    // Update activity timestamp on any valid message receipt
+                    const conn = this.pool.get(token);
+                    if (conn) conn.lastUsed = Date.now();
+
                     if (message.msg_type === 'authorize') {
                         isAuthorized = true;
                         resolve(ws);
@@ -98,10 +111,9 @@ class ConnectionManager {
                 if (!isAuthorized) reject(err);
             });
 
-            // Cleanup on close is handled by the pool management logic usually,
-            // but we can add listener to remove self from pool if closed unexpectedly
             ws.on('close', () => {
-                // We defer cleanup to the pool manager or next access
+                // Remove from pool immediately on close
+                this.pool.delete(token);
             });
 
             // Timeout
@@ -110,8 +122,23 @@ class ConnectionManager {
                     ws.terminate();
                     reject(new Error('Connection timeout authorizing'));
                 }
-            }, strategyConfig.connectionTimeout || 10000);
+            }, strategyConfig.connectionTimeout || 15000);
         });
+    }
+
+    /**
+     * Send ping to all active connections to prevent server-side closure
+     */
+    keepAlive() {
+        for (const [token, conn] of this.pool.entries()) {
+            if (conn.ws.readyState === WebSocket.OPEN) {
+                try {
+                    conn.ws.send(JSON.stringify({ ping: 1 }));
+                } catch (e) {
+                    console.error('[ConnectionManager] Ping failed:', e.message);
+                }
+            }
+        }
     }
 
     /**
@@ -122,6 +149,7 @@ class ConnectionManager {
         let closedCount = 0;
 
         for (const [token, conn] of this.pool.entries()) {
+            // Only cleanup if truly idle (no requests AND no messages received)
             if (now - conn.lastUsed > this.MAX_IDLE_MS) {
                 console.log(`[ConnectionManager] Closing idle connection for accounts: ${[...conn.accountIds].join(', ')}`);
                 conn.ws.terminate(); // Force close
@@ -140,6 +168,7 @@ class ConnectionManager {
      */
     shutdown() {
         if (this.cleanupInterval) clearInterval(this.cleanupInterval);
+        if (this.pingInterval) clearInterval(this.pingInterval);
         for (const conn of this.pool.values()) {
             conn.ws.terminate();
         }
