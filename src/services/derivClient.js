@@ -271,11 +271,22 @@ class DerivClient {
                         try {
                             const msg = JSON.parse(data.toString());
                             if (msg.tick) {
+                                // Extract last digit with precision awareness
+                                const quote = msg.tick.quote;
+                                const symbolMap = {
+                                    'R_10': 3, 'R_25': 3, 'R_50': 4, 'R_75': 4, 'R_100': 2,
+                                    '1HZ10V': 3, '1HZ25V': 3, '1HZ50V': 4, '1HZ75V': 4, '1HZ100V': 2,
+                                    'JD10': 3, 'JD25': 3, 'JD50': 3, 'JD75': 3, 'JD100': 3
+                                };
+                                const precision = symbolMap[msg.tick.symbol] || 3;
+                                const quoteStr = quote.toFixed(precision);
+                                const digit = parseInt(quoteStr.slice(-1));
+
                                 callback({
                                     symbol: msg.tick.symbol,
-                                    quote: msg.tick.quote,
+                                    quote: quote,
                                     epoch: msg.tick.epoch,
-                                    digit: parseInt(msg.tick.quote.toString().slice(-1))
+                                    digit: digit
                                 });
                             }
                         } catch (e) {

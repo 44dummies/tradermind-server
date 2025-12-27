@@ -253,8 +253,8 @@ class TickCollector extends EventEmitter {
     const quote = tickData.tick.quote;
     const epoch = tickData.tick.epoch;
 
-    // Extract last digit
-    const lastDigit = this.extractLastDigit(quote);
+    // Extract last digit with market-specific precision awareness
+    const lastDigit = this.extractLastDigit(quote, market);
 
     // Get history arrays
     let ticks = this.tickHistory.get(market) || [];
@@ -294,11 +294,22 @@ class TickCollector extends EventEmitter {
 
   /**
    * Extract last digit from quote
+   * Robust against JS number trimming (e.g. 1.230 becoming 1.23)
    */
-  extractLastDigit(quote) {
-    const quoteStr = quote.toString();
-    const cleanStr = quoteStr.replace('.', '');
-    return parseInt(cleanStr[cleanStr.length - 1]);
+  extractLastDigit(quote, market = null) {
+    if (quote === undefined || quote === null) return 0;
+
+    // Known precision for synthetic indices
+    const symbolMap = {
+      'R_10': 3, 'R_25': 3, 'R_50': 4, 'R_75': 4, 'R_100': 2,
+      '1HZ10V': 3, '1HZ25V': 3, '1HZ50V': 4, '1HZ75V': 4, '1HZ100V': 2,
+      'JD10': 3, 'JD25': 3, 'JD50': 3, 'JD75': 3, 'JD100': 3
+    };
+
+    // Fallback to 3 decimals if market unknown (safe default for most)
+    const precision = symbolMap[market] || 3;
+    const quoteStr = quote.toFixed(precision);
+    return parseInt(quoteStr.slice(-1));
   }
 
   /**
