@@ -1097,6 +1097,24 @@ class TradeExecutor {
         })
         .eq('contract_id', tradeResult.contractId);
 
+      // CRITICAL LOGGING FOR DASHBOARD STATS
+      // The stats endpoint consumes 'trading_activity_logs' to calculate PnL.
+      await supabase.from('trading_activity_logs').insert({
+        session_id: session.id,
+        action_type: finalPL > 0 ? 'trade_won' : 'trade_lost',
+        action_details: {
+          contractId: tradeResult.contractId,
+          symbol: tradeResult.symbol || session.markets?.[0] || 'Unknown',
+          profit: finalPL,
+          pnl: finalPL, // redundancy for safety
+          stake: tradeResult.stake,
+          result: reason,
+          entry: auditData.entrySpot,
+          exit: auditData.exitSpot
+        },
+        created_at: new Date().toISOString()
+      });
+
       // Handle Recovery Session Logic
       if (session.session_type === 'recovery') {
         await this.handleRecoveryOutcome(session, finalPL);

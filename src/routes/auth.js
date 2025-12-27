@@ -130,7 +130,7 @@ router.post('/login', async (req, res) => {
       data: {
         refreshToken,
         isOnline: true,
-        lastSeenAt: new Date()
+        lastSeen: new Date()
       }
     });
 
@@ -382,7 +382,7 @@ router.post('/logout', async (req, res) => {
           data: {
             refreshToken: null,
             isOnline: false,
-            lastSeenAt: new Date()
+            lastSeen: new Date()
           }
         });
       }

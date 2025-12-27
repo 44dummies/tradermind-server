@@ -24,6 +24,7 @@ const db = {
         data.avatarUrl = data.profile_photo;
         data.isAdmin = data.is_admin || false;
         data.role = data.is_admin ? 'admin' : (data.role || 'user');
+        data.isBanned = data.is_banned || false;
       }
       return data;
     },
