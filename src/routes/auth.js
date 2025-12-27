@@ -198,58 +198,56 @@ router.post('/deriv', async (req, res) => {
       console.log(`[Auth] Verified Deriv user: ${derivId}`);
     }
 
-    // TRANSACTIONAL LOGIN: Ensure atomicity for user creation/update
-    const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
-      let user = await tx.user.findUnique({ where: { derivId } });
+    // SEQUENTIAL LOGIN: Transaction not supported by current DB adapter
+    // Race conditions are mitigated by Frontend Lock + Strict Token Enforcement
 
-      if (!user) {
-        console.log('Creating new user:', derivId);
-        const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
-        user = await tx.user.create({
-          data: {
-            id: uuidv4(),
-            derivId,
-            username,
-            email: email || null,
-            fullName: fullname || null, // Keep fullName from input
-            country: country || null,
-            traderLevel: 'beginner',
-            isAdmin: false
-          }
-        });
-        // Note: autoAssignUserToChatrooms cannot be in transaction easily if it uses other checks, 
-        // but we can run it after. It's safe to be eventual consistency.
-      }
+    let user = await prisma.user.findUnique({ where: { derivId } });
 
-      // Admin Override Check
-      const envAdminIds = process.env.ADMIN_DERIV_IDS?.split(',').map(id => id.trim()) || [];
-      if (envAdminIds.includes(derivId) && !user.isAdmin) {
-        user = await tx.user.update({
-          where: { id: user.id },
-          data: { isAdmin: true }
-        });
-      }
-
-      if (user.isBanned) {
-        throw new Error('Account suspended');
-      }
-
-      // Generate Tokens
-      const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
-      const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
-
-      // Update User with new Refresh Token
-      await tx.user.update({
-        where: { id: user.id },
+    if (!user) {
+      console.log('Creating new user:', derivId);
+      const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
+      user = await prisma.user.create({
         data: {
-          refreshToken,
-          isOnline: true,
-          lastSeen: new Date(),
-          country: country || user.country
+          id: uuidv4(),
+          derivId,
+          username,
+          email: email || null,
+          fullName: fullname || null,
+          country: country || null,
+          traderLevel: 'beginner',
+          isAdmin: false
         }
       });
+      // Note: autoAssignUserToChatrooms cannot be in transaction easily if it uses other checks, 
+      // but we can run it after. It's safe to be eventual consistency.
+    }
 
-      return { user, accessToken, refreshToken };
+    // Admin Override Check
+    const envAdminIds = process.env.ADMIN_DERIV_IDS?.split(',').map(id => id.trim()) || [];
+    if (envAdminIds.includes(derivId) && !user.isAdmin) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { isAdmin: true }
+      });
+    }
+
+    if (user.isBanned) {
+      throw new Error('Account suspended');
+    }
+
+    // Generate Tokens
+    const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
+    const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
+
+    // Update User with new Refresh Token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        refreshToken,
+        isOnline: true,
+        lastSeen: new Date(),
+        country: country || user.country
+      }
     });
 
     // Check suspension outside transaction catch block to return 403
