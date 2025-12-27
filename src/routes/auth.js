@@ -198,77 +198,65 @@ router.post('/deriv', async (req, res) => {
       console.log(`[Auth] Verified Deriv user: ${derivId}`);
     }
 
-    let user;
-    try {
-      user = await prisma.user.findUnique({ where: { derivId } });
-      // console.log('User lookup result:', user ? 'found' : 'not found');
-    } catch (dbErr) {
-      console.error('Database lookup error:', dbErr.message);
-      throw dbErr;
-    }
+    // TRANSACTIONAL LOGIN: Ensure atomicity for user creation/update
+    const { user, accessToken, refreshToken } = await prisma.$transaction(async (tx) => {
+      let user = await tx.user.findUnique({ where: { derivId } });
 
-    if (!user) {
-      console.log('Creating new user...');
-
-      try {
-
+      if (!user) {
+        console.log('Creating new user:', derivId);
         const username = derivId.replace(/[^a-z0-9_]/gi, '_').substring(0, 50);
-
-        user = await prisma.user.create({
+        user = await tx.user.create({
           data: {
             id: uuidv4(),
             derivId,
             username,
             email: email || null,
-            fullName: fullname || null,
+            fullName: fullname || null, // Keep fullName from input
             country: country || null,
             traderLevel: 'beginner',
-            isAdmin: false // New users are not admins by default - set via database
+            isAdmin: false
           }
         });
-        console.log('User created:', user.id);
-      } catch (createErr) {
-        console.error('User creation error:', createErr.message);
-        console.error('Create error details:', createErr);
-        throw createErr;
+        // Note: autoAssignUserToChatrooms cannot be in transaction easily if it uses other checks, 
+        // but we can run it after. It's safe to be eventual consistency.
       }
 
+      // Admin Override Check
+      const envAdminIds = process.env.ADMIN_DERIV_IDS?.split(',').map(id => id.trim()) || [];
+      if (envAdminIds.includes(derivId) && !user.isAdmin) {
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: { isAdmin: true }
+        });
+      }
 
-      await autoAssignUserToChatrooms(user.id);
-    }
-    // Admin status is read from database - no hardcoded overrides
-    // OPTIONAL: Environment variable override for emergency admin access
-    const envAdminIds = process.env.ADMIN_DERIV_IDS?.split(',').map(id => id.trim()) || [];
-    const isEnvAdmin = envAdminIds.includes(derivId);
-    if (isEnvAdmin && !user.isAdmin) {
-      console.log(`[Auth] Environment variable override: granting admin to ${derivId}`);
-      user.isAdmin = true;
-      // Also update in database for persistence
-      await prisma.user.update({
+      if (user.isBanned) {
+        throw new Error('Account suspended');
+      }
+
+      // Generate Tokens
+      const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
+      const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
+
+      // Update User with new Refresh Token
+      await tx.user.update({
         where: { id: user.id },
-        data: { isAdmin: true }
+        data: {
+          refreshToken,
+          isOnline: true,
+          lastSeen: new Date(),
+          country: country || user.country
+        }
       });
-    }
 
-
-    if (user.isBanned) {
-      return res.status(403).json({ error: 'Account suspended' });
-    }
-
-    // Generate tokens with role
-    const userRole = user.isAdmin ? 'admin' : (user.role || 'user');
-    const { accessToken, refreshToken } = generateTokens(user.id, user.derivId, userRole, user.isAdmin || false);
-
-    // Update user status AND sync refresh token to prevent mismatch
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        refreshToken, // CRITICAL: Always sync refresh token to DB on login
-        isOnline: true,
-        lastSeen: new Date(),
-        country: country || user.country
-      }
+      return { user, accessToken, refreshToken };
     });
+
+    // Check suspension outside transaction catch block to return 403
+    // (Handled by the try/catch around the whole block in route handler)
+
+    // Post-transaction side effects
+    autoAssignUserToChatrooms(user.id).catch(console.error);
 
     // Set refresh token as HttpOnly cookie
     res.cookie('refreshToken', refreshToken, COOKIE_OPTIONS);
