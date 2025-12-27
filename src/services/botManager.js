@@ -25,6 +25,7 @@ class BotManager {
     this.io = io;
     signalWorker.setSocket(io);
     tradeExecutor.setSocket(io);
+    await tradeExecutor.initialize();
 
     // Preload quant memory from Supabase
     try {

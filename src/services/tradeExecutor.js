@@ -44,6 +44,36 @@ class TradeExecutor {
     setTimeout(() => this.hydrateMonitors(), 5000);
   }
 
+  async initialize() {
+    console.log('[TradeExecutor] Initializing and subscribing to signal queue...');
+    await messageQueue.subscribe(TOPICS.TRADE_SIGNALS, this.handleSignal.bind(this));
+  }
+
+  async handleSignal(event) {
+    try {
+      console.log(`[TradeExecutor] 📩 Received signal event: ${event.id}`);
+      // Extract signal and session data from event payload
+      // payload: { market, side, ... , sessionTable, riskCheckPassed }
+      // We need to reconstruct the 'signal' object expected by executeMultiAccountTrade
+
+      const { payload, sessionId } = event;
+      const signal = {
+        market: payload.market,
+        side: payload.side,
+        digit: payload.digit,
+        confidence: payload.confidence,
+        generatedAt: event.timestamp || new Date(),
+        // Pass through other props if needed
+      };
+
+      const sessionTable = payload.sessionTable || 'trading_sessions_v2';
+
+      await this.executeMultiAccountTrade(signal, sessionId, sessionTable);
+    } catch (err) {
+      console.error('[TradeExecutor] Failed to process signal event:', err);
+    }
+  }
+
   /**
    * Hydrate active monitors from Redis (Crash Recovery)
    */
