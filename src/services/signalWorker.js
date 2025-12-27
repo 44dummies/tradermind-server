@@ -321,28 +321,27 @@ class SignalWorker {
         console.log('[SignalWorker]  Risk check passed, executing trade...');
 
         // Event-driven mode: Publish signal to queue if available
-        // CRITICAL FIX: Direct execution is required as TradeExecutor does not yet consume the queue.
-        // if (messageQueue.isReady()) {
-        //   const signalEvent = createSignalEvent(revalidated, this.sessionId);
-        //   signalEvent.payload.dailyLoss = dailyLoss;
-        //   signalEvent.payload.riskCheckPassed = true; // Added flag
-        //   signalEvent.sessionTable = this.sessionTable;
+        if (messageQueue.isReady()) {
+          const signalEvent = createSignalEvent(revalidated, this.sessionId);
+          signalEvent.payload.dailyLoss = dailyLoss;
+          signalEvent.payload.riskCheckPassed = true;
+          signalEvent.sessionTable = this.sessionTable;
 
-        //   await messageQueue.publish(TOPICS.TRADE_SIGNALS, signalEvent);
-        //   console.log(`[SignalWorker] Signal published to queue: ${signalEvent.id}`);
+          await messageQueue.publish(TOPICS.TRADE_SIGNALS, signalEvent);
+          console.log(`[SignalWorker] Signal published to queue: ${signalEvent.id}`);
 
-        //   // Also emit to SSE clients
-        //   if (this.io) {
-        //     this.io.emit('signal_queued', signalEvent);
-        //   }
+          // Also emit to SSE clients
+          if (this.io) {
+            this.io.emit('signal_queued', signalEvent);
+          }
 
-        //   trackEvent('SIGNAL_QUEUED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
-        // } else {
-        // Fallback: Direct execution when queue not available (OR FORCED as per fix)
-        console.log('[SignalWorker] Executing trade via direct call (Queue bypassed)');
-        await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
-        trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
-        // }
+          trackEvent('SIGNAL_QUEUED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
+        } else {
+          // Fallback: Direct execution when queue not available
+          console.log('[SignalWorker] Queue not not ready, executing trade via direct call');
+          await tradeExecutor.executeMultiAccountTrade(revalidated, this.sessionId, this.sessionTable);
+          trackEvent('TRADE_EXECUTED', { market: revalidated.market, side: revalidated.side, confidence: revalidated.confidence });
+        }
       } catch (error) {
         console.error('[SignalWorker] Trade execution execution error:', error);
         captureError(error, { market: revalidated.market, sessionId: this.sessionId, phase: 'execution' });
