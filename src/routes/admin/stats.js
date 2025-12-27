@@ -46,11 +46,12 @@ router.get('/', async (req, res) => {
             dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
         }
 
-        // Build query for trades from activity logs
+        // Build query for trades from 'trades' table (Historical Source)
         let tradesQuery = supabase
-            .from('trading_activity_logs')
-            .select('action_type, action_details, created_at')
-            .in('action_type', ['trade_won', 'trade_lost', 'trade_closed']);
+            .from('trades')
+            .select('status, profit_loss, stake, created_at, contract_id, signal')
+            .neq('status', 'pending_intent') // Exclude pending
+            .not('profit_loss', 'is', null); // Exclude unfinished
 
         if (sessionId) {
             tradesQuery = tradesQuery.eq('session_id', sessionId);
@@ -67,14 +68,14 @@ router.get('/', async (req, res) => {
         if (error) throw error;
 
         // Calculate statistics
-        const wins = (trades || []).filter(t => t.action_type === 'trade_won');
-        const losses = (trades || []).filter(t => t.action_type === 'trade_lost');
+        // Normalize status/profit to won/lost
+        const wins = (trades || []).filter(t => parseFloat(t.profit_loss) > 0);
+        const losses = (trades || []).filter(t => parseFloat(t.profit_loss) <= 0);
         const completedTrades = trades || [];
 
         let totalProfit = 0;
         completedTrades.forEach(t => {
-            if (t.action_details?.profit) totalProfit += parseFloat(t.action_details.profit) || 0;
-            else if (t.action_details?.pnl) totalProfit += parseFloat(t.action_details.pnl) || 0;
+            totalProfit += parseFloat(t.profit_loss) || 0;
         });
 
         const avgProfit = completedTrades.length > 0 ? totalProfit / completedTrades.length : 0;
@@ -85,37 +86,30 @@ router.get('/', async (req, res) => {
             const date = new Date(t.created_at).toLocaleDateString('en-US', { weekday: 'short' });
             if (!dailyMap[date]) dailyMap[date] = { date, trades: 0, profit: 0, wins: 0 };
             dailyMap[date].trades++;
-            if (t.action_type === 'trade_won') dailyMap[date].wins++;
-            if (t.action_details?.profit) dailyMap[date].profit += parseFloat(t.action_details?.profit) || 0;
+            if (parseFloat(t.profit_loss) > 0) dailyMap[date].wins++;
+            dailyMap[date].profit += parseFloat(t.profit_loss) || 0;
         });
         const dailyStats = Object.values(dailyMap).map(d => ({
             ...d,
             winRate: d.trades > 0 ? (d.wins / d.trades) * 100 : 0
         }));
 
-        // Calculate contract stats (by contract_type in metadata)
+        // Calculate contract stats (Infer from signal or other metadata if available, else generic)
         const contractMap = {};
         completedTrades.forEach(t => {
-            const type = t.action_details?.contract_type || 'UNKNOWN';
+            const type = t.signal?.type || 'DIGIT_DIFF'; // Default/Fallback
             if (!contractMap[type]) contractMap[type] = { type, count: 0, wins: 0, profit: 0 };
             contractMap[type].count++;
-            if (t.action_type === 'trade_won') contractMap[type].wins++;
-            if (t.action_details?.profit) contractMap[type].profit += parseFloat(t.action_details?.profit) || 0;
+            if (parseFloat(t.profit_loss) > 0) contractMap[type].wins++;
+            contractMap[type].profit += parseFloat(t.profit_loss) || 0;
         });
         const contractStats = Object.values(contractMap).map(c => ({
             ...c,
             winRate: c.count > 0 ? (c.wins / c.count) * 100 : 0
         }));
 
-        // Calculate digit distribution (from metadata.digit)
-        const digitDistribution = {};
-        for (let i = 0; i <= 9; i++) digitDistribution[String(i)] = 0;
-        completedTrades.forEach(t => {
-            const digit = t.action_details?.digit;
-            if (digit !== undefined && digit !== null) {
-                digitDistribution[String(digit)] = (digitDistribution[String(digit)] || 0) + 1;
-            }
-        });
+        // Calculate digit distribution (Unavailable in simplified trades table, leave empty or infer)
+        const digitDistribution = {}; // Cannot infer easily from 'trades' without metadata
 
         // Best and worst day
         const dayProfits = Object.values(dailyMap).map(d => d.profit);
@@ -193,11 +187,12 @@ router.get('/accounts', async (req, res) => {
     try {
         const { sessionId, limit = 50 } = req.query;
 
-        // Get trade stats grouped by account from activity logs
+        // Get trade stats grouped by account from trades table
         let query = supabase
-            .from('trading_activity_logs')
-            .select('user_id, action_details, action_type')
-            .in('action_type', ['trade_won', 'trade_lost']);
+            .from('trades')
+            .select('user_id, account_id, profit_loss, stake, status')
+            .neq('status', 'pending_intent')
+            .not('profit_loss', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -211,10 +206,10 @@ router.get('/accounts', async (req, res) => {
         const accountStats = {};
 
         (trades || []).forEach(t => {
-            const key = t.action_details?.account_id || t.user_id;
+            const key = t.account_id || t.user_id;
             if (!accountStats[key]) {
                 accountStats[key] = {
-                    accountId: t.action_details?.account_id,
+                    accountId: t.account_id,
                     userId: t.user_id,
                     totalTrades: 0,
                     wins: 0,
@@ -225,13 +220,13 @@ router.get('/accounts', async (req, res) => {
             }
 
             accountStats[key].totalTrades++;
-            if (t.action_type === 'trade_won') {
+            if (parseFloat(t.profit_loss) > 0) {
                 accountStats[key].wins++;
-            } else if (t.action_type === 'trade_lost') {
+            } else {
                 accountStats[key].losses++;
             }
-            accountStats[key].profit += parseFloat(t.action_details?.profit) || 0;
-            accountStats[key].stake += parseFloat(t.action_details?.stake) || 0;
+            accountStats[key].profit += parseFloat(t.profit_loss) || 0;
+            accountStats[key].stake += parseFloat(t.stake) || 0;
         });
 
         // Convert to array and calculate rates
@@ -260,9 +255,10 @@ router.get('/markets', async (req, res) => {
         const { sessionId } = req.query;
 
         let query = supabase
-            .from('trading_activity_logs')
-            .select('user_id, action_details, action_type')
-            .in('action_type', ['trade_won', 'trade_lost']);
+            .from('trades')
+            .select('profit_loss, stake, status, signal')
+            .neq('status', 'pending_intent')
+            .not('profit_loss', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -276,7 +272,8 @@ router.get('/markets', async (req, res) => {
         const marketStats = {};
 
         (trades || []).forEach(t => {
-            const market = t.action_details?.market || 'Unknown';
+            // Infer market from signal (e.g., R_100) or default
+            const market = t.signal?.market || 'Unknown';
             if (!marketStats[market]) {
                 marketStats[market] = {
                     market,
@@ -289,13 +286,13 @@ router.get('/markets', async (req, res) => {
             }
 
             marketStats[market].totalTrades++;
-            if (t.action_type === 'trade_won') {
+            if (parseFloat(t.profit_loss) > 0) {
                 marketStats[market].wins++;
-            } else if (t.action_type === 'trade_lost') {
+            } else {
                 marketStats[market].losses++;
             }
-            marketStats[market].profit += parseFloat(t.action_details?.profit) || 0;
-            marketStats[market].stake += parseFloat(t.action_details?.stake) || 0;
+            marketStats[market].profit += parseFloat(t.profit_loss) || 0;
+            marketStats[market].stake += parseFloat(t.stake) || 0;
         });
 
         // Convert to array with rates
@@ -323,9 +320,10 @@ router.get('/strategies', async (req, res) => {
         const { sessionId } = req.query;
 
         let query = supabase
-            .from('trading_activity_logs')
-            .select('user_id, action_details, action_type')
-            .in('action_type', ['trade_won', 'trade_lost']);
+            .from('trades')
+            .select('profit_loss, stake, status, signal')
+            .neq('status', 'pending_intent')
+            .not('profit_loss', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -339,7 +337,7 @@ router.get('/strategies', async (req, res) => {
         const strategyStats = {};
 
         (trades || []).forEach(t => {
-            const strategy = t.action_details?.strategy || 'Unknown';
+            const strategy = t.signal?.type || 'Unknown';
             if (!strategyStats[strategy]) {
                 strategyStats[strategy] = {
                     strategy,
@@ -353,14 +351,14 @@ router.get('/strategies', async (req, res) => {
             }
 
             strategyStats[strategy].totalTrades++;
-            if (t.action_type === 'trade_won') {
+            if (parseFloat(t.profit_loss) > 0) {
                 strategyStats[strategy].wins++;
-            } else if (t.action_type === 'trade_lost') {
+            } else {
                 strategyStats[strategy].losses++;
             }
-            strategyStats[strategy].profit += parseFloat(t.action_details?.profit) || 0;
-            strategyStats[strategy].stake += parseFloat(t.action_details?.stake) || 0;
-            strategyStats[strategy].totalConfidence += parseFloat(t.action_details?.confidence) || 0;
+            strategyStats[strategy].profit += parseFloat(t.profit_loss) || 0;
+            strategyStats[strategy].stake += parseFloat(t.stake) || 0;
+            // No confidence field in basic trades table, default 0
         });
 
         // Convert to array with rates
@@ -369,7 +367,7 @@ router.get('/strategies', async (req, res) => {
                 ...s,
                 winRate: s.totalTrades > 0 ? (s.wins / s.totalTrades) * 100 : 0,
                 roi: s.stake > 0 ? (s.profit / s.stake) * 100 : 0,
-                avgConfidence: s.totalTrades > 0 ? s.totalConfidence / s.totalTrades : 0
+                avgConfidence: 0
             }))
             .sort((a, b) => b.winRate - a.winRate);
 
@@ -388,10 +386,12 @@ router.get('/timeline', async (req, res) => {
     try {
         const { sessionId, interval = 'hour' } = req.query;
 
+        // Build query for trades from 'trades' table (Historical Source)
         let query = supabase
-            .from('trading_activity_logs')
-            .select('created_at, action_details, action_type')
-            .in('action_type', ['trade_won', 'trade_lost'])
+            .from('trades')
+            .select('created_at, profit_loss, status')
+            .neq('status', 'pending_intent')
+            .not('profit_loss', 'is', null)
             .order('created_at', { ascending: true });
 
         if (sessionId) {
@@ -405,14 +405,14 @@ router.get('/timeline', async (req, res) => {
         // Build cumulative profit curve
         let cumulative = 0;
         const timeline = (trades || []).map((t, i) => {
-            const profit = parseFloat(t.action_details?.profit) || 0;
+            const profit = parseFloat(t.profit_loss) || 0;
             cumulative += profit;
             return {
                 index: i,
                 timestamp: t.created_at,
                 profit: profit,
                 cumulative,
-                result: t.action_type === 'trade_won' ? 'won' : 'lost'
+                result: parseFloat(t.profit_loss) > 0 ? 'won' : 'lost'
             };
         });
 
