@@ -755,10 +755,21 @@ class TradeExecutor {
 
     // PERSISTENCE: Save monitor state to Redis for recovery
     try {
+      // Optimization: Minify session object to reduce Redis memory usage
+      const minifiedSession = {
+        id: session.id,
+        user_id: session.user_id,
+        min_balance: session.min_balance,
+        default_tp: session.default_tp,
+        default_sl: session.default_sl,
+        stake_amount: session.stake_amount, // Critical for recovery logic if used
+        markets: session.markets
+      };
+
       const monitorState = {
         tradeResult,
         invitation,
-        session, // Note: Session might be large, consider minimizing
+        session: minifiedSession,
         apiToken, // Required for recovery reconnection
         startTime,
         monitorId
