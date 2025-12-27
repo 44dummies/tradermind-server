@@ -172,18 +172,23 @@ router.post('/deriv', async (req, res) => {
     }
 
     // SECURITY: Verify token with Deriv API
+    // STRICT ENFORCEMENT: Token is required for security and to prevent session sabotage
+    if (!token) {
+      console.error(`[Auth] Security Block: No token provided for ${derivId}. Rejecting login request.`);
+      return res.status(400).json({ error: 'Deriv authentication token is required' });
+    }
+
     if (token) {
+      // Verify with Deriv API
       const verification = await derivClient.verifyUserToken(token);
 
       if (!verification.isValid) {
         console.warn(`[Auth] Token verification failed for ${derivId}: ${verification.error}`);
-        // Return specific error for debugging
         return res.status(401).json({ error: 'Invalid Deriv token', details: verification.error });
       }
 
       if (verification.userData.loginid !== derivId) {
         console.warn(`[Auth] ID mismatch: Token belongs to ${verification.userData.loginid}, claimed ${derivId}`);
-        // Return specific mismatch error
         return res.status(403).json({
           error: 'Token does not match claimed user ID',
           expected: derivId,
@@ -191,10 +196,6 @@ router.post('/deriv', async (req, res) => {
         });
       }
       console.log(`[Auth] Verified Deriv user: ${derivId}`);
-    } else {
-      // Fallback for legacy calls (warn but maybe allow if strict mode is off? No, safer to reject now)
-      console.warn(`[Auth] No token provided for ${derivId} - allowing for backward compatibility but this SHOULD be fixed.`);
-      // return res.status(401).json({ error: 'Authentication token required' }); // Uncomment to enforce
     }
 
     let user;
