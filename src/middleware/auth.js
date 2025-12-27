@@ -17,7 +17,13 @@ function authMiddleware(req, res, next) {
     return res.status(401).json({ error: `Invalid or expired token: ${error}` });
   }
 
-  // Attach full user info including role to request
+  // DEBUG: Log decoded token contents
+  console.log(`[AuthMiddleware] Decoded JWT:`, {
+    userId: decoded.userId,
+    username: decoded.username,
+    role: decoded.role,
+    is_admin: decoded.is_admin
+  });
   req.userId = decoded.userId;
   req.username = decoded.username;
   req.user = {
