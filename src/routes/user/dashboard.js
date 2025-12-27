@@ -45,7 +45,7 @@ router.get('/', async (req, res) => {
         const { data: availableSessions } = await supabase
             .from('trading_sessions_v2')
             .select('id, name, type, min_balance, default_tp, default_sl, status, staking_mode')
-            .in('status', ['pending', 'active'])
+            .in('status', ['pending', 'running', 'active']) // Support both V1 and V2 statuses
             .order('created_at', { ascending: false });
 
         // Get unread notification count

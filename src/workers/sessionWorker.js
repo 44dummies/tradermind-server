@@ -62,10 +62,12 @@ class SessionWorker {
         console.log(`[SessionWorker] Session started: ${name}`);
 
         // Log activity
-        await supabase.from('trading_activity_logs').insert({
+        await supabase.from('activity_logs_v2').insert({
             session_id: sessionId,
-            action: 'session_started',
-            details: { name, durationMinutes }
+            type: 'session_started',
+            level: 'info',
+            message: `Session ${name} started`,
+            metadata: { name, durationMinutes }
         });
 
         // Set auto-stop timer if duration is specified
@@ -86,10 +88,12 @@ class SessionWorker {
         this.clearAutoStopTimer(sessionId);
 
         // Log activity
-        await supabase.from('trading_activity_logs').insert({
+        await supabase.from('activity_logs_v2').insert({
             session_id: sessionId,
-            action: 'session_stopped',
-            details: { name }
+            type: 'session_stopped',
+            level: 'info',
+            message: `Session ${name} stopped`,
+            metadata: { name }
         });
 
         // Update all active participants to stopped
@@ -139,10 +143,12 @@ class SessionWorker {
             .eq('id', sessionId);
 
         // Log activity
-        await supabase.from('trading_activity_logs').insert({
+        await supabase.from('activity_logs_v2').insert({
             session_id: sessionId,
-            action: 'session_auto_stopped',
-            details: { name, reason: 'Duration expired' }
+            type: 'session_auto_stopped',
+            level: 'info',
+            message: `Session ${name} auto-stopped`,
+            metadata: { name, reason: 'Duration expired' }
         });
     }
 

@@ -44,7 +44,7 @@ const { setupSocketHandlers } = require('./socket');
 // Event-driven architecture modules
 const { messageQueue } = require('./queue');
 const { startAllWorkers, stopAllWorkers, getWorkerStats } = require('./workers');
-const eventsRouter = require('./routes/events');
+// const eventsRouter = require('./routes/events');
 
 const { initializeDefaultChatrooms } = require('./services/assignment');
 const { startCronJobs } = require('./cron');
@@ -135,7 +135,7 @@ app.use('/api/user', authMiddleware, isUser, userTradingRoutes);
 app.use('/api/user/recovery', authMiddleware, isUser, userRecoveryRoutes);
 
 // SSE Events route for real-time dashboard
-app.use('/api/events', eventsRouter);
+// app.use('/api/events', eventsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -268,9 +268,11 @@ async function startServer() {
       await startAllWorkers(io);
       console.log('Background workers started');
 
-      // Initialize SSE bridge
+      /*
+      // Initialize SSE bridge - DEPRECATED in favor of unified Socket.IO pipeline
       const { initSSEBridge } = require('./routes/events');
       await initSSEBridge();
+      */
     } catch (queueErr) {
       console.warn('Message queue/workers not started (Redis may not be available):', queueErr.message);
       console.log('Running in direct mode without queue');

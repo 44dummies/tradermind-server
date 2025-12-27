@@ -20,7 +20,7 @@ const isAdmin = async (req, res, next) => {
     // Robustness: Check by id (likely UUID) first, then fallback to deriv_id
     let { data: profile, error } = await supabase
       .from('user_profiles')
-      .select('is_admin, deriv_id')
+      .select('id, is_admin, deriv_id')
       .eq('id', req.userId)
       .maybeSingle();
 
@@ -28,7 +28,7 @@ const isAdmin = async (req, res, next) => {
     if (!profile && !error) {
       const { data: fallbackProfile, error: fallbackError } = await supabase
         .from('user_profiles')
-        .select('is_admin, deriv_id')
+        .select('id, is_admin, deriv_id')
         .eq('deriv_id', req.userId)
         .maybeSingle();
 

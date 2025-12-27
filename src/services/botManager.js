@@ -205,11 +205,11 @@ class BotManager {
           await this.stopBot();
 
           // Log auto-stop event
-          await supabase.from('trading_activity_logs').insert({
-            action_type: 'session_auto_stop',
-            action_details: {
-              level: 'info',
-              message: `Session auto-stopped after ${session.duration_minutes} minutes`,
+          await supabase.from('activity_logs_v2').insert({
+            type: 'session_auto_stop',
+            level: 'info',
+            message: `Session auto-stopped after ${session.duration_minutes} minutes`,
+            metadata: {
               sessionId
             },
             session_id: sessionId,
@@ -279,6 +279,11 @@ class BotManager {
     // Emit bot status update
     if (this.io) {
       this.io.emit('bot_status', this.getState());
+      if (sessionId) {
+        this.io.emit('session_status', {
+          session: { id: sessionId, status: 'completed', ended_at: new Date().toISOString() }
+        });
+      }
     }
     if (sessionId) {
       try {
@@ -287,7 +292,7 @@ class BotManager {
 
         // Improve stats calculation query in sessionManager or just calc here if needed
         // Assuming sessionManager stats are basic. Let's filter trades for win rate.
-        const { data: trades } = await supabase.from('trades').select('profit').eq('session_id', sessionId);
+        const { data: trades } = await supabase.from('trade_logs').select('profit').eq('session_id', sessionId);
         const wins = trades?.filter(t => t.profit > 0).length || 0;
         const total = trades?.length || 0;
         const realWinRate = total > 0 ? ((wins / total) * 100).toFixed(1) : '0.0';

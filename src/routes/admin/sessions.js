@@ -18,7 +18,7 @@ const SESSION_TYPE = {
 // Session statuses
 const SESSION_STATUS = {
     PENDING: 'pending',
-    RUNNING: 'active',
+    RUNNING: 'running',
     PAUSED: 'paused',
     COMPLETED: 'completed',
     CANCELLED: 'cancelled'

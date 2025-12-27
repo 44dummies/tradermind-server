@@ -147,34 +147,34 @@ router.get('/sessions/:id/stats', authMiddleware, async (req, res) => {
 
     // Get trades for this session from activity logs
     const { data: trades, error: tradesErr } = await supabase
-      .from('trading_activity_logs')
+      .from('activity_logs_v2')
       .select('*')
       .eq('session_id', sessionId)
-      .in('action_type', ['trade_opened', 'trade_closed', 'trade_won', 'trade_lost']);
+      .in('type', ['trade_opened', 'trade_closed', 'trade_won', 'trade_lost']);
 
     if (tradesErr) throw tradesErr;
 
     // Calculate stats
     const closedTrades = trades?.filter(t =>
-      t.action_type === 'trade_won' || t.action_type === 'trade_lost' || t.action_type === 'trade_closed'
+      t.type === 'trade_won' || t.type === 'trade_lost' || t.type === 'trade_closed'
     ) || [];
 
-    const wins = trades?.filter(t => t.action_type === 'trade_won').length || 0;
-    const losses = trades?.filter(t => t.action_type === 'trade_lost').length || 0;
+    const wins = trades?.filter(t => t.type === 'trade_won').length || 0;
+    const losses = trades?.filter(t => t.type === 'trade_lost').length || 0;
     const totalClosed = wins + losses;
 
     // Sum up profits from metadata
     let totalProfit = 0;
     closedTrades.forEach(t => {
-      if (t.action_details?.profit) {
-        totalProfit += parseFloat(t.action_details?.profit) || 0;
-      } else if (t.action_details?.pnl) {
-        totalProfit += parseFloat(t.action_details?.pnl) || 0;
+      if (t.metadata?.profit) {
+        totalProfit += parseFloat(t.metadata?.profit) || 0;
+      } else if (t.metadata?.pnl) {
+        totalProfit += parseFloat(t.metadata?.pnl) || 0;
       }
     });
 
     const winRate = totalClosed > 0 ? (wins / totalClosed) * 100 : 0;
-    const openTrades = trades?.filter(t => t.action_type === 'trade_opened').length || 0;
+    const openTrades = trades?.filter(t => t.type === 'trade_opened').length || 0;
 
     res.json({
       success: true,
@@ -451,10 +451,21 @@ router.post('/sessions/:id/invite', authMiddleware, async (req, res) => {
 router.get('/invitations', authMiddleware, async (req, res) => {
   try {
     const { accountId } = req.query;
-    if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
+    // For V2, we use user_id logic primarily, but let's support querying.
+    // Assuming accountId is effectively the ID we filter by (could be user ID).
+    // If accountId is actually an account UUID, we might need to resolve it.
+    // But `req.userId` is the most reliable. Let's use that if accountId matches or is absent.
 
-    const invitations = await trading.getInvitations(accountId);
-    res.json({ success: true, data: invitations });
+    const targetId = req.userId; // Prefer authenticated user
+
+    const { data: invitations, error } = await supabase
+      .from('session_participants')
+      .select('*, trading_sessions_v2(*)')
+      .eq('user_id', targetId)
+      .eq('status', 'pending');
+
+    if (error) throw error;
+    res.json({ success: true, data: invitations || [] });
   } catch (error) {
     console.error('Error fetching invitations:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -463,11 +474,20 @@ router.get('/invitations', authMiddleware, async (req, res) => {
 
 router.post('/invitations/:id/accept', authMiddleware, async (req, res) => {
   try {
-    const { accountId } = req.body;
-    if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
+    const { accountId, takeProfit, stopLoss } = req.body;
+    // req.params.id is the SESSION ID in the new V2 model (or we treat it as such)
+    // The previous getInvitations returned session_id as the ID effectively.
+    // If the frontend sends the invitation ID (row ID), we might need to resolve it.
+    // BUT, the simplest path for V2 is to treat ID as Session ID.
 
-    const invitation = await trading.acceptInvitation(req.params.id, accountId);
-    await trading.logActivity('invitation_accepted', 'Invitation accepted', { invitationId: req.params.id, accountId });
+    // sessionManager.acceptSession(userId, sessionId, tpsl)
+    const invitation = await trading.acceptSession(req.userId, req.params.id, {
+      takeProfit,
+      stopLoss,
+      accountId // legacy support if needed
+    });
+
+    await trading.logActivity('invitation_accepted', 'Invitation accepted', { sessionId: req.params.id, userId: req.userId });
     res.json({ success: true, data: invitation });
   } catch (error) {
     console.error('Error accepting invitation:', error);
@@ -477,11 +497,19 @@ router.post('/invitations/:id/accept', authMiddleware, async (req, res) => {
 
 router.post('/invitations/:id/decline', authMiddleware, async (req, res) => {
   try {
-    const { accountId } = req.body;
-    if (!accountId) return res.status(400).json({ success: false, error: 'Account ID required' });
+    // For decline, we just update status to 'declined' or remove row.
+    // sessionManager doesn't have explicit decline yet, let's implement inline or add header.
+    // We'll update session_participants status to 'declined'
 
-    const invitation = await trading.declineInvitation(req.params.id, accountId);
-    res.json({ success: true, data: invitation });
+    const { data, error } = await supabase
+      .from('session_participants')
+      .update({ status: 'declined', updated_at: new Date().toISOString() })
+      .eq('session_id', req.params.id) // Assuming ID is Session ID
+      .eq('user_id', req.userId);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Invitation declined' });
   } catch (error) {
     console.error('Error declining invitation:', error);
     res.status(400).json({ success: false, error: error.message });

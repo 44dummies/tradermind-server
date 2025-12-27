@@ -416,7 +416,7 @@ async function createInvitation(sessionId, accountId, adminId) {
 async function getInvitations(accountId) {
   const { data, error } = await supabase
     .from('session_invitations')
-    .select('*, trading_sessions(*)')
+    .select('*, trading_sessions(*), trading_sessions_v2(*)')
     .eq('account_id', accountId)
     .eq('status', 'pending')
     .gt('expires_at', new Date().toISOString());
@@ -426,54 +426,29 @@ async function getInvitations(accountId) {
 }
 
 async function acceptInvitation(invitationId, accountId) {
+  const sessionManager = require('./sessionManager');
+
   const { data: invitation, error: fetchError } = await supabase
     .from('session_invitations')
     .select('*')
     .eq('id', invitationId)
-    .eq('account_id', accountId)
     .single();
 
-  if (fetchError) throw fetchError;
-  if (!invitation) throw new Error('Invitation not found');
-  if (new Date(invitation.expires_at) < new Date()) throw new Error('Invitation expired');
-  if (invitation.status !== 'pending') throw new Error('Invitation already processed');
+  if (fetchError || !invitation) throw new Error('Invitation not found');
 
-  const { data, error } = await supabase
-    .from('session_invitations')
-    .update({ status: 'accepted', responded_at: new Date().toISOString() })
-    .eq('id', invitationId)
-    .select()
-    .single();
-
-  if (error) throw error;
-
-  // ADDED: Also add to session_participants
+  // Delegate to sessionManager for participation logic
+  // We need to find the user_id for this account_id first
   const { data: account } = await supabase
     .from('trading_accounts')
     .select('user_id')
-    .eq('deriv_account_id', invitation.account_id) // Assuming account_id in invitation is deriv_id? Or uuid?
-    .single();
+    .eq('id', accountId) // Assuming invitation.account_id is the internal UUID
+    .maybeSingle();
 
-  // If invitation.account_id is UUID
-  let userId = null;
-  if (!account) {
-    const { data: acc } = await supabase.from('trading_accounts').select('user_id').eq('id', invitation.account_id).single();
-    if (acc) userId = acc.user_id;
-  } else {
-    userId = account.user_id;
-  }
+  if (!account) throw new Error('Account not found');
 
-  if (userId) {
-    await supabase.from('session_participants').upsert({
-      session_id: invitation.session_id,
-      user_id: userId,
-      status: 'active',
-      joined_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    });
-  }
-
-  return data;
+  return await sessionManager.acceptSession(account.user_id, invitation.session_id, {
+    // We don't have TP/SL here, so it will use defaults
+  });
 }
 
 async function declineInvitation(invitationId, accountId) {
@@ -490,94 +465,39 @@ async function declineInvitation(invitationId, accountId) {
 }
 
 async function joinSession(sessionId, accountId) {
-  // Check if invitation already exists
-  const { data: existing } = await supabase
-    .from('session_invitations')
-    .select('*')
-    .eq('session_id', sessionId)
-    .eq('account_id', accountId)
-    .maybeSingle();
+  const sessionManager = require('./sessionManager');
 
-  if (existing) {
-    if (existing.status === 'accepted') return existing; // Already joined
-    // If pending or declined, update to accepted
-    const { data, error } = await supabase
-      .from('session_invitations')
-      .update({ status: 'accepted', responded_at: new Date().toISOString() })
-      .eq('id', existing.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // ADDED: Ensure participant record exists
-    const { data: account } = await supabase
-      .from('trading_accounts')
-      .select('user_id')
-      .eq('id', accountId)
-      .single();
-
-    if (account) {
-      await supabase.from('session_participants').upsert({
-        session_id: sessionId,
-        user_id: account.user_id,
-        status: 'active',
-        joined_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'session_id, user_id' });
-    }
-
-    return data;
-  }
-
-  // Create new accepted invitation
-  const { data, error } = await supabase
-    .from('session_invitations')
-    .insert({
-      id: uuidv4(),
-      session_id: sessionId,
-      account_id: accountId,
-      status: 'accepted',
-      responded_at: new Date().toISOString(),
-      created_at: new Date().toISOString()
-    })
-    .select()
-    .single();
-
-  if (error) throw error;
-
-  // ADDED: Create participant record
   const { data: account } = await supabase
     .from('trading_accounts')
     .select('user_id')
     .eq('id', accountId)
     .single();
 
-  if (account) {
-    await supabase.from('session_participants').upsert({
-      session_id: sessionId,
-      user_id: account.user_id,
-      status: 'active',
-      joined_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    });
-  }
+  if (!account) throw new Error('Account not found');
 
-  return data;
+  return await sessionManager.acceptSession(account.user_id, sessionId, {
+    // Defaults will be used
+  });
+}
+
+async function acceptSession(userId, sessionId, tpsl) {
+  const sessionManager = require('./sessionManager');
+  return await sessionManager.acceptSession(userId, sessionId, tpsl);
 }
 
 // ==================== Trade Operations ====================
 
 async function recordTrade(tradeData) {
   const { data, error } = await supabase
-    .from('trades')
+    .from('trade_logs')
     .insert({
       id: uuidv4(),
       session_id: tradeData.sessionId,
+      user_id: tradeData.userId,
       account_id: tradeData.accountId,
       contract_id: tradeData.contractId,
       contract_type: tradeData.contractType,
-      volatility_index: tradeData.volatilityIndex,
+      market: tradeData.volatilityIndex || tradeData.market,
       strategy: tradeData.strategy,
       stake: tradeData.stake,
       prediction: tradeData.prediction,
@@ -594,13 +514,13 @@ async function recordTrade(tradeData) {
 
 async function updateTradeResult(tradeId, result, profit, exitTick) {
   const { data, error } = await supabase
-    .from('trades')
+    .from('trade_logs')
     .update({
       result,
       profit,
       exit_tick: exitTick,
-      payout: result === 'won' ? profit : 0,
-      updated_at: new Date().toISOString()
+      // payout: result === 'won' ? profit : 0, // V2 doesn't have payout usually
+      closed_at: new Date().toISOString()
     })
     .eq('id', tradeId)
     .select()
@@ -612,7 +532,7 @@ async function updateTradeResult(tradeId, result, profit, exitTick) {
 
 async function getSessionTrades(sessionId, options = {}) {
   let query = supabase
-    .from('trades')
+    .from('trade_logs')
     .select('*')
     .eq('session_id', sessionId);
 
@@ -626,7 +546,7 @@ async function getSessionTrades(sessionId, options = {}) {
 }
 
 async function getTradeStats(sessionId, accountId = null) {
-  let query = supabase.from('trades').select('*').eq('session_id', sessionId);
+  let query = supabase.from('trade_logs').select('*').eq('session_id', sessionId);
   if (accountId) query = query.eq('account_id', accountId);
 
   const { data: trades, error } = await query;
@@ -656,9 +576,8 @@ async function getUserPerformance(userId) {
   }
 
   // 2. Get trades for these accounts
-  // Note: account_id in trades table stores the Deriv Account ID (e.g. CR123456)
   const { data: trades, error } = await supabase
-    .from('trades')
+    .from('trade_logs')
     .select('*')
     .in('account_id', accountIds);
 
@@ -854,7 +773,7 @@ module.exports = {
   createSession, getSession, getSessions, updateSession, deleteSession,
 
   // Invitations
-  createInvitation, getInvitations, acceptInvitation, declineInvitation, joinSession,
+  createInvitation, getInvitations, acceptInvitation, declineInvitation, joinSession, acceptSession,
 
   // Trades
   recordTrade, updateTradeResult, getSessionTrades, getTradeStats, getUserPerformance,

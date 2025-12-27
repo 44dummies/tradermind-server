@@ -55,19 +55,20 @@ class SessionManager {
 
       // Create session
       const { data: session, error } = await supabase
-        .from('trading_sessions')
+        .from('trading_sessions_v2')
         .insert({
-          created_by: adminId,
-          session_type: type,
+          admin_id: adminId,
+          type: type, // V2 uses 'type'
           name: name || `${type.toUpperCase()} Session`,
-          minimum_balance: minBalance,
+          min_balance: minBalance,
           default_tp: defaultTP || 10,
           default_sl: defaultSL || 5,
-          market: markets?.[0] || 'R_100',
+          markets: markets || ['R_100'],
           duration: duration || 1,
           duration_unit: durationUnit || 't',
-          stake_percentage: stakePercentage || 0.02,
-          status: this.SESSION_STATUS.PENDING,
+          staking_mode: sessionData.stakingMode || 'fixed',
+          base_stake: stakePercentage || 0.35, // V2 uses base_stake
+          status: 'pending',
           created_at: new Date().toISOString()
         })
         .select()
@@ -107,11 +108,16 @@ class SessionManager {
         session_id: sessionId,
         user_id: userId,
         status: 'pending',
-        invited_at: new Date().toISOString()
+        kp: 0,
+        tp: 0,
+        sl: 0,
+        initial_balance: 0,
+        current_pnl: 0,
+        created_at: new Date().toISOString()
       }));
 
       const { data, error } = await supabase
-        .from('session_invitations')
+        .from('session_participants')
         .insert(invitations)
         .select();
 
@@ -119,7 +125,7 @@ class SessionManager {
         throw new Error(`Failed to send invitations: ${error.message}`);
       }
 
-      console.log(`[SessionManager]  Invited ${userIds.length} users to session ${sessionId}`);
+      console.log(`[SessionManager]  Invited ${userIds.length} users to session ${sessionId} (V2)`);
 
       // Send notifications
       for (const userId of userIds) {
@@ -156,14 +162,22 @@ class SessionManager {
     try {
       const { takeProfit, stopLoss, derivToken } = tpsl;
 
-      // Get session first to know the mode
-      const { data: session, error: sessionError } = await supabase
+      // Get session (Try V2 first)
+      const { data: v2Session } = await supabase
+        .from('trading_sessions_v2')
+        .select('*')
+        .eq('id', sessionId)
+        .maybeSingle();
+
+      const { data: v1Session } = !v2Session ? await supabase
         .from('trading_sessions')
         .select('*')
         .eq('id', sessionId)
-        .single();
+        .single() : { data: null };
 
-      if (sessionError || !session) {
+      const session = v2Session || v1Session;
+
+      if (!session) {
         throw new Error('Session not found');
       }
 
@@ -213,57 +227,31 @@ class SessionManager {
         throw new Error(`Stop Loss must be at least $${session.default_sl}`);
       }
 
-      // Update or Insert invitation
-      // Schema: id, session_id, user_id, account_id, status, invited_by, trades_count, profit, loss, responded_at, created_at, updated_at
-      const updateData = {
-        status: 'accepted',
-        responded_at: new Date().toISOString()
+      // 2. Accept invitation in session_participants
+      // Columns: id, session_id, user_id, tp, sl, status, initial_balance, current_pnl, accepted_at
+      const participantData = {
+        session_id: sessionId,
+        user_id: userId,
+        tp: finalTP,
+        sl: finalSL,
+        status: 'active',
+        initial_balance: account?.balance || 0,
+        accepted_at: new Date().toISOString()
       };
 
-      // Only add account fields if we looked up an account
-      if (account) {
-        updateData.account_id = account.id;
+      const { data: participation, error: partError } = await supabase
+        .from('session_participants')
+        .upsert(participantData, { onConflict: 'session_id, user_id' })
+        .select()
+        .single();
+
+      if (partError) {
+        console.error('[SessionManager] Failed to create participation:', partError);
+        throw new Error(`Failed to join session: ${partError.message}`);
       }
 
-      // Check if invitation exists
-      const { data: existingInvite } = await supabase
-        .from('session_invitations')
-        .select('id')
-        .eq('session_id', sessionId)
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      let invitation;
-
-      if (existingInvite) {
-        // Update existing
-        const { data, error: updateError } = await supabase
-          .from('session_invitations')
-          .update(updateData)
-          .eq('session_id', sessionId)
-          .eq('user_id', userId)
-          .select()
-          .single();
-
-        if (updateError) throw new Error(`Failed to accept session: ${updateError.message}`);
-        invitation = data;
-      } else {
-        // Insert new (Public session join)
-        const { data, error: insertError } = await supabase
-          .from('session_invitations')
-          .insert({
-            session_id: sessionId,
-            user_id: userId,
-            invited_by: session.created_by || session.admin_id, // Support both column names
-            ...updateData,
-            status: 'accepted' // Ensure status is set
-          })
-          .select()
-          .single();
-
-        if (insertError) throw new Error(`Failed to join session: ${insertError.message}`);
-        invitation = data;
-      }
+      console.log(`[SessionManager]  User ${userId} joined session ${sessionId} with TP: ${finalTP}, SL: ${finalSL}`);
+      const invitation = participation; // Return participation as the result
 
       console.log(`[SessionManager]  User ${userId} accepted session ${sessionId}`);
 
@@ -298,11 +286,14 @@ class SessionManager {
    */
   async startSession(sessionId, adminId) {
     try {
-      // Update session status
+      // Update session status (Try V2, then V1)
+      const { data: v2Session } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
+      const table = v2Session ? 'trading_sessions_v2' : 'trading_sessions';
+
       const { data: session, error } = await supabase
-        .from('trading_sessions')
+        .from(table)
         .update({
-          status: this.SESSION_STATUS.ACTIVE,
+          status: v2Session ? 'running' : this.SESSION_STATUS.ACTIVE, // V2 uses 'running'
           started_at: new Date().toISOString()
         })
         .eq('id', sessionId)
@@ -317,10 +308,10 @@ class SessionManager {
 
       // Notify all accepted users
       const { data: invitations } = await supabase
-        .from('session_invitations')
+        .from('session_participants')
         .select('user_id')
         .eq('session_id', sessionId)
-        .eq('status', 'accepted');
+        .eq('status', 'active');
 
       for (const invitation of invitations || []) {
         await this.sendNotification(invitation.user_id, {
@@ -353,10 +344,13 @@ class SessionManager {
    */
   async stopSession(sessionId, adminId) {
     try {
+      const { data: v2Session } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
+      const table = v2Session ? 'trading_sessions_v2' : 'trading_sessions';
+
       const { data: session, error } = await supabase
-        .from('trading_sessions')
+        .from(table)
         .update({
-          status: this.SESSION_STATUS.COMPLETED,
+          status: 'completed',
           completed_at: new Date().toISOString()
         })
         .eq('id', sessionId)
@@ -449,12 +443,12 @@ class SessionManager {
   async getActiveSession() {
     try {
       const { data: session, error } = await supabase
-        .from('trading_sessions')
+        .from('trading_sessions_v2')
         .select('*')
-        .eq('status', this.SESSION_STATUS.ACTIVE)
+        .in('status', ['running', 'active'])
         .order('started_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
         throw error;
@@ -491,21 +485,21 @@ class SessionManager {
 
       if (!session) throw new Error('Session not found for stats');
 
-      // Get invitations
-      const { data: invitations } = await supabase
-        .from('session_invitations')
+      // Get participants (invitations)
+      const { data: participants } = await supabase
+        .from('session_participants')
         .select('*')
         .eq('session_id', sessionId);
 
-      // Get trades
+      // Get trades from V2 logs
       const { data: trades } = await supabase
-        .from('trades')
+        .from('trade_logs')
         .select('*')
         .eq('session_id', sessionId);
 
-      const accepted = invitations?.filter(i => i.status === 'accepted').length || 0;
-      const pending = invitations?.filter(i => i.status === 'pending').length || 0;
-      const removed = invitations?.filter(i => i.status === 'removed' || i.status === 'removed_tp' || i.status === 'removed_sl').length || 0;
+      const accepted = participants?.filter(i => i.status === 'active').length || 0;
+      const pending = participants?.filter(i => i.status === 'pending').length || 0;
+      const removed = participants?.filter(i => i.status === 'removed' || i.status === 'removed_tp' || i.status === 'removed_sl' || i.status === 'kicked').length || 0;
 
       const totalTrades = trades?.length || 0;
       const openTrades = trades?.filter(t => t.status === 'open').length || 0;
@@ -516,7 +510,7 @@ class SessionManager {
       return {
         session,
         stats: {
-          totalInvitations: invitations?.length || 0,
+          totalInvitations: participants?.length || 0,
           accepted,
           pending,
           removed,
@@ -541,10 +535,11 @@ class SessionManager {
       const { takeProfit, stopLoss } = tpsl;
 
       const { data, error } = await supabase
-        .from('session_invitations')
+        .from('session_participants')
         .update({
-          take_profit: takeProfit,
-          stop_loss: stopLoss
+          tp: takeProfit,
+          sl: stopLoss,
+          updated_at: new Date().toISOString()
         })
         .eq('session_id', sessionId)
         .eq('user_id', userId)
@@ -594,10 +589,10 @@ class SessionManager {
     try {
       const { action, details, ...rest } = activity;
       await supabase
-        .from('trading_activity_logs')
+        .from('activity_logs_v2')
         .insert({
-          action_type: action,
-          action_details: details,
+          type: action,
+          metadata: details,
           ...rest,
           created_at: new Date().toISOString()
         });
@@ -611,10 +606,10 @@ class SessionManager {
   async leaveSession(userId, sessionId) {
     try {
       const { data, error } = await supabase
-        .from('session_invitations')
+        .from('session_participants')
         .update({
           status: 'left',
-          left_at: new Date().toISOString()
+          removed_at: new Date().toISOString()
         })
         .eq('session_id', sessionId)
         .eq('user_id', userId)

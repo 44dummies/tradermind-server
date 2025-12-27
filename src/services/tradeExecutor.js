@@ -91,7 +91,7 @@ class TradeExecutor {
     try {
       // Find intents older than 2 minutes that never got a contract ID
       const { data: orphanedIntents, error } = await supabase
-        .from('trades')
+        .from('trade_logs')
         .select('*, sessions:session_id(*)')
         .eq('status', 'pending_intent')
         .lt('created_at', new Date(Date.now() - 120000).toISOString());
@@ -114,17 +114,13 @@ class TradeExecutor {
             .single();
 
           if (!account) {
-            await supabase.from('trades').update({ status: 'failed_intent', metadata: { error: 'account_not_found' } }).eq('id', intent.id);
+            await supabase.from('trade_logs').update({ status: 'failed_intent', metadata: { error: 'account_not_found' } }).eq('id', intent.id);
             continue;
           }
 
-          // 2. Decrypt token (assuming decryptToken is available or we use derivClient's connection)
-          // For now, let's mark them as 'stale_intent' to prevent infinite retries/clogging
-          // A more advanced version would use Statement API to find the trade.
-
           console.log(`[TradeExecutor] Marking intent ${intent.id} as stale (Recovered from crash)`);
           await supabase
-            .from('trades')
+            .from('trade_logs')
             .update({
               status: 'stale_intent',
               metadata: {
@@ -1081,32 +1077,36 @@ class TradeExecutor {
 
       // Update trade record
       await supabase
-        .from('trades')
+        .from('trade_logs')
         .update({
-          status: reason,
-          profit_loss: finalPL,
+          result: reason === 'tp_hit' || reason === 'win' ? 'won' : reason === 'sl_hit' || reason === 'loss' ? 'lost' : 'cancelled', // V2 result enum
+          profit: finalPL,
           closed_at: new Date().toISOString(),
-          entry_spot: auditData.entrySpot,
-          exit_spot: auditData.exitSpot,
-          duration_ms: auditData.durationMs
+          entry_tick: auditData.entrySpot,
+          exit_tick: auditData.exitSpot,
+          // duration_ms: auditData.durationMs // V2 doesn't have duration_ms in trade_logs usually
         })
         .eq('contract_id', tradeResult.contractId);
 
       // CRITICAL LOGGING FOR DASHBOARD STATS
-      // The stats endpoint consumes 'trading_activity_logs' to calculate PnL.
-      await supabase.from('trading_activity_logs').insert({
+      // Standardizing on activity_logs_v2 (metadata column)
+      await supabase.from('activity_logs_v2').insert({
         session_id: session.id,
-        action_type: finalPL > 0 ? 'trade_won' : 'trade_lost',
-        action_details: {
+        type: finalPL > 0 ? 'trade_won' : 'trade_lost',
+        level: 'info',
+        message: `${finalPL > 0 ? 'Won' : 'Lost'} trade for contract ${tradeResult.contractId}`,
+        metadata: {
           contractId: tradeResult.contractId,
           symbol: tradeResult.symbol || session.markets?.[0] || 'Unknown',
           profit: finalPL,
-          pnl: finalPL, // redundancy for safety
+          pnl: finalPL,
           stake: tradeResult.stake,
           result: reason,
           entry: auditData.entrySpot,
-          exit: auditData.exitSpot
+          exit: auditData.exitSpot,
+          userId: tradeResult.userId
         },
+        user_id: tradeResult.userId,
         created_at: new Date().toISOString()
       });
 
@@ -1147,7 +1147,7 @@ class TradeExecutor {
 
       // Get trade history for this user in this session
       const { data: tradeHistory } = await supabase
-        .from('trades')
+        .from('trade_logs')
         .select('*')
         .eq('session_id', session.id)
         .eq('user_id', tradeResult.userId)
@@ -1223,15 +1223,24 @@ class TradeExecutor {
 
           // Broadcast updated session stats to all clients
           if (this.io) {
-            this.io.emit('session_update', {
-              session: {
-                id: session.id,
-                current_pnl: newPnl,
-                trade_count: newTradeCount,
-                [resultCol]: newResultCount,
-                // Include the other count that didn't change
-                [finalPL > 0 ? 'loss_count' : 'win_count']: currentSession[finalPL > 0 ? 'loss_count' : 'win_count']
-              }
+            const statsPayload = {
+              id: session.id,
+              current_pnl: newPnl,
+              trade_count: newTradeCount,
+              win_count: finalPL > 0 ? newResultCount : currentSession.win_count,
+              loss_count: finalPL <= 0 ? newResultCount : currentSession.loss_count,
+              last_trade_result: finalPL > 0 ? 'win' : 'loss',
+              last_trade_pnl: finalPL,
+              timestamp: new Date().toISOString()
+            };
+
+            this.io.emit('session_update', { session: statsPayload });
+
+            // Also emit a specific stats_update for the user's dashboard performance cards
+            this.io.emit('stats_update', {
+              userId: tradeResult.userId,
+              sessionId: session.id,
+              stats: statsPayload
             });
           }
         }
@@ -1293,10 +1302,15 @@ class TradeExecutor {
         this.io.emit('trade_update', {
           type: 'close',
           sessionId: session?.id,  // Add session ID for filtering
+          userId: tradeResult.userId,
           contractId: tradeResult.contractId,
           result: finalPL > 0 ? 'win' : 'loss',
           profit: finalPL,
           reason: reason,
+          payout: tradeResult.payout,
+          stake: tradeResult.stake,
+          entrySpot: auditData.entrySpot,
+          exitSpot: auditData.exitSpot,
           timestamp: new Date().toISOString()
         });
       }
@@ -1546,33 +1560,33 @@ class TradeExecutor {
         if (intentId) {
           // Update existing intent record
           query = supabase
-            .from('trades')
+            .from('trade_logs')
             .update({
               contract_id: tradeResult.contractId,
-              buy_price: tradeResult.buyPrice,
-              payout: tradeResult.payout,
+              // buy_price: tradeResult.buyPrice, // V2 uses stake, might not have buy_price
+              // payout: tradeResult.payout,
               stake: tradeResult.stake,
-              status: 'open',
-              execution_latency_ms: executionLatencyMs
+              result: 'pending', // V2 uses result
+              // execution_latency_ms: executionLatencyMs
             })
             .eq('id', intentId);
         } else {
           // Fallback to insert if no intentId provided
           query = supabase
-            .from('trades')
+            .from('trade_logs')
             .insert({
               session_id: sessionId,
               account_id: tradeResult.accountId || tradeResult.derivAccountId,
               user_id: tradeResult.userId,
               contract_id: tradeResult.contractId,
-              buy_price: tradeResult.buyPrice,
-              payout: tradeResult.payout,
+              // buy_price: tradeResult.buyPrice,
+              // payout: tradeResult.payout,
               stake: tradeResult.stake,
-              signal: tradeResult.signal,
+              // signal: tradeResult.signal,
               confidence: tradeResult.signal?.confidence,
-              status: 'open',
+              result: 'pending',
               created_at: (tradeResult.timestamp || new Date()).toISOString(),
-              execution_latency_ms: executionLatencyMs
+              // execution_latency_ms: executionLatencyMs
             });
         }
 
@@ -1803,13 +1817,13 @@ class TradeExecutor {
   async logIntent(participant, sessionId, signal) {
     try {
       const { data, error } = await supabase
-        .from('trades')
+        .from('trade_logs')
         .insert({
           session_id: sessionId,
           account_id: participant.deriv_account_id,
           user_id: participant.user_id,
-          status: 'pending_intent',
-          signal: signal,
+          result: 'pending',
+          confidence: signal?.confidence,
           stake: 0,
           created_at: new Date().toISOString()
         })
@@ -1833,8 +1847,8 @@ class TradeExecutor {
   async updateTradeWithContract(tradeId, contractId) {
     try {
       await supabase
-        .from('trades')
-        .update({ contract_id: contractId, status: 'open' })
+        .from('trade_logs')
+        .update({ contract_id: contractId, result: 'pending' })
         .eq('id', tradeId);
     } catch (err) {
       console.error('[TradeExecutor] Failed to update trade intent:', err.message);
