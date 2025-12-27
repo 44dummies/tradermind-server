@@ -1,4 +1,4 @@
-const { createClient } = require('@supabase/supabase-js');
+const { supabase } = require('../db/supabase');
 const WebSocket = require('ws');
 const crypto = require('crypto');
 const strategyConfig = require('../config/strategyConfig');
@@ -13,11 +13,6 @@ const CircuitBreaker = require('./circuitBreaker');
 const auditLogger = require('./auditLogger');
 const riskEngine = require('./riskEngine');
 const derivClient = require('./derivClient');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
-);
 
 /**
  * Trade Executor - Multi-Account Synchronized Trading

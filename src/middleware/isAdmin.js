@@ -1,10 +1,4 @@
-const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
-);
+const { supabase } = require('../db/supabase');
 
 /**
  * Middleware to protect admin-only routes
@@ -22,6 +16,7 @@ const isAdmin = async (req, res, next) => {
     }
 
     // Check is_admin in database - SINGLE SOURCE OF TRUTH
+    // Use central client which handles service key correctly
     const { data: profile, error } = await supabase
       .from('user_profiles')
       .select('is_admin, deriv_id')
@@ -29,7 +24,9 @@ const isAdmin = async (req, res, next) => {
       .single();
 
     if (error || !profile) {
-      console.error('[isAdmin] Profile lookup error:', error);
+      console.error('[isAdmin] Profile lookup failure:', error?.message || 'Profile not found', {
+        queriedId: req.userId
+      });
       return res.status(403).json({
         success: false,
         error: 'Forbidden - Profile not found'
@@ -38,7 +35,7 @@ const isAdmin = async (req, res, next) => {
 
     // Check only database flag
     if (profile.is_admin !== true) {
-      console.log(`[isAdmin]  Access denied for user ${req.userId} (deriv_id: ${profile.deriv_id}) - not admin`);
+      console.warn(`[isAdmin] Access denied for user ${req.userId} - not admin`);
       return res.status(403).json({
         success: false,
         error: 'Forbidden - Admin access required'
@@ -47,16 +44,18 @@ const isAdmin = async (req, res, next) => {
 
     // Attach user info to request
     req.user = {
+      ...(req.user || {}),
       userId: req.userId,
       isAdmin: true,
-      derivAccountId: profile.deriv_id
+      derivAccountId: profile.deriv_id,
+      derivId: profile.deriv_id
     };
 
-    console.log(`[isAdmin]  Admin access granted for ${req.userId}`);
+    console.log(`[isAdmin] Admin access granted for ${req.userId}`);
     next();
 
   } catch (error) {
-    console.error('[isAdmin] Middleware error:', error);
+    console.error('[isAdmin] Middleware critical error:', error);
     return res.status(500).json({
       success: false,
       error: 'Internal server error'
