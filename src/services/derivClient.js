@@ -482,12 +482,12 @@ class DerivClient {
      */
     /**
      * Verify a user's token by attempting to authorize with it
-     * Uses a RAW WebSocket for maximum speed (bypassing library overhead)
+     * Uses a RAW WebSocket for maximum speed with a "WARM-UP" ping and retry logic.
      */
-    async verifyUserToken(token) {
+    async verifyUserToken(token, attempt = 1) {
         return new Promise((resolve) => {
             const start = Date.now();
-            console.log('[DerivClient] Starting raw verification...');
+            console.log(`[DerivClient] Starting raw verification (Attempt ${attempt})...`);
 
             const socket = new WebSocket(
                 `wss://${WS_ENDPOINT}/websockets/v3?app_id=${APP_ID}`
@@ -496,61 +496,66 @@ class DerivClient {
             let isResolved = false;
             let timeout;
 
-            const finish = (result) => {
+            const finish = async (result) => {
                 if (isResolved) return;
                 isResolved = true;
                 clearTimeout(timeout);
 
-                // Ensure socket is closed
                 try {
                     if (socket.readyState === WebSocket.OPEN) socket.close();
                 } catch (e) { }
 
                 const duration = Date.now() - start;
-                console.log(`[DerivClient] Verification finished in ${duration}ms. Result: ${result.isValid ? 'Valid' : 'Invalid'}`);
-                resolve(result);
+                console.log(`[DerivClient] Result: ${result.isValid} (${duration}ms)`);
+
+                // AUTO-RETRY once if it was a timeout
+                if (!result.isValid && result.error?.includes('timeout') && attempt < 2) {
+                    console.warn('[DerivClient] Timing out, retrying once...');
+                    const retryResult = await this.verifyUserToken(token, attempt + 1);
+                    resolve(retryResult);
+                } else {
+                    resolve(result);
+                }
             };
 
-            // Hard timeout 15s (Raw socket should be much faster)
+            // 15s timeout
             timeout = setTimeout(() => {
-                console.warn('[DerivClient] Raw verification timed out (15s)');
-                finish({ isValid: false, error: 'Authorization timeout (Raw 15s)' });
+                finish({ isValid: false, error: `Authorization timeout (Raw ${attempt})` });
             }, 15000);
 
             socket.on('open', () => {
-                console.log(`[DerivClient] Socket open (${Date.now() - start}ms). Sending auth...`);
-                socket.send(JSON.stringify({ authorize: token }));
+                // Send Ping first to ensure connection is actually talking
+                socket.send(JSON.stringify({ ping: 1 }));
             });
 
             socket.on('message', (data) => {
                 try {
                     const msg = JSON.parse(data.toString());
 
+                    if (msg.msg_type === 'ping') {
+                        socket.send(JSON.stringify({ authorize: token }));
+                        return;
+                    }
+
                     if (msg.error) {
                         finish({ isValid: false, error: msg.error.message });
                     } else if (msg.msg_type === 'authorize') {
-                        const userData = {
-                            loginid: msg.authorize.loginid,
-                            email: msg.authorize.email,
-                            currency: msg.authorize.currency
-                        };
-                        finish({ isValid: true, userData });
+                        finish({
+                            isValid: true,
+                            userData: {
+                                loginid: msg.authorize.loginid,
+                                email: msg.authorize.email,
+                                currency: msg.authorize.currency
+                            }
+                        });
                     }
                 } catch (e) {
                     finish({ isValid: false, error: 'Response parsing failed' });
                 }
             });
 
-            socket.on('error', (err) => {
-                console.error('[DerivClient] Socket error:', err.message);
-                finish({ isValid: false, error: err.message });
-            });
-
-            socket.on('close', () => {
-                if (!isResolved) {
-                    finish({ isValid: false, error: 'Connection closed unexpectedly' });
-                }
-            });
+            socket.on('error', (err) => finish({ isValid: false, error: err.message }));
+            socket.on('close', () => { if (!isResolved) finish({ isValid: false, error: 'Connection closed' }); });
         });
     }
 }
