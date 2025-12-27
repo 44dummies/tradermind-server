@@ -57,10 +57,11 @@ const server = http.createServer(app);
 const defaultOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
+  'http://localhost:5173',
   'https://www.tradermind.site',
   'https://tradermind.site',
   'https://deriv-ws.vercel.app',
-  'http://localhost:5173'
+  'https://tradermind-server.up.railway.app'
 ];
 
 const corsOrigins = process.env.CORS_ORIGIN

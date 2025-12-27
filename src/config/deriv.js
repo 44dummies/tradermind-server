@@ -3,7 +3,6 @@
  * Central source of truth for backend Deriv connections
  */
 // MUST match the frontend App ID (src/config.ts) to share authentication tokens
-// MUST match the frontend App ID (src/config.ts) to share authentication tokens
 const APP_ID = process.env.DERIV_APP_ID || '114042';
 
 if (!process.env.DERIV_APP_ID) {
