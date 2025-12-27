@@ -178,10 +178,15 @@ router.post('/deriv', async (req, res) => {
       return res.status(400).json({ error: 'Deriv authentication token is required' });
     }
 
-    if (token) {
-      // Verify with Deriv API
-      const verification = await derivClient.verifyUserToken(token);
+    // PARALLEL EXECUTION: Verify token and check DB simultaneously for speed
+    // This reduces login latency by overlapping the external API call with the DB query
+    const [verification, existingUser] = await Promise.all([
+      token ? derivClient.verifyUserToken(token) : Promise.resolve({ isValid: true, userData: { loginid: derivId } }), // Fallback/Test mode
+      prisma.user.findUnique({ where: { derivId } })
+    ]);
 
+    // 1. Validate Deriv Token Result
+    if (token) {
       if (!verification.isValid) {
         console.warn(`[Auth] Token verification failed for ${derivId}: ${verification.error}`);
         return res.status(401).json({ error: 'Invalid Deriv token', details: verification.error });
@@ -195,13 +200,11 @@ router.post('/deriv', async (req, res) => {
           actual: verification.userData.loginid
         });
       }
-      console.log(`[Auth] Verified Deriv user: ${derivId}`);
+      console.log(`[Auth] Verified Deriv user: ${derivId} (Parallel Check Complete)`);
     }
 
-    // SEQUENTIAL LOGIN: Transaction not supported by current DB adapter
-    // Race conditions are mitigated by Frontend Lock + Strict Token Enforcement
-
-    let user = await prisma.user.findUnique({ where: { derivId } });
+    // 2. Process User (Create or Update)
+    let user = existingUser;
 
     if (!user) {
       console.log('Creating new user:', derivId);
@@ -212,7 +215,7 @@ router.post('/deriv', async (req, res) => {
           derivId,
           username,
           email: email || null,
-          fullName: fullname || null,
+          fullName: fullname || null, // Keep fullName from input
           country: country || null,
           traderLevel: 'beginner',
           isAdmin: false
