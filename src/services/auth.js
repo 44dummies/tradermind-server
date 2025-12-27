@@ -35,8 +35,11 @@ function generateTokens(userId, username, role = 'user', isAdmin = false) {
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // console.debug('[Auth] Token verified successfully for user:', decoded.username);
+    return decoded;
   } catch (error) {
+    console.error('[Auth] Token verification failed:', error.message);
     return null;
   }
 }
