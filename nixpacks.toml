@@ -2,7 +2,7 @@
 # This file tells Railway how to build the Node.js server
 
 [phases.setup]
-nixPkgs = ["nodejs_18", "python3", "gcc", "gnumake"]
+nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
 
 [phases.install]
 cmds = ["npm ci --omit=dev"]

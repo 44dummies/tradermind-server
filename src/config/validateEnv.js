@@ -33,7 +33,7 @@ function validateEnv() {
     // Warn about optional
     const missingOptional = optional.filter(v => !process.env[v]);
     if (missingOptional.length > 0) {
-        console.warn('ℹ️ Optional env vars not set:', missingOptional.join(', '));
+        console.info('ℹ️ Optional env vars not set:', missingOptional.join(', '));
     }
 }
 
