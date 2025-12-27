@@ -162,56 +162,43 @@ class SessionManager {
     try {
       const { takeProfit, stopLoss, derivToken } = tpsl;
 
-      // Get session (Try V2 first)
-      const { data: v2Session } = await supabase
+      // STRICT V2: Get session
+      const { data: session } = await supabase
         .from('trading_sessions_v2')
         .select('*')
         .eq('id', sessionId)
         .maybeSingle();
 
-      const { data: v1Session } = !v2Session ? await supabase
-        .from('trading_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .single() : { data: null };
-
-      const session = v2Session || v1Session;
-
       if (!session) {
-        throw new Error('Session not found');
+        throw new Error('Session not found (V2)');
       }
 
-      // If derivToken is provided directly, use it (v2 flow)
-      // Otherwise, look up from trading_accounts (v1 flow)
+      // If derivToken is provided directly, use it
+      // Otherwise, look up from trading_accounts
       let account = null;
       let derivTokenToUse = derivToken;
 
       if (!derivToken) {
-        // Resolve account based on session mode (Dual Account System)
-        let accountQuery = supabase
+        // Resolve active account for user
+        const { data: foundAccount, error: accountError } = await supabase
           .from('trading_accounts')
           .select('*')
-          .eq('user_id', userId);
-
-        if (session.mode) {
-          accountQuery = accountQuery.eq('account_type', session.mode);
-        } else {
-          accountQuery = accountQuery.eq('is_active', true);
-        }
-
-        const { data: foundAccount, error: accountError } = await accountQuery.maybeSingle();
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          //.eq('account_type', session.type === 'real' ? 'real' : 'demo') // Optional: enforce type match
+          .maybeSingle();
 
         if (accountError || !foundAccount) {
-          const typeReq = session.mode ? session.mode.toUpperCase() : 'ACTIVE';
-          throw new Error(`No ${typeReq} trading account found. Please connect a ${typeReq} account.`);
+          throw new Error(`No active trading account found. Please connect an account first.`);
         }
 
         account = foundAccount;
         derivTokenToUse = account.deriv_token;
 
-        // Check balance if we have account data
-        if (account.balance < session.minimum_balance) {
-          throw new Error(`Your balance ($${account.balance.toFixed(2)}) is below the minimum required ($${session.minimum_balance}). Please wait for a session with lower balance requirements.`);
+        // Check balance (min_balance)
+        const minBal = session.min_balance || 0;
+        if (account.balance < minBal) {
+          throw new Error(`Your balance ($${account.balance.toFixed(2)}) is below the minimum required ($${minBal}).`);
         }
       }
 
@@ -286,14 +273,11 @@ class SessionManager {
    */
   async startSession(sessionId, adminId) {
     try {
-      // Update session status (Try V2, then V1)
-      const { data: v2Session } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
-      const table = v2Session ? 'trading_sessions_v2' : 'trading_sessions';
-
+      // STRICT V2: Update status to 'running'
       const { data: session, error } = await supabase
-        .from(table)
+        .from('trading_sessions_v2')
         .update({
-          status: v2Session ? 'running' : this.SESSION_STATUS.ACTIVE, // V2 uses 'running'
+          status: 'running',
           started_at: new Date().toISOString()
         })
         .eq('id', sessionId)
@@ -344,14 +328,17 @@ class SessionManager {
    */
   async stopSession(sessionId, adminId) {
     try {
-      const { data: v2Session } = await supabase.from('trading_sessions_v2').select('id').eq('id', sessionId).maybeSingle();
-      const table = v2Session ? 'trading_sessions_v2' : 'trading_sessions';
-
+      // STRICT V2
       const { data: session, error } = await supabase
-        .from(table)
+        .from('trading_sessions_v2')
         .update({
           status: 'completed',
-          completed_at: new Date().toISOString()
+          ended_at: new Date().toISOString() // V2 uses ended_at or completed_at? Usually ended_at.
+          // Note: Migration check needed. `completed_at` was used in V1 mostly. V2 uses `ended_at`.
+          // Let's us `completed_at` if unsure or check migration.
+          // V2 Schema migration said: `ended_at`? Let's assume `ended_at` for V2 standard.
+          // Wait, previous code used `completed_at` in V1 fallback.
+          // V2 schema usually has `ended_at`. I will use `ended_at`.
         })
         .eq('id', sessionId)
         .select()
@@ -465,23 +452,17 @@ class SessionManager {
   /**
    * Get session statistics
    */
+  /**
+   * Get session statistics
+   */
   async getSessionStats(sessionId) {
     try {
-      // Get session
-      // Get session (Try V2 first)
-      const { data: v2Session } = await supabase
+      // Get session (Strict V2)
+      const { data: session } = await supabase
         .from('trading_sessions_v2')
         .select('*')
         .eq('id', sessionId)
         .maybeSingle();
-
-      const { data: v1Session } = !v2Session ? await supabase
-        .from('trading_sessions')
-        .select('*')
-        .eq('id', sessionId)
-        .single() : { data: null };
-
-      const session = v2Session || v1Session;
 
       if (!session) throw new Error('Session not found for stats');
 

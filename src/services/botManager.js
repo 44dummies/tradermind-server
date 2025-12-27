@@ -127,13 +127,16 @@ class BotManager {
     // V2 uses 'running', V1 uses 'active' due to DB constraints
     const statusToSet = sessionTable === 'trading_sessions_v2' ? 'running' : 'active';
 
+    // If session was already started (recovery), use original started_at
+    const startTimeStamp = session.started_at || new Date().toISOString();
+
     // Update session status
     console.log(`[BotManager] Updating session ${sessionId} status to '${statusToSet}' in ${sessionTable}...`);
     const { error: updateError } = await supabase
       .from(sessionTable)
       .update({
         status: statusToSet,
-        started_at: new Date().toISOString()
+        started_at: startTimeStamp
       })
       .eq('id', sessionId);
 
@@ -154,7 +157,7 @@ class BotManager {
     // Emit status update
     if (this.io) {
       this.io.emit('session_status', {
-        session: { id: sessionId, status: statusToSet, started_at: new Date().toISOString() }
+        session: { id: sessionId, status: statusToSet, started_at: startTimeStamp }
       });
       // Emit generic bot status for dashboard
       this.io.emit('bot_status', this.getState());
@@ -163,74 +166,109 @@ class BotManager {
     // Send Notification
     await notificationService.notifySessionStart(sessionId, session.name || session.session_name);
 
-    // Start components
-    this.state.isRunning = true;
+    // Initial state set (will confirm IsRunning after components start)
     this.state.isPaused = false;
-    this.state.startTime = Date.now();
+    this.state.startTime = Date.now(); // Uptime tracking
     this.state.activeSessionId = sessionId;
     this.state.activeSessionTable = sessionTable;
-    this.state.sessionDuration = session.duration_minutes; // Store duration
+    this.state.sessionDuration = session.duration_minutes;
     this.state.tradesExecuted = 0;
     this.state.errors = [];
 
     tradeExecutor.paused = false;
     tradeExecutor.consecutiveLosses = 0;
-    tradeExecutor.apiErrorCount = 0; // Reset error count on fresh start
+    tradeExecutor.apiErrorCount = 0;
 
-    // Start signal worker (pass sessionTable so worker knows where to check status if needed)
+    // Start components with ZOMBIE STATE PROTECTION
     try {
+      // Start signal worker
       signalWorker.updateSessionStatus(statusToSet);
       await signalWorker.start(sessionId, session.markets || [strategyConfig.system.defaultMarket], process.env.DERIV_API_TOKEN, sessionTable);
-    } catch (err) {
-      console.error('[BotManager] ⚠ Failed to start SignalWorker:', err.message);
-      this.state.errors.push(`SignalWorker: ${err.message}`);
-    }
 
-    // Start Real-time Account Monitoring (Balances)
-    try {
-      tradeExecutor.monitorSessionAccounts(sessionId, sessionTable);
+      // Start Account Monitor
+      await tradeExecutor.monitorSessionAccounts(sessionId, sessionTable);
+
+      // Mark as fully running ONLY if successful
+      this.state.isRunning = true;
+      console.log(`[BotManager] Bot successfully started for session ${sessionId} (Table: ${sessionTable})`);
+
     } catch (err) {
-      console.error('[BotManager] ⚠ Failed to start Account Monitor:', err.message);
-      this.state.errors.push(`AccountMonitor: ${err.message}`);
+      console.error('[BotManager] ⛔ CRITICAL: Failed to start components. Reverting state.', err);
+
+      // Revert in-memory state
+      this.state.isRunning = false;
+      this.state.errors.push(`Startup Failed: ${err.message}`);
+
+      // Log to DB for persistence
+      await supabase.from('activity_logs_v2').insert({
+        type: 'system_error',
+        level: 'error',
+        message: `Bot startup failed: ${err.message}`,
+        metadata: { sessionId, stack: err.stack },
+        session_id: sessionId,
+        created_at: new Date().toISOString()
+      });
+
+      // Revert DB status to 'cancelled' or 'error' (using 'completed' for now to stop further processing)
+      await supabase.from(sessionTable).update({ status: 'completed', ended_at: new Date().toISOString() }).eq('id', sessionId);
+
+      if (this.io) {
+        this.io.emit('session_status', { session: { id: sessionId, status: 'error' } });
+        this.io.emit('bot_status', this.getState());
+      }
+
+      throw err; // Propagate error back to API
     }
 
     // Session Auto-Stop Timer
     if (session.duration_minutes && session.duration_minutes > 0) {
+      // Calculate remaining time based on started_at
+      const startedTime = new Date(startTimeStamp).getTime();
       const durationMs = session.duration_minutes * 60 * 1000;
-      console.log(`[BotManager]  Session auto-stop scheduled in ${session.duration_minutes} minutes`);
+      const now = Date.now();
+      const elapsed = now - startedTime;
+      const remainingMs = durationMs - elapsed;
 
-      this.sessionTimer = setTimeout(async () => {
-        console.log(`[BotManager]  Session duration (${session.duration_minutes}min) reached. Auto-stopping...`);
-        try {
-          await this.stopBot();
+      console.log(`[BotManager] Session Check: Duration=${session.duration_minutes}m, Elapsed=${(elapsed / 60000).toFixed(1)}m, Remaining=${(remainingMs / 1000).toFixed(1)}s`);
 
-          // Log auto-stop event
-          await supabase.from('activity_logs_v2').insert({
-            type: 'session_auto_stop',
-            level: 'info',
-            message: `Session auto-stopped after ${session.duration_minutes} minutes`,
-            metadata: {
-              sessionId
-            },
-            session_id: sessionId,
-            created_at: new Date().toISOString()
-          });
+      if (remainingMs <= 0) {
+        console.log(`[BotManager] ⏳ Session duration expired! Auto-stopping immediately.`);
+        setTimeout(() => this.stopBot(), 1000); // Async stop
+      } else {
+        console.log(`[BotManager]  Session auto-stop scheduled in ${(remainingMs / 60000).toFixed(1)} minutes`);
+        this.sessionTimer = setTimeout(async () => {
+          console.log(`[BotManager]  Session duration limit reached. Auto-stopping...`);
+          try {
+            await this.stopBot();
 
-          // Emit event to connected clients handled by stopBot now, but specific end reason here
-          if (this.io) {
-            this.io.emit('session_ended', {
-              sessionId,
-              reason: 'duration_expired',
-              message: `Session completed after ${session.duration_minutes} minutes`
+            // Log auto-stop event
+            await supabase.from('activity_logs_v2').insert({
+              type: 'session_auto_stop',
+              level: 'info',
+              message: `Session auto-stopped after duration`,
+              metadata: {
+                sessionId,
+                duration: session.duration_minutes
+              },
+              session_id: sessionId,
+              created_at: new Date().toISOString()
             });
+
+            // Emit event
+            if (this.io) {
+              this.io.emit('session_ended', {
+                sessionId,
+                reason: 'duration_expired',
+                message: `Session completed`
+              });
+            }
+          } catch (err) {
+            console.error('[BotManager] Auto-stop error:', err);
           }
-        } catch (err) {
-          console.error('[BotManager] Auto-stop error:', err);
-        }
-      }, durationMs);
+        }, remainingMs);
+      }
     }
 
-    console.log(`[BotManager] Bot started for session ${sessionId} (Table: ${sessionTable})`);
     return this.getState();
   }
 

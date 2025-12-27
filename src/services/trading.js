@@ -649,98 +649,69 @@ async function getActivityLogs(options = {}) {
 
 // ==================== Bot Control ====================
 
-const botState = {
-  isRunning: false,
-  activeSessions: new Map(),
-  connections: new Map(),
-  startTime: null
-};
+// ==================== Bot Control ====================
 
-async function startBot() {
-  // Check if already running via manager
-  const state = botManager.getState();
-  if (state.isRunning) return { success: false, message: 'Bot already running' };
+// Local botState removed - Delegating strictly to BotManager as Single Source of Truth
 
-  // 1. Try to find a RUNNING session first (Check V2 then V1)
-  let { data: session } = await supabase
-    .from('trading_sessions_v2')
-    .select('*')
-    .eq('status', 'running')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (!session) {
-    const { data: v1 } = await supabase
-      .from('trading_sessions')
-      .select('*')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-    session = v1;
-  }
-
-  // 2. If no running session, try to find a PENDING session and auto-start it
-  if (!session) {
-    const { data: pendingV2 } = await supabase
-      .from('trading_sessions_v2')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (pendingV2) {
-      // Auto-promote to running
-      await supabase
-        .from('trading_sessions_v2')
-        .update({ status: 'running', started_at: new Date().toISOString() })
-        .eq('id', pendingV2.id);
-
-      session = pendingV2;
-      session.status = 'running';
-      await logActivity('system', `Auto-started pending V2 session: ${session.name}`);
-    } else {
-      const { data: pendingV1 } = await supabase
-        .from('trading_sessions')
-        .select('*')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (pendingV1) {
-        await supabase
-          .from('trading_sessions')
-          .update({ status: 'active', started_at: new Date().toISOString() })
-          .eq('id', pendingV1.id);
-        session = pendingV1;
-        session.status = 'active';
-        await logActivity('system', `Auto-started pending V1 session: ${session.session_name || session.name}`);
-      }
+async function startBot(sessionId = null) {
+  // If sessionId provided, start specific session
+  if (sessionId) {
+    try {
+      await botManager.startBot(sessionId);
+      await logActivity('bot_start', `Trading bot started for session ${sessionId}`);
+      return { success: true, message: `Bot started for session ${sessionId}` };
+    } catch (err) {
+      console.error('Failed to start bot:', err);
+      return { success: false, message: `Failed to start bot: ${err.message}` };
     }
   }
 
-  if (!session) {
-    return { success: false, message: 'No active or pending session found. Please create a session first.' };
+  // Auto-resume logic (find running/pending sessions)
+  // 1. Check for RUNNING sessions first (V2)
+  const { data: runningSession } = await supabase
+    .from('trading_sessions_v2')
+    .select('*')
+    .eq('status', 'running')
+    .limit(1)
+    .maybeSingle();
+
+  if (runningSession) {
+    console.log(`[TradingService] Found running session ${runningSession.id}, resuming...`);
+    try {
+      await botManager.startBot(runningSession.id);
+      return { success: true, message: `Resumed running session ${runningSession.name}` };
+    } catch (err) {
+      if (err.message === 'Bot is already running') {
+        return { success: true, message: 'Bot is already running' };
+      }
+      throw err;
+    }
   }
 
-  // Start Bot Manager
-  try {
-    await botManager.startBot(session.id);
-    await logActivity('bot_start', `Trading bot started for session ${session.session_name || session.name}`);
-    return { success: true, message: `Bot started for session ${session.session_name || session.name}` };
-  } catch (err) {
-    console.error('Failed to start bot manager:', err);
-    return { success: false, message: `Failed to start bot: ${err.message}` };
+  // 2. Check for PENDING sessions to auto-start
+  const { data: pendingSession } = await supabase
+    .from('trading_sessions_v2')
+    .select('*')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (pendingSession) {
+    console.log(`[TradingService] Found pending session ${pendingSession.id}, auto-starting...`);
+    try {
+      await botManager.startBot(pendingSession.id);
+      await logActivity('system', `Auto-started pending session: ${pendingSession.name}`);
+      return { success: true, message: `Started pending session ${pendingSession.name}` };
+    } catch (err) {
+      throw err;
+    }
   }
+
+  return { success: false, message: 'No active or pending session found to start.' };
 }
 
 async function stopBot() {
-  const state = botManager.getState();
-  if (!state.isRunning) return { success: false, message: 'Bot not running' };
-
   try {
     await botManager.stopBot();
     await logActivity('bot_stop', 'Trading bot stopped');
@@ -752,12 +723,8 @@ async function stopBot() {
 }
 
 function getBotStatus() {
-  return {
-    isRunning: botState.isRunning,
-    activeSessionCount: botState.activeSessions.size,
-    connectionCount: botState.connections.size,
-    uptime: botState.startTime ? Date.now() - botState.startTime : 0
-  };
+  // Proxy to BotManager state, do not maintain local state
+  return botManager.getState();
 }
 
 // ==================== Exports ====================
@@ -782,5 +749,5 @@ module.exports = {
   logActivity, getActivityLogs,
 
   // Bot
-  startBot, stopBot, getBotStatus, botState
+  startBot, stopBot, getBotStatus
 };

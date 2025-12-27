@@ -33,9 +33,9 @@ router.get('/', async (req, res) => {
     try {
         const { sessionId, startDate, endDate, timeRange } = req.query;
 
-        // Calculate date range based on timeRange (Default to 30d to ensure speed)
+        // Calculate date range based on timeRange (Default to 30d)
         let dateFilter = null;
-        const range = timeRange || '30d'; // Default to 30 days if no range specified
+        const range = timeRange || '30d';
 
         const now = new Date();
         if (range === '24h') {
@@ -46,12 +46,12 @@ router.get('/', async (req, res) => {
             dateFilter = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
         }
 
-        // Build query for trades from 'trades' table (Historical Source)
+        // Build query for trades from 'trade_logs' (V2 Table)
         let tradesQuery = supabase
-            .from('trades')
-            .select('status, profit_loss, stake, created_at, contract_id, signal')
-            .neq('status', 'pending_intent') // Exclude pending
-            .not('profit_loss', 'is', null); // Exclude unfinished
+            .from('trade_logs')
+            .select('result, profit, stake, created_at, contract_id, metadata, confidence, contract_type')
+            .neq('result', 'pending')
+            .not('profit', 'is', null);
 
         if (sessionId) {
             tradesQuery = tradesQuery.eq('session_id', sessionId);
@@ -68,14 +68,14 @@ router.get('/', async (req, res) => {
         if (error) throw error;
 
         // Calculate statistics
-        // Normalize status/profit to won/lost
-        const wins = (trades || []).filter(t => parseFloat(t.profit_loss) > 0);
-        const losses = (trades || []).filter(t => parseFloat(t.profit_loss) <= 0);
+        // V2: result is 'win' or 'loss' (or 'closed' with profit > 0 or <= 0)
+        const wins = (trades || []).filter(t => t.result === 'win' || parseFloat(t.profit) > 0);
+        const losses = (trades || []).filter(t => t.result === 'loss' || parseFloat(t.profit) <= 0);
         const completedTrades = trades || [];
 
         let totalProfit = 0;
         completedTrades.forEach(t => {
-            totalProfit += parseFloat(t.profit_loss) || 0;
+            totalProfit += parseFloat(t.profit) || 0;
         });
 
         const avgProfit = completedTrades.length > 0 ? totalProfit / completedTrades.length : 0;
@@ -86,30 +86,27 @@ router.get('/', async (req, res) => {
             const date = new Date(t.created_at).toLocaleDateString('en-US', { weekday: 'short' });
             if (!dailyMap[date]) dailyMap[date] = { date, trades: 0, profit: 0, wins: 0 };
             dailyMap[date].trades++;
-            if (parseFloat(t.profit_loss) > 0) dailyMap[date].wins++;
-            dailyMap[date].profit += parseFloat(t.profit_loss) || 0;
+            if (t.result === 'win' || parseFloat(t.profit) > 0) dailyMap[date].wins++;
+            dailyMap[date].profit += parseFloat(t.profit) || 0;
         });
         const dailyStats = Object.values(dailyMap).map(d => ({
             ...d,
             winRate: d.trades > 0 ? (d.wins / d.trades) * 100 : 0
         }));
 
-        // Calculate contract stats (Infer from signal or other metadata if available, else generic)
+        // Calculate contract stats
         const contractMap = {};
         completedTrades.forEach(t => {
-            const type = t.signal?.type || 'DIGIT_DIFF'; // Default/Fallback
+            const type = t.contract_type || t.metadata?.type || 'DIGIT_DIFF';
             if (!contractMap[type]) contractMap[type] = { type, count: 0, wins: 0, profit: 0 };
             contractMap[type].count++;
-            if (parseFloat(t.profit_loss) > 0) contractMap[type].wins++;
-            contractMap[type].profit += parseFloat(t.profit_loss) || 0;
+            if (t.result === 'win' || parseFloat(t.profit) > 0) contractMap[type].wins++;
+            contractMap[type].profit += parseFloat(t.profit) || 0;
         });
         const contractStats = Object.values(contractMap).map(c => ({
             ...c,
             winRate: c.count > 0 ? (c.wins / c.count) * 100 : 0
         }));
-
-        // Calculate digit distribution (Unavailable in simplified trades table, leave empty or infer)
-        const digitDistribution = {}; // Cannot infer easily from 'trades' without metadata
 
         // Best and worst day
         const dayProfits = Object.values(dailyMap).map(d => d.profit);
@@ -129,7 +126,7 @@ router.get('/', async (req, res) => {
             tradingDays: Object.keys(dailyMap).length,
             dailyStats,
             contractStats,
-            digitDistribution
+            digitDistribution: {} // Not tracked in V2 basic logs
         });
     } catch (error) {
         console.error('Get stats error:', error);
@@ -151,13 +148,12 @@ router.get('/balances', async (req, res) => {
 
         if (error) throw error;
 
-        // Aggregate balances by type
+        // Aggregate balances
         let realBalance = 0;
         let demoBalance = 0;
 
         (accounts || []).forEach(account => {
             const balance = parseFloat(account.balance) || 0;
-            // Check if demo/virtual account
             if (account.is_virtual || account.account_type === 'demo') {
                 demoBalance += balance;
             } else {
@@ -187,12 +183,12 @@ router.get('/accounts', async (req, res) => {
     try {
         const { sessionId, limit = 50 } = req.query;
 
-        // Get trade stats grouped by account from trades table
+        // Queries 'trade_logs' (V2)
         let query = supabase
-            .from('trades')
-            .select('user_id, account_id, profit_loss, stake, status')
-            .neq('status', 'pending_intent')
-            .not('profit_loss', 'is', null);
+            .from('trade_logs')
+            .select('user_id, account_id, profit, stake, result')
+            .neq('result', 'pending')
+            .not('profit', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -220,16 +216,16 @@ router.get('/accounts', async (req, res) => {
             }
 
             accountStats[key].totalTrades++;
-            if (parseFloat(t.profit_loss) > 0) {
+            if (t.result === 'win' || parseFloat(t.profit) > 0) {
                 accountStats[key].wins++;
             } else {
                 accountStats[key].losses++;
             }
-            accountStats[key].profit += parseFloat(t.profit_loss) || 0;
+            accountStats[key].profit += parseFloat(t.profit) || 0;
             accountStats[key].stake += parseFloat(t.stake) || 0;
         });
 
-        // Convert to array and calculate rates
+        // Convert to array
         const accounts = Object.values(accountStats)
             .map(a => ({
                 ...a,
@@ -254,11 +250,12 @@ router.get('/markets', async (req, res) => {
     try {
         const { sessionId } = req.query;
 
+        // Queries 'trade_logs' (V2)
         let query = supabase
-            .from('trades')
-            .select('profit_loss, stake, status, signal')
-            .neq('status', 'pending_intent')
-            .not('profit_loss', 'is', null);
+            .from('trade_logs')
+            .select('profit, stake, result, metadata')
+            .neq('result', 'pending')
+            .not('profit', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -272,8 +269,7 @@ router.get('/markets', async (req, res) => {
         const marketStats = {};
 
         (trades || []).forEach(t => {
-            // Infer market from signal (e.g., R_100) or default
-            const market = t.signal?.market || 'Unknown';
+            const market = t.metadata?.market || 'Unknown';
             if (!marketStats[market]) {
                 marketStats[market] = {
                     market,
@@ -286,16 +282,16 @@ router.get('/markets', async (req, res) => {
             }
 
             marketStats[market].totalTrades++;
-            if (parseFloat(t.profit_loss) > 0) {
+            if (t.result === 'win' || parseFloat(t.profit) > 0) {
                 marketStats[market].wins++;
             } else {
                 marketStats[market].losses++;
             }
-            marketStats[market].profit += parseFloat(t.profit_loss) || 0;
+            marketStats[market].profit += parseFloat(t.profit) || 0;
             marketStats[market].stake += parseFloat(t.stake) || 0;
         });
 
-        // Convert to array with rates
+        // Convert to array
         const markets = Object.values(marketStats)
             .map(m => ({
                 ...m,
@@ -319,11 +315,12 @@ router.get('/strategies', async (req, res) => {
     try {
         const { sessionId } = req.query;
 
+        // Queries 'trade_logs' (V2)
         let query = supabase
-            .from('trades')
-            .select('profit_loss, stake, status, signal')
-            .neq('status', 'pending_intent')
-            .not('profit_loss', 'is', null);
+            .from('trade_logs')
+            .select('profit, stake, result, metadata, confidence, contract_type')
+            .neq('result', 'pending')
+            .not('profit', 'is', null);
 
         if (sessionId) {
             query = query.eq('session_id', sessionId);
@@ -337,7 +334,7 @@ router.get('/strategies', async (req, res) => {
         const strategyStats = {};
 
         (trades || []).forEach(t => {
-            const strategy = t.signal?.type || 'Unknown';
+            const strategy = t.metadata?.strategy || t.contract_type || 'Unknown';
             if (!strategyStats[strategy]) {
                 strategyStats[strategy] = {
                     strategy,
@@ -351,23 +348,25 @@ router.get('/strategies', async (req, res) => {
             }
 
             strategyStats[strategy].totalTrades++;
-            if (parseFloat(t.profit_loss) > 0) {
+            if (t.result === 'win' || parseFloat(t.profit) > 0) {
                 strategyStats[strategy].wins++;
             } else {
                 strategyStats[strategy].losses++;
             }
-            strategyStats[strategy].profit += parseFloat(t.profit_loss) || 0;
+            strategyStats[strategy].profit += parseFloat(t.profit) || 0;
             strategyStats[strategy].stake += parseFloat(t.stake) || 0;
-            // No confidence field in basic trades table, default 0
+            if (t.confidence) {
+                strategyStats[strategy].totalConfidence += parseFloat(t.confidence);
+            }
         });
 
-        // Convert to array with rates
+        // Convert to array
         const strategies = Object.values(strategyStats)
             .map(s => ({
                 ...s,
                 winRate: s.totalTrades > 0 ? (s.wins / s.totalTrades) * 100 : 0,
                 roi: s.stake > 0 ? (s.profit / s.stake) * 100 : 0,
-                avgConfidence: 0
+                avgConfidence: s.totalTrades > 0 ? s.totalConfidence / s.totalTrades : 0
             }))
             .sort((a, b) => b.winRate - a.winRate);
 
@@ -386,12 +385,12 @@ router.get('/timeline', async (req, res) => {
     try {
         const { sessionId, interval = 'hour' } = req.query;
 
-        // Build query for trades from 'trades' table (Historical Source)
+        // Queries 'trade_logs' (V2)
         let query = supabase
-            .from('trades')
-            .select('created_at, profit_loss, status')
-            .neq('status', 'pending_intent')
-            .not('profit_loss', 'is', null)
+            .from('trade_logs')
+            .select('created_at, profit, result')
+            .neq('result', 'pending')
+            .not('profit', 'is', null)
             .order('created_at', { ascending: true });
 
         if (sessionId) {
@@ -405,14 +404,14 @@ router.get('/timeline', async (req, res) => {
         // Build cumulative profit curve
         let cumulative = 0;
         const timeline = (trades || []).map((t, i) => {
-            const profit = parseFloat(t.profit_loss) || 0;
+            const profit = parseFloat(t.profit) || 0;
             cumulative += profit;
             return {
                 index: i,
                 timestamp: t.created_at,
                 profit: profit,
                 cumulative,
-                result: parseFloat(t.profit_loss) > 0 ? 'won' : 'lost'
+                result: t.result === 'win' || profit > 0 ? 'won' : 'lost'
             };
         });
 
