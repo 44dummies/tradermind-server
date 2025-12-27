@@ -36,11 +36,19 @@ function generateTokens(userId, username, role = 'user', isAdmin = false) {
 function verifyToken(token) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    // console.debug('[Auth] Token verified successfully for user:', decoded.username);
     return decoded;
   } catch (error) {
     console.error('[Auth] Token verification failed:', error.message);
-    return null;
+    return null; // Legacy support
+  }
+}
+
+function verifyTokenWithDetails(token) {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return { valid: true, decoded };
+  } catch (error) {
+    return { valid: false, error: error.message };
   }
 }
 
@@ -91,6 +99,7 @@ module.exports = {
   generateToken,
   generateTokens,
   verifyToken,
+  verifyTokenWithDetails,
   verifyRefreshToken,
   authMiddleware,
   socketAuthMiddleware

@@ -1,6 +1,6 @@
 
 
-const { verifyToken } = require('../services/auth');
+const { verifyTokenWithDetails } = require('../services/auth');
 
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -10,10 +10,11 @@ function authMiddleware(req, res, next) {
   }
 
   const token = authHeader.split(' ')[1];
-  const decoded = verifyToken(token);
+  const { valid, decoded, error } = verifyTokenWithDetails(token);
 
-  if (!decoded) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+  if (!valid) {
+    console.error(`[AuthMiddleware] Token Rejected: ${error}`);
+    return res.status(401).json({ error: `Invalid or expired token: ${error}` });
   }
 
   // Attach full user info including role to request
