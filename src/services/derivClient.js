@@ -480,53 +480,76 @@ class DerivClient {
      * Verify a user's token by attempting to authorize with it
      * Uses a temporary connection to avoid polluting the pool
      */
+    /**
+     * Verify a user's token by attempting to authorize with it
+     * Uses a RAW WebSocket for maximum speed (bypassing library overhead)
+     */
     async verifyUserToken(token) {
-        return new Promise((resolve, reject) => {
-            const connection = new WebSocket(
+        return new Promise((resolve) => {
+            const start = Date.now();
+            console.log('[DerivClient] Starting raw verification...');
+
+            const socket = new WebSocket(
                 `wss://${WS_ENDPOINT}/websockets/v3?app_id=${APP_ID}`
             );
 
-            const api = new DerivAPIBasic({ connection });
+            let isResolved = false;
             let timeout;
 
-            // Safety timeout (25s) - Increased from 10s
-            timeout = setTimeout(() => {
-                try { connection.close(); } catch (e) { }
-                console.warn('[DerivClient] Token verification timed out (25s limit)');
-                resolve({ isValid: false, error: 'Authorization timeout (25s)' });
-            }, 25000);
+            const finish = (result) => {
+                if (isResolved) return;
+                isResolved = true;
+                clearTimeout(timeout);
 
-            connection.on('open', async () => {
+                // Ensure socket is closed
                 try {
-                    const authResponse = await api.authorize(token);
+                    if (socket.readyState === WebSocket.OPEN) socket.close();
+                } catch (e) { }
 
-                    if (authResponse.error) {
-                        clearTimeout(timeout);
-                        connection.close();
-                        resolve({ isValid: false, error: authResponse.error.message });
-                        return;
+                const duration = Date.now() - start;
+                console.log(`[DerivClient] Verification finished in ${duration}ms. Result: ${result.isValid ? 'Valid' : 'Invalid'}`);
+                resolve(result);
+            };
+
+            // Hard timeout 15s (Raw socket should be much faster)
+            timeout = setTimeout(() => {
+                console.warn('[DerivClient] Raw verification timed out (15s)');
+                finish({ isValid: false, error: 'Authorization timeout (Raw 15s)' });
+            }, 15000);
+
+            socket.on('open', () => {
+                console.log(`[DerivClient] Socket open (${Date.now() - start}ms). Sending auth...`);
+                socket.send(JSON.stringify({ authorize: token }));
+            });
+
+            socket.on('message', (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+
+                    if (msg.error) {
+                        finish({ isValid: false, error: msg.error.message });
+                    } else if (msg.msg_type === 'authorize') {
+                        const userData = {
+                            loginid: msg.authorize.loginid,
+                            email: msg.authorize.email,
+                            currency: msg.authorize.currency
+                        };
+                        finish({ isValid: true, userData });
                     }
-
-                    const userData = {
-                        loginid: authResponse.authorize.loginid,
-                        email: authResponse.authorize.email,
-                        currency: authResponse.authorize.currency
-                    };
-
-                    clearTimeout(timeout);
-                    connection.close();
-                    resolve({ isValid: true, userData });
-
-                } catch (error) {
-                    clearTimeout(timeout);
-                    connection.close();
-                    resolve({ isValid: false, error: error.message });
+                } catch (e) {
+                    finish({ isValid: false, error: 'Response parsing failed' });
                 }
             });
 
-            connection.on('error', (err) => {
-                clearTimeout(timeout);
-                resolve({ isValid: false, error: err.message });
+            socket.on('error', (err) => {
+                console.error('[DerivClient] Socket error:', err.message);
+                finish({ isValid: false, error: err.message });
+            });
+
+            socket.on('close', () => {
+                if (!isResolved) {
+                    finish({ isValid: false, error: 'Connection closed unexpectedly' });
+                }
             });
         });
     }
